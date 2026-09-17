@@ -184,6 +184,28 @@ Score 1 to 10 levels, the question id map unbounded within token limits,
 undocumented question kinds excluded. Structured content is admitted wherever
 the provider admits it.
 
+## A worked example, end to end
+
+`jev-dsl-example` is one record (triage a failing check: which diagnostic
+explains it, what to do next with typed payloads, which check verifies,
+whether the evidence suffices, how broad the fix is) with two commands.
+`request` prints the request JSON; `decode` reads the response JSON on stdin
+and prints what the typed answers say. Nothing in between is the library's
+business. `scripts/example.sh` puts curl there:
+
+```sh
+TYPESAFE_API_KEY=... ./scripts/example.sh
+```
+
+```
+explains: d2  "bookmark identity assertion failed after prefix insertion; observed old numerical offset"
+  ranked: d2=1.0, d1=0.0, d3=0.0, no_match=0.0
+next: read the implicated source  confidence 0.4
+verify: prefix_insert
+sufficient: 0.61  (unsure)
+breadth: 0.93  localized 0.31, adjacent 0.45, contract 0.24
+```
+
 ## Building
 
 ```sh

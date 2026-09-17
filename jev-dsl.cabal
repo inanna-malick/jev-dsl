@@ -41,6 +41,18 @@ library
     , scientific  >= 0.3
     , vector      >= 0.13
 
+executable jev-dsl-example
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , aeson
+    , bytestring
+    , text
+    , optparse-applicative >= 0.18
+    , jev-dsl
+
 test-suite jev-dsl-test
   import:           shared
   type:             exitcode-stdio-1.0
