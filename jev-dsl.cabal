@@ -48,6 +48,7 @@ test-suite jev-dsl-test
   main-is:          Main.hs
   other-modules:
     Check
+    Proto
   build-depends:
     , base
     , containers
@@ -56,4 +57,5 @@ test-suite jev-dsl-test
     , bytestring
     , directory
     , filepath
+    , vector
     , jev-dsl
