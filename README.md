@@ -182,6 +182,40 @@ them:
 TYPESAFE_API_KEY=... ./scripts/example.sh
 ```
 
+## Ask the source
+
+`jev-dsl-navigate` answers a question about this library's own code with a
+line number, and no frontier model in the loop. Haskell parses the modules
+into declarations; one packet picks the module; one packet, with the whole
+module's source in the state, picks the declaration to read; each hop
+reads one declaration and asks a packet about it: a rubric for how
+directly it answers, a choice over its lines, a choice over the
+declarations it references drawn from a pool, a Noul per reference, and a
+premise-prefixed choice for where the behavior lives if not here. Two
+starting points stay alive when a choice is torn, a policy turns near ties
+into doubt, and a closing packet judges between two witnesses.
+
+```sh
+TYPESAFE_API_KEY=... scripts/navigate.sh "where is a premise rendered onto the wire?"
+```
+
+Three live runs on 2026-09-16, each two to three calls:
+
+```
+where does a choice that draws on a pool get the pool name added to its instructions?
+  src/Jev/Core/Schema.hs:551  [(n, _)] -> Right (extras [("pool", jString n)] i0)
+  tokens: 8275 in, 2807 out
+where is a premise rendered onto the wire?
+  src/Jev/Core/Contract.hs:138  Premised p inner -> [("instructions", jObject (("premise", jString p) : renderInstructions inner))]
+  tokens: 7803 in, 2736 out
+which check rejects a rubric with more than ten levels?
+  src/Jev/Core/Schema.hs:585  if null entries || length entries > 10 then Left (BadLevelCount key (length entries)) else Right ()
+  tokens: 9522 in, 3055 out
+```
+
+The program is `examples/Navigate.hs`. Its transport is `scripts/transport.sh`,
+a curl call that keeps the key out of every Haskell process.
+
 ## Building
 
 ```sh
@@ -189,7 +223,7 @@ cabal build all --enable-tests && cabal test
 ./check.sh
 ```
 
-`check.sh` also compiles `examples/` and `test/Readme.hs`. It then requires
+`check.sh` also compiles `examples/` and `test/Readme.hs`, and builds both executables. It then requires
 every `test/reject/*.hs` to fail to compile at its own site with the
 diagnostic phrase the file names. Set `JEV_EVIDENCE_DIR` to a directory of
 research captures to run the full generic pass over every recorded success.

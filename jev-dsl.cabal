@@ -57,6 +57,20 @@ executable jev-dsl-example
     , optparse-applicative >= 0.18
     , jev-dsl
 
+executable jev-dsl-navigate
+  import:           shared
+  hs-source-dirs:   examples
+  main-is:          Navigate.hs
+  build-depends:
+    , base
+    , aeson
+    , bytestring
+    , directory
+    , filepath
+    , process
+    , text
+    , jev-dsl
+
 test-suite jev-dsl-test
   import:           shared
   type:             exitcode-stdio-1.0
