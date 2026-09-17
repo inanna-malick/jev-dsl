@@ -246,6 +246,9 @@ every Haskell process.
 
 ## Building
 
+`nix develop` or `nix-shell` gives GHC 9.12 with every dependency, cabal,
+and curl; both read the same pinned nixpkgs from `flake.lock`. Then:
+
 ```sh
 cabal build all --enable-tests && cabal test
 ./check.sh
