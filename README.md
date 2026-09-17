@@ -15,7 +15,8 @@ only place it has been used. See [Status](#status) for what is unsettled.
 `Jev.Operators` is the whole surface, and the guide written for a model is
 [docs/authoring.md](docs/authoring.md). `Jev.Core` is the same library
 polymorphic over the JSON type, for an environment that cannot load aeson.
-Every example below is compiled by `test/Readme.hs`.
+Every example below is compiled, by `test/Readme.hs` or as part of
+`examples/Guard.hs`.
 
 Jev answers three kinds of question. A **Noul** is a proposition, answered
 with one probability. A **choice** picks one of a set of labelled
@@ -44,7 +45,7 @@ locate transport source numbered = do
 type Transport = Value -> IO (Either Text Value)
 ```
 
-`settle` is the only way to consume a choice, and it gives no result
+`settle` consumes a choice, and it gives no result
 without a handler for every alternative. The handler receives the row the
 program offered, so there is nothing to look up afterwards, and a confident
 "not here" runs its own branch instead of reading as a pass. When the
@@ -106,8 +107,8 @@ act a =
 ```
 
 A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`; a
-Noul with `yes`; a score with `expectation`, `confidence`, `masses`, and
-`results` (every level's result, in level order). Those are for logs and
+Noul with `yes`; a score with `expectation`, `confidence` and `masses`.
+Those are for logs and
 thresholds. Dispatch goes through the branches instead, one typed consumer
 per question kind: `settle` for a choice, `judge` for a Noul, `grade` for a
 score. For a choice, the handler list is taken in declaration order and the
@@ -183,6 +184,33 @@ no child is forced until the player takes that branch.
 ```haskell
 putStr (snd (cata render (gate world) []))
 outcome <- cata (interpret transport) (gate world) (Traveller [] [] [] world)
+```
+
+Every hub node is one packet and one call, whatever the node has. The
+branch choice, a Noul per topic the reply may also raise, and the tripwire
+that would stop the traveller where they stand go in one request. A
+question the node lacks is a battery of none, which renders to nothing on
+the wire, so there is no second packet shape:
+
+```haskell
+r <- must =<< ask call jevLatest st
+  (  #branch := sorting
+  :& #also   := alsoQ
+  :& #stop   := each (const "now") stopping (maybe [] pure trip)
+  :& Nil )
+stopped <- mapM (divert . snd) r.stop
+maybe (follow r.branch r.also) pure (asum stopped)
+```
+
+The weighing's levels carry the guard's next move as their result, so
+grading the story is choosing a continuation:
+
+```haskell
+a <- must =<< ask1 call jevLatest (situation t [])
+  (score q (  level #sound (String sound) ("sound", x)
+           .| level #thin  (String thin)  ("thin", y)
+           .| level #false (String false) ("false", z) ))
+let (taken, next) = grade 0.5 a
 ```
 
 Rules stay in Haskell: smuggled goods are turned away without any weighing,

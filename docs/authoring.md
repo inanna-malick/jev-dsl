@@ -86,7 +86,7 @@ three are named for how bad it is to be wrong:
 | `spawning` | starting a worker, choosing an approach | 0.55 | 0.20 | 0.70 |
 | `merging` | merging, stopping, anything with a receipt | 0.70 | 0.40 | 0.85 |
 
-`settle policy answer handlers` is the only way to consume a choice. It
+`settle policy answer handlers` consumes a choice. It
 returns either the result of the handler for the alternative that won, or a
 `Doubt`: `NearTie`, `Underweight`, or `Unconfident`.
 
@@ -133,7 +133,7 @@ The rest of an answer is fields, read with record dot:
 |---|---|
 | `choice` | `key`, `mass`, `margin`, `confidence`, `masses` (best first) |
 | `noul` | `yes` |
-| `score` | `expectation`, `confidence`, `masses`, `results` (by level, in order) |
+| `score` | `expectation`, `confidence`, `masses` (by level, in order) |
 
 Each kind has one typed consumer: `settle` for a choice, `judge` for a Noul,
 `grade` for a score. `settle` and `handle` take a handler list as a value and
@@ -149,7 +149,7 @@ play, usually a sign the alternatives were not really rivals.
 
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
-`margin`, `confidence`, `masses`, `yes`, `expectation`, `results`. The
+`margin`, `confidence`, `masses`, `yes`, `expectation`. The
 verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `settle`,
 `judge`, `grade`, `handle`, `explain`. Under `-Wall` a local binding with any of
 these names shadows; name your own `tag`, `weight`, `askLine`, or import
@@ -242,9 +242,8 @@ and the way not to is to leave no string to dispatch on.
 
 There is no `Doubt` here. An ordinal scale has a median even when the
 distribution is flat, so `grade` always answers; read `confidence` yourself if
-you want to gate on it. The answer also gives `expectation`, `masses` by
-label, and `results` (every level's result, in level order) for the ledger,
-plus `massAtOrAbove #blocked`, which sums the rubric from a level up when you
+you want to gate on it. The answer also gives `expectation` and `masses` by
+label for the ledger, plus `massAtOrAbove #blocked`, which sums the rubric from a level up when you
 want the raw number rather than a branch.
 
 A score is right only for a genuinely ordered, mutually exclusive

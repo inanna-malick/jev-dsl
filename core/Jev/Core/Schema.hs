@@ -27,7 +27,7 @@
 -- Polymorphic over the JSON value through "Jev.Core.Json";
 -- "Jev.Operators" fixes it.
 --
--- The packet's type is inferred from the questions written. Labels,
+-- The packet's type is inferred from the questions written. Labels
 -- and handler completeness are checked at compile time with messages in
 -- the author's vocabulary; wording, runtime candidates and level counts
 -- are checked at preparation.

@@ -54,7 +54,7 @@ module Jev.Operators
     -- * Answers, as fields: @a.next.key@, @a.enough.yes@
     -- (a Noul carries @yes@; a choice @key@, @mass@, @margin@,
     -- @confidence@, @masses@; a score @expectation@, @confidence@,
-    -- @masses@, @results@.)
+    -- @masses@.)
   , A (..)
     -- * Acting on answers
   , settle, judge, grade, explain, handle, contenders
@@ -143,7 +143,8 @@ state = Core.state
 -- Acting on answers
 
 -- | The winner under a policy through a handler per alternative, or
--- structured doubt. The only way to consume a choice.
+-- structured doubt. A choice gives no result without a handler for every
+-- alternative.
 settle :: Handles hs alts => Policy -> A Value (Choice alts) -> Handlers r hs -> Either Doubt r
 settle = Core.settle
 

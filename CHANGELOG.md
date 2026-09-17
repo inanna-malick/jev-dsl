@@ -13,8 +13,8 @@ Breaking, since the first cut:
   separate result-list argument is gone; it returns the result written
   beside the level the score landed on. A missing, extra, or misordered
   result is no longer checked — it is now unwritable.
-- The score endpoint is `Score p levels`, payload first, and its answer
-  gains a `results` field: every level's result, in level order.
+- The score endpoint is `Score p levels`, payload first. Its answer
+  carries every level's result, which is what `grade` reads.
 - `each` takes a key, a question, and the rows, exactly as `many` does:
   `each key q rows`. The endpoint is `Each a e`. Answers come back as
   `[(row, answer)]`, the row beside its answer, so there is nothing to

@@ -476,17 +476,14 @@ interpret call = \case
                  [ "The reply adds nothing the guard has not already heard: small talk, a question, a denial, or a"
                  , "repeat or elaboration of what `conversation_so_far` already contains." ]))
                  () )
-        -- A doubt is not a stop. It is a reading the guard could not make,
-        -- and the traveller gets the benefit of it.
-        interrupt a = either (const Nothing) id
-          (settle spawning a (#admits Just .| #contradicts Just .| #nothing_new (\() -> Nothing)))
-
-        divert a = case interrupt a of
-          Just node -> do
+        divert a = case settle spawning a (#admits Just .| #contradicts Just .| #nothing_new (\() -> Nothing)) of
+          Right (Just node) -> do
             aside (explain spawning a)
             Just <$> node.play (t `saw` Turn line reply a.key a.mass)
-          Nothing -> do
-            -- Worth a line whenever the guard nearly stopped them.
+          -- A doubt is not a stop. It is a reading the guard could not make,
+          -- and the traveller gets the benefit of it, with a line whenever
+          -- the guard nearly stopped them.
+          _ -> do
             when (a.key /= "nothing_new") (aside ("let it pass: " <> explain spawning a))
             pure Nothing
 
@@ -507,19 +504,19 @@ interpret call = \case
   Check matches none -> program $ \t -> do
     -- One Noul per poster, each carrying its own wording: the per-item
     -- battery. A battery is a question, so it needs no packet around it, and
-    -- each answer comes back beside the poster it was asked about.
+    -- each answer comes back beside its row, which here is the poster as it
+    -- reads tonight and the child the tree wrote for a match.
+    let wanted = [(k, poster, node) | (k, node) <- matches, Just poster <- [lookup k t.here.posters]]
     fits <- must =<< ask1 call jevLatest (situation t [])
-      (each fst (\(_, poster) -> noul ("Does the traveller's story so far match this wanted poster? " <> poster)) t.here.posters)
-    let scored = sortOn (Down . (.yes) . fst) [(n, k) | ((k, _), n) <- fits]
-    aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | (n, k) <- scored])
+      (each (\(k, _, _) -> k) (\(_, poster, _) -> noul ("Does the traveller's story so far match this wanted poster? " <> poster)) wanted)
+    let scored = sortOn (Down . (.yes) . snd) fits
+    aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | ((k, _, _), n) <- scored])
     -- Holding someone starts something, so the closest poster is judged under
     -- that policy, and the policy's own line says why it went the way it did.
     case scored of
-      (n, k) : _ -> do
+      ((k, _, node), n) : _ -> do
         aside (k <> ": " <> explain spawning n)
-        case judge spawning n of
-          Right True | Just node <- lookup k matches -> node.play t
-          _ -> none.play t
+        if judge spawning n == Right True then node.play t else none.play t
       [] -> none.play t
 
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
