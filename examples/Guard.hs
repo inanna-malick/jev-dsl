@@ -90,7 +90,7 @@ world = World
   , places =
       [ ("market", "The market square")
       , ("temple", "The temple of the dawn and its infirmary")
-      , ("tavern", "The Broken Wheel and the other taverns by the wall")
+      , ("tavern", "The Broken Wheel and the other taverns by the wall; a bed, a drink, a meal")
       , ("barracks", "The watch barracks; recruits, and messages for the captain") ]
   , banned =
       [ ("unbound_weapon", "A blade or bow not peace-bonded at the gate")
@@ -185,18 +185,20 @@ gate w = askOrigin False
     onward suspect = if suspect then checkPosters weigh else weigh
     checkPosters continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.posters] continue)
 
-    -- A story that does not hold up gets one plain re-ask before any verdict. After it, thin is let
-    -- through with a warning; only a story that contradicts itself twice goes to the captain.
+    -- A story that does not hold up gets one plain re-ask before any verdict. Dodging that closes the
+    -- gate; otherwise thin is let through with a warning and false is turned away. The captain is for
+    -- posters, bribes, and runners.
     weigh = weighInto (verdict Admit) pressOnce pressOnce
     pressOnce =
       askLine "Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?" Nothing
         [ ("straight", "Answers plainly, with detail a guard could check")
         , ("changes_story", "Gives an account that differs from what they said before")
         , evasive ]
-        (\_ -> weighInto (verdict Admit) (say "Fine. Go on, but I've got my eye on you." (verdict Admit)) (verdict SendForCaptain))
+        (\answer -> if answer == "evasive" then verdict TurnAway
+                    else weighInto (verdict Admit) (say "Fine. Go on, but I've got my eye on you." (verdict Admit)) (verdict TurnAway))
     weighInto sound thin false = Fix (Weigh "Taken together, does this traveller's story hold up?"
-      ("The answers fit each other and fit the road they came by", sound)
-      ("Plausible but thin: something is left out, or the answers do not quite fit together", thin)
+      ("The answers fit each other and the road they came by; an ordinary traveller on an ordinary errand sounds like this, even when brief or odd in manner", sound)
+      ("A real gap: a claim that cannot be squared with the rest, a question dodged, or an errand that does not fit the cargo", thin)
       ("The story contradicts itself, the posters, or the guard's knowledge of the roads", false))
 
     -- Every verdict opens onto a hub, and every hub is tied back into itself.
@@ -208,7 +210,7 @@ gate w = askOrigin False
     admitted = knot "gate" $ happen $
       askLine "Anything else before you go through?" (Just (slip, say "Wait. Say that again." weigh))
         ( [(k, "Asks about the " <> k <> " on the posters, or the reward") | (k, _) <- w.posters]
-       ++ [(k, "Asks the way to the " <> k <> ", or what goes on there") | (k, _) <- w.places]
+       ++ [(k, "Asks the way to the " <> k <> ", what goes on there, or for what it offers: " <> d) | (k, d) <- w.places]
        ++ [ ("curfew", "Asks what the curfew means for them tonight")
           , ("captain", "Asks about the captain or the watch")
           , ("rumour", "Asks about the robbery, or for news and gossip")
@@ -368,12 +370,15 @@ interpret call = \case
       _ -> z t
 
   Happen next -> \t -> do
-    -- The night moves at its own pace: something can happen at most every other exchange.
+    -- The night moves at its own pace: something can happen at most every other exchange, and
+    -- which three events are on offer turns with what has been said, so no event always comes first.
     let unused = [h | h <- t.here.happenings, h.tag `notElem` t.happened]
+        turned = let n = sum [T.length u.replied | u <- t.turns] `mod` max 1 (length unused)
+                 in take 3 (drop n unused ++ take n unused)
     if null unused || even (length t.turns) then next t else do
       a <- must =<< ask1 call jevLatest (situation t [])
         (given t.here.edict (choice "Which of these fits this moment at the gate, given what has happened so far?"
-          (alt #nothing "The night goes on; nothing in particular happens" () .| many [(h.tag, String h.blurb, h) | h <- unused])))
+          (alt #nothing "The night goes on; nothing in particular happens" () .| many [(h.tag, String h.blurb, h) | h <- turned])))
       handle (chosen a)
         (  #nothing (\() -> next t)
         .| onMany (\_ h -> do
