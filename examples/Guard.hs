@@ -162,20 +162,16 @@ cata alg (Fix node) = alg (fmap (cata alg) node)
 -- ---------------------------------------------------------------------------
 
 gate :: World -> Fix GuardF
-gate w = askOrigin False
+gate w = askOrigin
   where
     -- The approach: three questions, the posters if the road or the errand warrants, then the weighing.
-    askOrigin pressed = askLine "Halt. Where do you hail from, traveller?" Nothing (w.neighbours ++ [evasive]) $ \origin ->
-      if origin == "evasive" && not pressed
-        then say "I'll ask once more, and I'd think about the answer this time." (askOrigin True)
-        else afterOrigin origin
-    afterOrigin "evasive" = askCargo False
-    afterOrigin origin = askPurpose $ \purpose ->
-      -- The posters concern the north road and the taverns; nobody else is held against them.
-      askCargo (origin == "north_road" || purpose == "tavern")
-    askPurpose = askLine "And what brings you to Greyhaven?" Nothing (w.places ++ [evasive])
-    askCargo suspect = askLine "Anything to declare? Weapons, goods, anything the customs officer should see?" Nothing
-      (w.banned ++ [("nothing", "Nothing to declare: personal effects, ordinary goods, a bonded weapon"), evasive]) $ \cargo ->
+    askOrigin = askPatient "Halt. Where do you hail from, traveller?" True w.neighbours $ \origin ->
+      if origin == "evasive" then askCargo False else askPurpose $ \purpose ->
+        -- The posters concern the north road and the taverns; nobody else is held against them.
+        askCargo (origin == "north_road" || purpose == "tavern")
+    askPurpose = askPatient "And what brings you to Greyhaven?" False w.places
+    askCargo suspect = askPatient "Anything to declare? Weapons, goods, anything the customs officer should see?" False
+      (w.banned ++ [("nothing", "Nothing to declare: personal effects, ordinary goods, a bonded weapon")]) $ \cargo ->
         -- Contraband is a rule, not a judgment. A weapon gets bonded at the post and the talk goes on;
         -- smuggled goods end it.
         case cargo of
@@ -183,6 +179,23 @@ gate w = askOrigin False
           "unbound_weapon" -> say "Then bond it. There's cord by the post; loop it through the guard and knot it. Good." (onward suspect)
           _ -> onward suspect
     onward suspect = if suspect then checkPosters weigh else weigh
+
+    -- Every question on the approach takes nonsense in its stride: someone playing a part, mocking the
+    -- guard, or giving orders is called out and asked once more, then treated as evasive. Where
+    -- pressEvasive is set, a first evasive answer is asked again too.
+    askPatient line pressEvasive branches k = go False
+      where
+        go again = askLine line Nothing (branches ++ [evasive, nonsense]) $ \answer ->
+          if not again && (answer == "nonsense" || (pressEvasive && answer == "evasive"))
+            then say (callOut line answer) (go True)
+            else k (if answer == "nonsense" then "evasive" else answer)
+    callOut line answer
+      | answer == "evasive" = "I'll ask once more, and I'd think about the answer this time."
+      | otherwise = callOuts !! (T.length line `mod` length callOuts)
+    callOuts =
+      [ "Are you having me on right now? Once more."
+      , "Is this a game to you? Try that again, plainly."
+      , "I've had drunks make more sense at this gate. Again." ]
     checkPosters continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.posters] continue)
 
     -- A story that does not hold up gets one plain re-ask before any verdict. Dodging that closes the
@@ -215,9 +228,11 @@ gate w = askOrigin False
           , ("captain", "Asks about the captain or the watch")
           , ("rumour", "Asks about the robbery, or for news and gossip")
           , ("chat", "Small talk, a remark about the night, or anything else")
+          , nonsense
           , ("leave", "Says goodbye, moves on, or has nothing more to ask") ] )
         $ \case
           "leave" -> say "Then go on. And mind the curfew." end
+          "nonsense" -> say "Very funny. Anything else, or are we done?" admitted
           topic -> say (fromMaybe "Mm. Long night. Move along when you're ready." (lookup topic smallTalk)) admitted
 
     turnedAway = knot "turned_away" $ happen $
@@ -227,6 +242,7 @@ gate w = askOrigin False
         , ("insult", "Insults, mocks, or threatens the guard")
         , ("beg", "Pleads, appeals to pity, or asks for an exception")
         , ("chat", "Small talk, a question, or anything else")
+        , nonsense
         , ("leave", "Gives up, says goodbye, or turns to go") ]
         $ \case
           "explain" -> say "Go on, then. All of it, from the start." weigh
@@ -234,6 +250,7 @@ gate w = askOrigin False
           "insult" -> say "Say that again and it's the captain you'll be explaining yourself to." turnedAway
           "beg" -> say "Save it. I've heard better from the drunks at the Broken Wheel." turnedAway
           "leave" -> say "Then go. The road's that way." end
+          "nonsense" -> say "Play the fool somewhere else. The gate's still closed." turnedAway
           _ -> say "The gate's still closed." turnedAway
 
     held = knot "held" $ happen $
@@ -243,13 +260,15 @@ gate w = askOrigin False
         , ("protest", "Protests innocence, objects, or demands to be released")
         , ("threaten", "Threatens the guard or the watch")
         , ("run", "Tries to run, push past, or escape")
-        , ("chat", "Anything else") ]
+        , ("chat", "Anything else")
+        , nonsense ]
         $ \case
           -- A held traveller can talk their way down to the road, never straight through the gate.
           "explain" -> say "Go on. Slowly." (weighInto (verdict TurnAway) (verdict TurnAway) (verdict SendForCaptain))
           "protest" -> say "Tell it to the captain." held
           "threaten" -> say "Threatening the watch at its own gate. Bold." held
           "run" -> say "Runner! Nobody runs from this gate. Not far." end
+          "nonsense" -> say "Save the act for the captain. Stand there." held
           _ -> say "Stand there." held
 
     smallTalk =
@@ -265,6 +284,7 @@ gate w = askOrigin False
 
     slip = "Does this reply admit to something the edict forbids, contradict what the traveller said earlier, or give the guard fresh reason for suspicion?"
     evasive = ("evasive", "Does not say, changes the subject, or answers a different question")
+    nonsense = ("nonsense", "Nonsense, gibberish, or play-acting: mocks the guard, claims to be the guard, gives the guard orders, or talks as if to a machine")
 
     askLine line trip branches k = Fix (Ask line trip [(l, meaning, k l) | (l, meaning) <- branches])
     say line next = Fix (Say line next)

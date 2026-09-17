@@ -220,6 +220,13 @@ guard: Guards! Hold this one. Someone fetch the captain.
 guard: Captain. This one's for you.
 ```
 
+Nonsense, play-acting, an attempt to give the guard orders, or a reply
+addressed to a machine is a branch on every question. The guard calls it
+out, asks once more, and after that treats it as evasive; in the hubs it
+gets a retort. Prompt injection, role reversal, gibberish, one-word answers,
+and contradictions across turns were each tried and sorted where a person
+would put them.
+
 The guard errs on the forgiving side. A story that does not hold up gets
 one plain re-ask, and after it a thin story is let through under a
 warning; a sword is bonded at the post and the talk goes on; only
