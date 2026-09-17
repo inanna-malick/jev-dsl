@@ -3,6 +3,7 @@
 {-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -40,24 +41,28 @@ module Jev.Operators
     -- * Questions
   , noul, choice, score, each, pool, eachIn, askAbout, given, about, refKey, refPayload
     -- * Answers
-  , yes, chosen, contenders, selectedKey, handle, accept, confidence, masses, Doubt (..), Policy (..)
+  , yes, chosen, contenders, selectedKey, handle, accept, explain, confidence, masses, Doubt (..), Policy (..)
+  , routing, spawning, merging
     -- * The operation
-  , jevLatest, request, decode, roundTrip, answers, usage, JevError (..)
+  , jevLatest, request, decode, roundTrip, answers, usage, Usage (..), resolvedModel, JevError (..)
     -- * Types, for signatures only
   , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
-  , Noul, Choice, Score, Each, Group, PoolDecl, Ref
+  , Noul, Choice, Score, Each, Group, PoolDecl, Ref, Selected
   , Q, A, Questions, Answers, type (:-), State, state, Model, Response, PrepError, DecodeError
   , Schema, Alternatives
   ) where
 
 import Data.Aeson (Value)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text)
 import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
   ( A, Alternatives, Choice, DecodeError, Doubt (..), Each, Group, JevError (..), Label, Many, Model, Noul
-  , Packet (..), Cell (..), PoolDecl, PrepError, Q, Score, type (:-), type (::=), type (::>), type (:|:), (++.), Policy (..)
+  , Packet (..), Cell (..), PoolDecl, PrepError, Q, Score, Selected, type (:-), type (::=), type (::>), type (:|:), (++.), Policy (..)
   )
 
 type Questions = Core.Questions Value
@@ -150,6 +155,22 @@ handle = Core.handle
 accept :: Alternatives alts => Policy -> A Value (Choice alts) -> Either Doubt (Core.Selected Value alts)
 accept = Core.accept
 
+-- | One line explaining why 'accept' returned what it did.
+explain :: Alternatives alts => Policy -> A Value (Choice alts) -> Text
+explain = Core.explain
+
+-- | Read-only choices: which file, which skill.
+routing :: Policy
+routing = Policy 0.40 0.08 0.50
+
+-- | Starting a worker, or choosing an approach.
+spawning :: Policy
+spawning = Policy 0.55 0.20 0.70
+
+-- | Merging, stopping, anything with a receipt.
+merging :: Policy
+merging = Policy 0.70 0.40 0.85
+
 confidence :: Core.Judged e => A Value e -> Double
 confidence = Core.confidence
 
@@ -184,5 +205,19 @@ jev1 = Core.jev1
 answers :: Response s -> s Answers
 answers = Core.answers
 
-usage :: Response s -> Value
-usage = Core.usage
+-- | Token counts for one call. Missing or non-numeric fields read as 0.
+data Usage = Usage { inputTokens :: Int, outputTokens :: Int } deriving (Show, Eq)
+
+usage :: Response s -> Usage
+usage r = Usage (field "input_tokens") (field "output_tokens")
+  where
+    field :: Text -> Int
+    field k = case Core.usage r of
+      Aeson.Object o -> case KeyMap.lookup (Key.fromText k) o of
+        Just (Aeson.Number n) -> round n
+        _ -> 0
+      _ -> 0
+
+-- | The model the request resolved to, as reported by the response envelope.
+resolvedModel :: Response s -> Text
+resolvedModel = Core.responseModel

@@ -135,8 +135,12 @@ golden c name st q inspectAnswers = do
       case decode q (fixtureResponse fx) of
         Left e -> check c (name ++ ": golden decode failed: " ++ show e) False
         Right resp -> do
-          checkEq c (name ++ ": resolved model") "jev-1.13.0" (Core.responseModel resp)
-          checkEq c (name ++ ": usage verbatim") (maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))) (usage resp)
+          checkEq c (name ++ ": resolved model") "jev-1.13.0" (resolvedModel resp)
+          let fixtureUsage = maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))
+              usageField k = case lookup k (objectPairs fixtureUsage) of
+                Just (Number n) -> round n
+                _ -> 0
+          checkEq c (name ++ ": usage verbatim") (Usage (usageField "input_tokens") (usageField "output_tokens")) (usage resp)
           inspectAnswers resp
 
 manyKey :: Alternatives alts => A Value (Choice alts) -> Text

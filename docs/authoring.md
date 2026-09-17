@@ -51,7 +51,7 @@ the same packet under `Answers`, read with the labels: `a.next`,
 A label the packet lacks is a compile error listing the labels it has.
 `request model state packet` builds the body without sending it; `decode
 packet body` decodes a response against the packet. `roundTrip` is both.
-`usage` on the response is the provider's token count.
+`usage` on the response is a `Usage { inputTokens, outputTokens }`; `resolvedModel` is the model the request actually resolved to.
 
 ## Alternatives
 
@@ -92,7 +92,12 @@ best first, as selections; `confidence` and `masses` are the provider's
 numbers; `selectedKey` is a selection's wire key. `accept policy answer`
 returns the selection or a `Doubt` (`NearTie`, `Underweight`, `Unconfident`)
 under a `Policy {minMass, minMargin, minConfidence}`. Thresholds are yours;
-take them from data.
+take them from data. `explain policy answer` gives the same verdict as one
+line of prose, naming the check order and the numbers behind it.
+
+Three named policies cover common cases: `routing` for read-only choices
+(which file, which skill), `spawning` for starting a worker or choosing an
+approach, and `merging` for merging, stopping, or anything with a receipt.
 
 ## Rubrics
 

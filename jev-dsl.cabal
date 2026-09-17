@@ -14,9 +14,25 @@ description:
 license:            MIT
 license-file:       LICENSE
 author:             Inanna Malick
+maintainer:         inanna@recursion.wtf
+category:           AI
+homepage:           https://github.com/inanna-malick/jev-dsl
+bug-reports:        https://github.com/inanna-malick/jev-dsl/issues
 build-type:         Simple
 extra-doc-files:    README.md
+extra-source-files:
+  docs/*.md
+  examples/*.hs
+  scripts/*
+  test/reject/*.hs
+  test/fixtures/*.json
+  test/fixtures/*.md
+  test/fixtures/MANIFEST
 tested-with:        GHC == 9.12.2
+
+source-repository head
+  type:     git
+  location: https://github.com/inanna-malick/jev-dsl.git
 
 common shared
   default-language: GHC2021
@@ -37,7 +53,7 @@ library
     Jev.Core.Contract
     Jev.Core.Schema
   build-depends:
-    , base        >= 4.18 && < 5
+    , base        >= 4.21 && < 5
     , containers  >= 0.6
     , text        >= 2.0
     , aeson       ^>= 2.2

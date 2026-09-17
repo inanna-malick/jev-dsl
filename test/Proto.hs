@@ -149,7 +149,7 @@ protoChecks c = do
     Left e -> check c ("packet: " ++ show e) False
     Right resp -> do
       let a = answers resp
-      checkEq c "packet: usage kept" (Just (Number 100)) (field "input_tokens" (usage resp))
+      checkEq c "packet: usage kept" (Usage 100 7) (usage resp)
       checkEq c "packet: inline handler list ran the chosen branch" "handback preference"
         (handle (chosen a.next) (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| onMany (\k _ -> "follow " ++ T.unpack k)))
       checkEq c "packet: reusable handler list" "handback preference" (handle (chosen a.next) (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
@@ -160,6 +160,12 @@ protoChecks c = do
       checkEq c "packet: a floor keeps only the mass above it" 1 (length (contenders 0.5 a.next))
       check c "packet: near-tie is structured doubt" (case accept (Policy 0 0.7 0) a.next of Left (NearTie _ _) -> True; _ -> False)
       check c "packet: an empty policy accepts the winner" (either (const False) (\s -> keyOf s == "ask_model") (accept (Policy 0 0 0) a.next))
+      checkEq c "packet: explain names a near-tie doubt with the failing floor and the rest"
+        "doubted (NearTie): margin 0.60 < 0.70 by 0.10; confidence 0.70, mass 0.70"
+        (explain (Policy 0 0.7 0) a.next)
+      checkEq c "packet: explain names an acceptance with every check"
+        "accepted: confidence 0.70 \8805 0.00, mass 0.70 \8805 0.00, margin 0.60 \8805 0.00"
+        (explain (Policy 0 0 0) a.next)
       checkEq c "packet: noul" 0.8 (yes a.enough)
       checkEq c "packet: rubric expectation" 1.5 (expectation a.urgency)
       checkEq c "packet: typed rubric index" 0.5 (massAtOrAbove #blocked a.urgency)

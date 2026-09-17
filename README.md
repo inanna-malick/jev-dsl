@@ -97,7 +97,7 @@ alive :: Inspection Answers -> [Text]
 alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
 
 decide :: Inspection Answers -> Either Doubt Text
-decide a = fmap (`handle` routes) (accept (Policy 0.4 0.15 0.5) a.next)
+decide a = fmap (`handle` routes) (accept (Policy { minMass = 0.4, minMargin = 0.15, minConfidence = 0.5 }) a.next)
 ```
 
 ## Pools and premises
@@ -123,24 +123,8 @@ runtime premise.
 
 ## What is checked, and where
 
-**At compile time.** Label uniqueness and presence, handler lists against
-their alternatives, unique rubric levels, pools placed under their own
-name, cell contents.
-
-**When the request is built.** Every builder is total, so shape checks on
-runtime values happen here, each a named `PrepError` carrying the question
-key: empty offers; duplicate runtime keys, or runtime keys colliding with
-labels; wording, level, and state shapes the provider rejects; one to ten
-levels; undeclared, conflicting, nested, or duplicate-keyed pools, and two
-pools in one choice; duplicate structured members, through any premise;
-empty question maps and ids, and duplicate flattened ids.
-
-**When the response is decoded.** Each failure is a named `DecodeError`: a
-selection or a probability key outside the submitted set, values or
-confidence outside [0, 1], a legend that differs from the submitted levels,
-wrong answer kinds, missing or unexpected answers. A provider rejection
-body is returned parsed. A rounded probability sum is a diagnostic, not a
-rejection.
+See [docs/authoring.md#what-is-checked-where](docs/authoring.md#what-is-checked-where)
+for the full breakdown of compile-time, request-build, and decode-time checks.
 
 Of 253 real accepted exchanges, 251 render as structurally identical JSON
 and decode against the retained request through the core, the other two

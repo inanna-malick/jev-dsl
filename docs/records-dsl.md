@@ -1,7 +1,9 @@
 # The declared-record front: `Jev.Records` (design)
 
-Status: design only, recorded 2026-09-16. Nothing under `Jev.Records` is
-implemented. This front is for human use and review: code that a person
+No code in this repository implements this design; `Jev.Records` does not
+exist yet.
+
+Status: design only, recorded 2026-09-16. This front is for human use and review: code that a person
 writes once, reads in a file, and maintains, where a declaration is a
 feature. The compositional-operator front in `Jev.Operators` is for a model
 working in a stateful session, where declarations are a liability; see

@@ -75,7 +75,7 @@ alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
 
 -- Under a policy: accept the winner or get structured doubt.
 decide :: Inspection Answers -> Either Doubt Text
-decide a = fmap (`handle` routes) (accept (Policy 0.4 0.15 0.5) a.next)
+decide a = fmap (`handle` routes) (accept (Policy { minMass = 0.4, minMargin = 0.15, minConfidence = 0.5 }) a.next)
 
 -- Pools: wording sent once, drawn on by several questions.
 probing probes =

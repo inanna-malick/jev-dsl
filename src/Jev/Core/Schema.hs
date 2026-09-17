@@ -44,7 +44,7 @@ module Jev.Core.Schema
   , noul, choice, score, each, pool, eachIn, askAbout, given, about
   , Ref (..), PoolUse, Worded (..)
     -- * Results
-  , selectedKey, contenders, handle, accept, Doubt (..), Policy (..), Judged (..)
+  , selectedKey, contenders, handle, accept, explain, Doubt (..), Policy (..), Judged (..)
   , massAtOrAbove, levelOf
     -- * The operation
   , Schema (..), PacketSchema, Model (..), jevLatest
@@ -66,6 +66,7 @@ import GHC.Records (HasField (..))
 import GHC.TypeLits
 import Jev.Core.Contract
 import Jev.Core.Json
+import Numeric (showFFloat)
 
 -- ---------------------------------------------------------------------------
 -- Modes and the interpretation of a cell
@@ -456,6 +457,30 @@ accept policy a =
      else case runnerUp of
        (k2, p2) : _ | mass - p2 < minMargin policy -> Left (NearTie (winner, mass) (k2, p2))
        _ -> Right (chosen a)
+
+-- | One line explaining why 'accept' returned what it did: which check
+-- passed or failed, and the numbers behind it. Two-decimal formatting.
+explain :: forall alts v. Alternatives alts => Policy -> A v (Choice alts) -> Text
+explain policy a =
+  let winner = altKeyOf (chosen a)
+      mass = maybe 0 id (lookup winner (chosenMasses a))
+      conf = chosenConfidence a
+      runnerUp = [r | r@(k, _) <- sortOn (negate . snd) (chosenMasses a), k /= winner]
+      margin = case runnerUp of
+        (_, p2) : _ -> mass - p2
+        [] -> mass
+      fmt2 x = T.pack (showFFloat (Just 2) x "")
+      items = [("confidence" :: Text, conf, minConfidence policy), ("mass", mass, minMass policy), ("margin", margin, minMargin policy)]
+  in case accept policy a of
+    Right _ -> "accepted: " <> T.intercalate ", " [n <> " " <> fmt2 v <> " \8805 " <> fmt2 t | (n, v, t) <- items]
+    Left doubt ->
+      let (ctor, failedName, failedValue, floorValue) = case doubt of
+            Unconfident c -> ("Unconfident", "confidence" :: Text, c, minConfidence policy)
+            Underweight m -> ("Underweight", "mass", m, minMass policy)
+            NearTie (_, m) (_, m2) -> ("NearTie", "margin", m - m2, minMargin policy)
+          floorLine = failedName <> " " <> fmt2 failedValue <> " < " <> fmt2 floorValue <> " by " <> fmt2 (floorValue - failedValue)
+          rest = [n <> " " <> fmt2 v | (n, v, _) <- items, n /= failedName]
+      in "doubted (" <> ctor <> "): " <> floorLine <> "; " <> T.intercalate ", " rest
 
 -- | Mass at or beyond a level, by label.
 massAtOrAbove :: forall l levels v. KnownNat (Index l levels) => Label l -> A v (Score levels) -> Double

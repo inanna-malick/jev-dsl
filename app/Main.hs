@@ -25,8 +25,6 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Encoding as TLE
 import Jev.Operators
 import Options.Applicative (Parser, ReadM, command, eitherReader, execParser, fullDesc, help, helper, info, long, metavar, progDesc, showDefault, some, strOption, subparser, (<**>))
 import qualified Options.Applicative as Opt
@@ -138,7 +136,8 @@ die msg = hPutStrLn stderr msg >> exitFailure
 report :: Response Triage -> IO ()
 report resp = do
   let a = answers resp
-  TIO.putStrLn ("usage: " <> render (usage resp))
+  let u = usage resp
+  TIO.putStrLn ("usage: " <> showT u.inputTokens <> " in, " <> showT u.outputTokens <> " out; model " <> resolvedModel resp)
   TIO.putStrLn ("explains: " <> handle (chosen a.explains)
     (  #no_match (\() -> "<no listed diagnostic>")
     .| onMany (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") ))
@@ -158,4 +157,3 @@ report resp = do
   where
     showT :: Show x => x -> Text
     showT = T.pack . show
-    render = TL.toStrict . TLE.decodeUtf8 . Aeson.encode
