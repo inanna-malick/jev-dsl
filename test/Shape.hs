@@ -3,18 +3,20 @@
 {-# LANGUAGE TypeApplications #-}
 -- | Build an 'Exact' schema from any captured request, so every recorded
 -- success can be re-rendered and decoded generically. Questions whose typed
--- form the DSL does not admit (an unknown Noul criteria member, an unknown
--- question type) fall back to 'rawUnchecked', which is what it is for.
+-- form the replay module does not admit (an unknown Noul criteria member, an
+-- unknown question type) fall back to 'rawUnchecked', which is what it is for.
 module Shape (shapeRequest, Shaped (..), requestExtras, instructionsOf) where
 
 import Data.Aeson (Value (..))
 import Data.Text (Text)
 import Fixtures
+import qualified Jev.Core as Core
 import Jev.Operators
+import Replay
 
 data Shaped = Shaped
   { shapedModel :: Model
-  , shapedState :: State 'Plain
+  , shapedState :: State
   , shapedQuestions :: Exact Questions
   , shapedRawCount :: Int
   }
@@ -22,17 +24,17 @@ data Shaped = Shaped
 shapeRequest :: Value -> Shaped
 shapeRequest req =
   let qs = [(k, shapeQuestion q) | (k, q) <- requestQuestions req]
-  in Shaped (Model (requestModel req)) (stateOf (requestState req)) (exact [(k, q) | (k, (q, _)) <- qs]) (length [() | (_, (_, True)) <- qs])
+  in Shaped (Core.Model (requestModel req)) (state (requestState req)) (exact [(k, q) | (k, (q, _)) <- qs]) (length [() | (_, (_, True)) <- qs])
 
 presence :: Text -> Value -> Presence Value
 presence k q = maybe Omitted Present (lookup k (objectPairs q))
 
-instructionsOf :: Value -> Instructions
+instructionsOf :: Value -> Instructions Value
 instructionsOf q = case lookup "instructions" (objectPairs q) of
-  Nothing -> NoInstructions
-  Just v -> Instructions v
+  Nothing -> Core.NoInstructions
+  Just v -> Core.Instructions v
 
-shapeQuestion :: Value -> (SomeQ, Bool)
+shapeQuestion :: Value -> (SomeQ Value, Bool)
 shapeQuestion q
   | any (`notElem` ["type", "instructions", "criteria"]) (map fst (objectPairs q)) = raw
   | otherwise = case lookup "type" (objectPairs q) of
@@ -47,7 +49,7 @@ shapeQuestion q
     Just c@(Object _) -> (someQ (choiceWith @(Many ()) (instructionsOf q) (many [(k, d, ()) | (k, d) <- objectPairs c])), False)
     _ -> raw
   Just (String "score") -> case lookup "criteria" (objectPairs q) of
-    Just (Array ls) -> (someQ (scale (instructionsOf q) (levelsOf (foldr (:) [] ls))), False)
+    Just (Array ls) -> (someQ (scale (instructionsOf q) (foldr (:) [] ls)), False)
     _ -> raw
   _ -> raw
   where raw = (someQ (rawUnchecked q), True)

@@ -5,16 +5,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
--- expect: chain alternatives with .| (right-associated, without parentheses)
+-- expect: .| associates to the right, so write a .| b .| c without parentheses
 module RejectParenthesisedAlternatives where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-st :: State 'Plain
-st = stateText "s"
-
-type Next = "a" ::> () :|: "b" ::> () :|: "c" ::> ()
-
-bad :: Q Value (Choice Next)
-bad = choice "?" ((#a (Null, ()) .| #b (Null, ())) .| #c (Null, ()))
+-- A grouped chain is a mistake the type would otherwise absorb silently.
+bad = choice "?" ((alt #a Null () .| alt #b Null ()) .| alt #c Null ())

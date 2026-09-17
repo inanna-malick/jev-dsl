@@ -12,7 +12,7 @@
 module Jev
   ( Model (..), jevLatest
   , PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..), JevError (..)
-  , Policy (..), lenient, Doubt (..)
+  , Policy (..), Doubt (..)
   , Presence (..)
   ) where
 

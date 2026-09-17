@@ -6,6 +6,7 @@ import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import Jev.Aeson ()
 import Jev.Core.Json (View (..), jArray, jBool, jEqual, jNull, jNumber, jObject, jString, jView)
+import Corpus (corpusChecks)
 import Proto (protoChecks)
 import Golden (goldenChecks, genericChecks)
 import Rejections (rejectionChecks)
@@ -21,6 +22,7 @@ main = do
   check c "json: jEqual ignores object order" (jEqual v w)
   check c "json: jEqual distinguishes values" (not (jEqual v (jObject [("b", jNumber 3)])))
   protoChecks c
+  corpusChecks c
   goldenChecks c
   genericChecks c
   rejectionChecks c

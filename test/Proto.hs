@@ -7,13 +7,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | The compositional-operator front through its public facade only, over a
--- stub transport speaking aeson Values. Covers the spike list: inference
--- without annotations, label access, append, nested transparent answers,
--- inline and reusable handler lists, accept then handle, pools named by
--- their cell label with references used in separate fragments, the
--- ordinary-sum seam, and every preparation and decoding guarantee.
-module Proto (protoChecks) where
+-- | The authoring surface through its public facade only, over a stub
+-- transport speaking aeson Values: inference without annotations, label
+-- access, append, nested transparent answers, inline and reusable handler
+-- lists, accept then handle, contenders through the same handlers, pools
+-- named by their binding and stamped into the questions that draw on them,
+-- and every preparation and decoding guarantee.
+module Proto (protoChecks, stub, stubSplit, questionsOf, field) where
 
 import Check
 import Data.Aeson (Value (..), object, (.=))
@@ -23,8 +23,9 @@ import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import GHC.Generics (Generic)
+import qualified Jev.Core as Core
 import Jev.Operators
+import Replay (noulWith, Presence (..))
 
 -- ---------------------------------------------------------------------------
 -- Domain payloads: never serialized
@@ -35,24 +36,8 @@ newtype Edge = Edge Text deriving (Show, Eq)
 newtype Witness = Witness Text deriving (Show, Eq)
 newtype Handoff = Handoff Text deriving (Show, Eq)
 
--- Alternatives with descriptions in the type; Many for runtime candidates.
-type Routes = "use_witness" ::> Witness :? "The current span already answers the inquiry"
-          :|: "ask_model" ::> Handoff :? "Choosing needs a design preference beyond the supplied evidence"
-          :|: Many Edge
-
--- Alternatives described at the value level (structured, runtime wording).
-type Mechanisms = "retry_redelivery" ::> Command :|: "double_admission" ::> Command :|: "unknown" ::> ()
-
--- A described rubric and a bare one.
-type Urgency = '[ "background" :? "No current action depends on this"
-                , "checkpoint" :? "Useful at the next ordinary checkpoint"
-                , "blocked" :? "A worker cannot take its next action"
-                , "invalidating" :? "Continuing would invalidate ongoing work" ]
-type Breadth = '[ Lvl "localized", Lvl "adjacent", Lvl "contract" ]
-
--- The ordinary-sum seam.
-data Next = Rerun Command | ReadSource Text | AskModel Handoff deriving (Generic, Show)
-instance ConName Next
+-- A named alternative set, for a reusable handler list.
+type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge
 
 -- ---------------------------------------------------------------------------
 -- Stub transport over aeson Values
@@ -113,223 +98,231 @@ answerMap kv = object ["model" .= ("stub" :: Text), "answers" .= object [Key.fro
 
 protoChecks :: Checks -> IO ()
 protoChecks c = do
-  let world = stateObject [("inquiry", "Where can cancellation drop a computed reply?")]
+  let world = state (object ["inquiry" .= ("Where can cancellation drop a computed reply?" :: Text)])
       edges = [("publication_gate", "gates publication on cancellation", Edge "publish_if_active"), ("telemetry", "records latency", Edge "record_latency")]
 
   -- tiny use: one question, one answer, no declarations
-  r1 <- jev1 (stub "publication_gate") jevLatest world (choice @(Many Edge) "Which edge next?" (many edges))
+  r1 <- jev1 (stub "publication_gate") jevLatest world (choice "Which edge next?" (many edges))
   case r1 of
     Left e -> check c ("tiny: " ++ show e) False
     Right a -> do
       checkEq c "tiny: the chosen runtime element carries its payload" (Just (Edge "publish_if_active"))
-        (caseOf a (onMany (\e -> Just (elementPayload e))))
-      checkEq c "tiny: alternatives are wire keys and masses" ["publication_gate", "telemetry"] (map fst (alternatives a))
+        (handle (chosen a) (onMany (\_ e -> Just e)))
+      checkEq c "tiny: masses are wire keys" ["publication_gate", "telemetry"] (map fst (masses a))
 
   -- a packet inferred from its questions; a reusable handler list; accept then handle
   let handlers :: (Handoff -> String) -> Handlers String Routes
       handlers onHandoff = #use_witness (\(Witness w) -> "located " ++ T.unpack w)
                         .| #ask_model onHandoff
-                        .| onMany (\e -> "follow " ++ T.unpack (elementKey e))
-      packet = #next := choice @Routes "Which available continuation advances the inquiry?"
-                         (#use_witness (Witness "complete_request:41") .| #ask_model (Handoff "preference") .| many edges)
+                        .| onMany (\k _ -> "follow " ++ T.unpack k)
+      packet = #next := choice "Which available continuation advances the inquiry?"
+                         (  alt #use_witness "The current span already answers the inquiry" (Witness "complete_request:41")
+                         .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
+                         .| many edges )
             :& #enough := noul "Does the supplied evidence answer the inquiry?"
-            :& #urgency := score @Urgency "What is the consequence of waiting?"
+            :& #urgency := score "What is the consequence of waiting?"
+                         (  level #background "No current action depends on this"
+                         .| level #checkpoint "Useful at the next ordinary checkpoint"
+                         .| level #blocked "A worker cannot take its next action"
+                         .| level #invalidating "Continuing would invalidate ongoing work" )
             :& #children := each [ (name, #useful := noul ("Is " <> name <> " relevant?") :& #contradicts := noul ("Does " <> name <> " contradict the premise?") :& Nil)
                                  | name <- ["e1", "e.2"] ]
-            :& #evidence := group (#gap := noul "Does answering require source not supplied?" :& Nil)
+            :& #evidence := (#gap := noul "Does answering require source not supplied?" :& Nil)
             :& Nil
-  case prepare jevLatest world packet of
-    Left e -> check c ("packet: prepare failed: " ++ show e) False
-    Right prepared -> do
-      let qs = questionsOf (requestValue prepared)
+  case request jevLatest world packet of
+    Left e -> check c ("packet: request failed: " ++ show e) False
+    Right req -> do
+      let qs = questionsOf req
       checkEq c "packet: eight flattened questions" 8 (length qs)
       check c "packet: injective path for a key containing a dot" ("children.e\\.2.useful" `elem` map fst qs)
       checkEq c "packet: alternative keys are the labels and runtime keys" (Just ["ask_model", "publication_gate", "telemetry", "use_witness"])
         (lookup "next" qs >>= field "criteria" >>= \case
           Object o -> Just (sort (map Key.toText (KeyMap.keys o)))
           _ -> Nothing)
-      checkEq c "packet: typed description reaches the wire" (Just "The current span already answers the inquiry")
+      checkEq c "packet: wording reaches the wire" (Just "The current span already answers the inquiry")
         (lookup "next" qs >>= field "criteria" >>= field "use_witness")
-      check c "packet: preview renders" (T.length (preview prepared) > 100)
+      checkEq c "packet: rubric levels in order" (Just (Array (V.fromList ["No current action depends on this", "Useful at the next ordinary checkpoint", "A worker cannot take its next action", "Continuing would invalidate ongoing work"])))
+        (lookup "urgency" qs >>= field "criteria")
+      checkEq c "packet: plain state stays as given" (Just (String "Where can cancellation drop a computed reply?")) (field "state" req >>= field "inquiry")
   r2 <- roundTrip (stubSplit ["ask_model", "publication_gate"] "") jevLatest world packet
   case r2 of
     Left e -> check c ("packet: " ++ show e) False
     Right resp -> do
       let a = answers resp
-      checkEq c "packet: resolved model kept" "stub-1.0" (resolvedModel resp)
+      checkEq c "packet: usage kept" (Just (Number 100)) (field "input_tokens" (usage resp))
       checkEq c "packet: inline handler list ran the chosen branch" "handback preference"
-        (caseOf a.next (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| onMany (\e -> "follow " ++ T.unpack (elementKey e))))
-      checkEq c "packet: reusable handler list" "handback preference" (caseOf a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
-      checkEq c "packet: accept then handle a contender" (Right "follow publication_gate")
-        (case [s | (_, s) <- ranked a.next, "publication_gate" == keyOf s] of
+        (handle (chosen a.next) (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| onMany (\k _ -> "follow " ++ T.unpack k)))
+      checkEq c "packet: reusable handler list" "handback preference" (handle (chosen a.next) (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
+      checkEq c "packet: contenders eliminate through the same handlers" (Right "follow publication_gate")
+        (case [s | (_, s) <- contenders 0 a.next, "publication_gate" == keyOf s] of
           s : _ -> Right (handle s (handlers (const "no")))
           [] -> Left ())
+      checkEq c "packet: a floor keeps only the mass above it" 1 (length (contenders 0.5 a.next))
       check c "packet: near-tie is structured doubt" (case accept (Policy 0 0.7 0) a.next of Left (NearTie _ _) -> True; _ -> False)
-      check c "packet: lenient accepts the winner" (either (const False) (\s -> keyOf s == "ask_model") (accept lenient a.next))
-      checkEq c "packet: noul vocabulary" True (yesAbove 0.7 a.enough)
+      check c "packet: an empty policy accepts the winner" (either (const False) (\s -> keyOf s == "ask_model") (accept (Policy 0 0 0) a.next))
+      checkEq c "packet: noul" 0.8 (yes a.enough)
       checkEq c "packet: rubric expectation" 1.5 (expectation a.urgency)
       checkEq c "packet: typed rubric index" 0.5 (massAtOrAbove #blocked a.urgency)
       checkEq c "packet: nearest level rounds the expectation" "blocked" (levelOf a.urgency)
+      checkEq c "packet: one confidence for choices and scores" (0.7, 0.5) (confidence a.next, confidence a.urgency)
       check c "packet: each answers are a transparent keyed list" (case lookup "e.2" a.children of
-        Just sub -> probabilityYes sub.useful == 0.8
+        Just sub -> yes sub.useful == 0.8
         Nothing -> False)
-      check c "packet: group answers are the transparent sub-packet" (probabilityYes a.evidence.gap == 0.8)
+      check c "packet: nested packet answers are the transparent sub-packet" (yes a.evidence.gap == 0.8)
       check c "packet: payload-independent Show" (length (show a) > 50)
 
-  -- append, and structured descriptions on bare alternatives with a describe override
-  let front = #mechanism := choice @Mechanisms "Which mechanism explains the second callback?"
-                (#retry_redelivery (object ["what" .= ("retry redelivers m42" :: Text)], Command "just test-target actor retry")
-                .| #double_admission ("The inbox admitted two records", Command "just test-target node inbox")
-                .| #unknown (Null, ()))
+  -- append; structured wording; premise and structured members on a question
+  let front = #mechanism := choice "Which mechanism explains the second callback?"
+                (  alt #retry_redelivery (object ["what" .= ("retry redelivers m42" :: Text)]) (Command "just test-target actor retry")
+                .| alt #double_admission "The inbox admitted two records" (Command "just test-target node inbox")
+                .| alt #unknown Null () )
               :& Nil
-      back = #check := given "the mechanism is retry redelivery" (choice @Routes "Which check verifies?" (#use_witness (Witness "w") .| describe (object ["why" .= ("override" :: Text)]) (#ask_model (Handoff "h")) .| many edges))
+      back = #check := given "the mechanism is retry redelivery" (about [("focus", "callbacks")] (choice "Which check verifies?"
+                (alt #use_witness "w" (Witness "w") .| alt #ask_model "h" (Handoff "h") .| many edges)))
            :& Nil
       both = front ++. back
-  case prepare jevLatest world both of
+  case request jevLatest world both of
     Left e -> check c ("append: " ++ show e) False
-    Right prepared -> do
-      let qs = questionsOf (requestValue prepared)
+    Right req -> do
+      let qs = questionsOf req
       checkEq c "append: both fragments present" ["check", "mechanism"] (sort (map fst qs))
-      checkEq c "append: structured bare description" (Just (object ["what" .= ("retry redelivers m42" :: Text)]))
+      checkEq c "append: structured wording" (Just (object ["what" .= ("retry redelivers m42" :: Text)]))
         (lookup "mechanism" qs >>= field "criteria" >>= field "retry_redelivery")
-      checkEq c "append: null description admitted" (Just Null) (lookup "mechanism" qs >>= field "criteria" >>= field "unknown")
-      checkEq c "append: describe overrides the typed description" (Just (object ["why" .= ("override" :: Text)]))
-        (lookup "check" qs >>= field "criteria" >>= field "ask_model")
-      checkEq c "append: premise wraps the instruction"
-        (Just (object ["premise" .= ("the mechanism is retry redelivery" :: Text), "instructions" .= ("Which check verifies?" :: Text)]))
+      checkEq c "append: null wording admitted" (Just Null) (lookup "mechanism" qs >>= field "criteria" >>= field "unknown")
+      checkEq c "append: premise wraps the structured question"
+        (Just (object ["premise" .= ("the mechanism is retry redelivery" :: Text), "instructions" .= object ["question" .= ("Which check verifies?" :: Text), "focus" .= ("callbacks" :: Text)]]))
         (lookup "check" qs >>= field "instructions")
   r3 <- roundTrip (stubSplit ["retry_redelivery"] "double_admission") jevLatest world both
   case r3 of
     Left e -> check c ("append: " ++ show e) False
     Right resp -> do
       let a = answers resp
-          live = [s | (m, s) <- ranked a.mechanism, m > 0.3]
+          live = contenders 0.3 a.mechanism
       checkEq c "append: near-tie keeps two mechanisms alive" 2 (length live)
       checkEq c "append: contenders eliminate through the same handlers" ["just test-target actor retry", "just test-target node inbox"]
-        [handle s (#retry_redelivery (\(Command x) -> x) .| #double_admission (\(Command x) -> x) .| #unknown (\() -> "")) | s <- live]
+        [handle s (#retry_redelivery (\(Command x) -> x) .| #double_admission (\(Command x) -> x) .| #unknown (\() -> "")) | (_, s) <- live]
 
-  -- pools: name from the cell label; references used in a separately built fragment
+  -- pools: named at their binding; the state envelope follows the packet;
+  -- every question that draws on a pool names it
   let probes = pool #probes [("run_retry_fixture", "Retries m42 and counts callbacks", Command "just test-target actor retry"), ("read.gate", "Reads publish_if_active", Command "sed -n 30,60p x.rs")]
       relevance r = #useful := askAbout r "Does this probe help answer the inquiry?" :& Nil
       pooledPacket = #probes := probes
-                  :& #best := choice @(Many Command) "Which probe first?" (manyFrom probes)
+                  :& #best := choice "Which probe first?" (manyFrom probes .| alt #none "No probe helps" ())
                   :& #per := eachIn probes relevance
                   :& Nil
-  case prepare jevLatest world pooledPacket of
-    Left e -> checkEq c "pools: plain state is rejected when pools are declared" PoolsRequirePooledState e
-    Right _ -> check c "pools: plain state is rejected when pools are declared" False
-  case prepare jevLatest (pooled world) pooledPacket of
+  case request jevLatest world pooledPacket of
     Left e -> check c ("pools: " ++ show e) False
-    Right prepared -> do
-      let req = requestValue prepared
-          qs = questionsOf req
-      checkEq c "pools: explicit envelope with context and pools"
+    Right req -> do
+      let qs = questionsOf req
+      checkEq c "pools: envelope with context and pools when a pool is declared"
         (Just (object ["run_retry_fixture" .= ("Retries m42 and counts callbacks" :: Text), "read.gate" .= ("Reads publish_if_active" :: Text)]))
         (field "state" req >>= field "pools" >>= field "probes")
       checkEq c "pools: context keeps the author's state" (Just (String "Where can cancellation drop a computed reply?"))
         (field "state" req >>= field "context" >>= field "inquiry")
-      checkEq c "pools: pooled choice sends null descriptions" (Just Null) (lookup "best" qs >>= field "criteria" >>= field "read.gate")
+      checkEq c "pools: pooled choice sends null wording" (Just Null) (lookup "best" qs >>= field "criteria" >>= field "read.gate")
+      checkEq c "pools: pooled choice names its pool beside the question"
+        (Just (object ["question" .= ("Which probe first?" :: Text), "pool" .= ("probes" :: Text)]))
+        (lookup "best" qs >>= field "instructions")
       checkEq c "pools: askAbout addresses by structured fields"
         (Just (object ["question" .= ("Does this probe help answer the inquiry?" :: Text), "pool" .= ("probes" :: Text), "key" .= ("read.gate" :: Text)]))
         (lookup "per.read\\.gate.useful" qs >>= field "instructions")
       checkEq c "pools: no question emitted for the declaration" 3 (length qs)
-  r4 <- roundTrip (stub "read.gate") jevLatest (pooled world) pooledPacket
+  r4 <- roundTrip (stub "read.gate") jevLatest world pooledPacket
   case r4 of
     Left e -> check c ("pools: " ++ show e) False
     Right resp -> do
       let a = answers resp
-      checkEq c "pools: chosen element keeps the local description" (Just "Reads publish_if_active")
-        (caseOf a.best (onMany (\e -> Just (elementDescription e))))
-      checkEq c "pools: payload lookup after the fact" (Just (Command "sed -n 30,60p x.rs"))
-        (lookup "read.gate" [(k, p) | (k, _, p) <- poolEntries a.probes])
-  let other = pool #probes [("run_retry_fixture", "different text", Command "x")] :: Q Value (PoolDecl "probes" Command)
-      conflicting = #probes := probes :& #best := choice @(Many Command) "?" (manyFrom other) :& Nil
-  checkEq c "pools: a use whose contents differ from the declaration is a conflict" (Left (ConflictingPool "probes"))
-    (fmap (const ()) (prepare jevLatest (pooled world) conflicting))
-  checkEq c "pools: an undeclared pool use is rejected" (Left (UndeclaredPool "probes"))
-    (fmap (const ()) (prepare jevLatest (pooled world) (#best := choice @(Many Command) "?" (manyFrom probes) :& Nil)))
-  checkEq c "pools: a packet of only pools has no questions" (Left EmptyQuestionMap)
-    (fmap (const ()) (prepare jevLatest (pooled world) (#probes := probes :& Nil)))
-
-  -- the ordinary-sum seam: same endpoint, case elimination
-  r5 <- jev1 (stub "read_source") jevLatest world
-          (choice @(Sum Next) "What next?" (sumOffer [("rerun the check", Rerun (Command "c")), ("read the source", ReadSource "x.rs"), ("ask", AskModel (Handoff "h"))]))
-  check c "sum: constructor names are wire keys and case eliminates" (case r5 of
-    Right a -> (case chosen a of SelSum _ (ReadSource s) -> s == "x.rs"; _ -> False) && sort (map fst (alternatives a)) == ["ask_model", "read_source", "rerun"]
-    Left _ -> False)
+      checkEq c "pools: chosen element keeps the local payload" (Just (Command "sed -n 30,60p x.rs"))
+        (handle (chosen a.best) (onMany (\_ p -> Just p) .| #none (\() -> Nothing)))
+      checkEq c "pools: per-entry answers keyed by pool key" ["read.gate", "run_retry_fixture"] (sort (map fst a.per))
+  let other = pool #probes [("run_retry_fixture", "different text", Command "x")]
+      conflicting = #probes := probes :& #best := choice "?" (manyFrom other) :& Nil
+  checkEq c "pools: a use whose contents differ from the declaration is a conflict" (Left (Prepare (Core.ConflictingPool "probes")))
+    (fmap (const ()) (request jevLatest world conflicting))
+  checkEq c "pools: an undeclared pool use is rejected" (Left (Prepare (Core.UndeclaredPool "probes")))
+    (fmap (const ()) (request jevLatest world (#best := choice "?" (manyFrom probes) :& Nil)))
+  checkEq c "pools: a packet of only pools has no questions" (Left (Prepare Core.EmptyQuestionMap))
+    (fmap (const ()) (request jevLatest world (#probes := probes :& Nil)))
+  let dup = pool #dup [("same", "first", Command "1"), ("same", "second", Command "2")]
+  checkEq c "pools: duplicate keys in a declaration are rejected" (Left (Prepare (Core.DuplicatePoolKey "dup" "same")))
+    (fmap (const ()) (request jevLatest world (#dup := dup :& #q := eachIn dup relevance :& Nil)))
+  -- two independently written fragments whose pools reuse local keys
+  let buildChecks = pool #build_checks [("retry", "Retry the build", Command "just build"), ("cancel", "Cancel it", Command "just cancel")]
+      mailChecks = pool #mailbox_checks [("retry", "Retry delivery", Command "just retry"), ("cancel", "Drop it", Command "just drop")]
+      fragA = #build_checks := buildChecks :& #build_next := choice "Build step?" (manyFrom buildChecks) :& Nil
+      fragB = #mailbox_checks := mailChecks :& #mail_next := choice "Mail step?" (manyFrom mailChecks) :& Nil
+  case request jevLatest world (fragA ++. fragB) of
+    Left e -> check c ("pools: composition " ++ show e) False
+    Right req -> do
+      let qs = questionsOf req
+      checkEq c "pools: fragments with overlapping local keys compose" (Just (String "mailbox_checks"), Just (String "build_checks"))
+        (lookup "mail_next" qs >>= field "instructions" >>= field "pool", lookup "build_next" qs >>= field "instructions" >>= field "pool")
+      checkEq c "pools: both pools declared in state" 2 (maybe 0 (\case Object o -> KeyMap.size o; _ -> 0) (field "state" req >>= field "pools"))
+  checkEq c "pools: one pool per choice" (Left (Prepare (Core.MultiplePoolsInChoice "value")))
+    (fmap (const ()) (request jevLatest world (#build_checks := buildChecks :& #mailbox_checks := mailChecks :& #value := choice "?" (manyFrom buildChecks .| manyFrom mailChecks) :& Nil)))
 
   -- preparation errors, every builder total
-  let prepErr :: (Endpoint Value e, CellOk "value" e) => Q Value e -> Maybe PrepError
-      prepErr q = either Just (const Nothing) (prepare jevLatest world (#value := q :& Nil))
-  checkEq c "prepare: empty runtime group with nothing else is an empty offer" (Just (EmptyOffer "value"))
-    (prepErr (choice @(Many Edge) "?" (many [])))
-  checkEq c "prepare: duplicate runtime keys" (Just (DuplicateKeys "value" ["a"]))
-    (prepErr (choice @(Many Edge) "?" (many [("a", Null, Edge "x"), ("a", Null, Edge "y")])))
-  checkEq c "prepare: runtime key colliding with a static label" (Just (KeyCollidesWithLabel "value" "use_witness"))
-    (prepErr (choice @Routes "?" (#use_witness (Witness "w") .| #ask_model (Handoff "h") .| many [("use_witness", Null, Edge "e")])))
-  checkEq c "prepare: two runtime groups colliding" (Just (KeyCollidesWithLabel "value" "k"))
-    (prepErr (choice @(Many Edge :|: Many Command) "?" (many [("k", Null, Edge "e")] .| many [("k", Null, Command "c")])))
-  checkEq c "prepare: bare-number description rejected" (Just (BadDescription "value" "retry_redelivery"))
-    (prepErr (choice @Mechanisms "?" (#retry_redelivery (Number 1, Command "") .| #double_admission (Null, Command "") .| #unknown (Null, ()))))
-  checkEq c "prepare: bare-boolean instructions rejected" (Just (BadInstructions "value"))
-    (prepErr (noulWith (Instructions (Bool True)) noCriteria))
-  checkEq c "prepare: duplicate structured instruction key" (Just (DuplicateInstructionKey "value" "question"))
-    (prepErr (noulOn (about "q" [("question", "again")]) noCriteria))
-  checkEq c "prepare: bare rubric without runtime descriptions" (Just (RubricMismatch "value"))
-    (prepErr (score @Breadth "?"))
-  checkEq c "prepare: runtime descriptions must match the rubric labels" (Just (RubricMismatch "value"))
-    (prepErr (scoreWith @Breadth (question "?") [("localized", "a"), ("adjacent", "b")]))
-  checkEq c "prepare: null level rejected" (Just (BadLevel "value" 0))
-    (prepErr (scale (question "?") (levelsOf [Null, "b"])))
-  checkEq c "prepare: eleven runtime levels rejected" (Just (BadLevelCount "value" 11))
-    (prepErr (scale (question "?") (levelsOf (map (String . T.pack . show) [1 :: Int .. 11]))))
-  checkEq c "prepare: bare-number state rejected" (Just BadStateShape)
-    (either Just (const Nothing) (prepare jevLatest (stateOf (Number 1)) (#value := noul "?" :& Nil)))
-  checkEq c "prepare: empty exact key rejected" (Just (EmptyQuestionKey ""))
-    (either Just (const Nothing) (prepare jevLatest world (exact [("", someQ (noul "?"))])))
+  let prepErr :: (Core.Endpoint Value e, Core.CellOk "value" e) => Q Value e -> Maybe PrepError
+      prepErr q = case request jevLatest world (#value := q :& Nil) of
+        Left (Prepare e) -> Just e
+        _ -> Nothing
+      nine = level #l0 "" .| level #l1 "" .| level #l2 "" .| level #l3 "" .| level #l4 "" .| level #l5 "" .| level #l6 "" .| level #l7 "" .| level #l8 ""
+  checkEq c "prepare: empty runtime group with nothing else is an empty offer" (Just (Core.EmptyOffer "value"))
+    (prepErr (choice "?" (many ([] :: [(Text, Value, Edge)]))))
+  checkEq c "prepare: duplicate runtime keys" (Just (Core.DuplicateKeys "value" ["a"]))
+    (prepErr (choice "?" (many [("a", Null, Edge "x"), ("a", Null, Edge "y")])))
+  checkEq c "prepare: runtime key colliding with a static label" (Just (Core.KeyCollidesWithLabel "value" "use_witness"))
+    (prepErr (choice "?" (alt #use_witness "w" (Witness "w") .| alt #ask_model "h" (Handoff "h") .| many [("use_witness", Null, Edge "e")])))
+  checkEq c "prepare: two runtime groups colliding" (Just (Core.KeyCollidesWithLabel "value" "k"))
+    (prepErr (choice "?" (many [("k", Null, Edge "e")] .| many [("k", Null, Command "c")])))
+  checkEq c "prepare: bare-number wording rejected" (Just (Core.BadDescription "value" "retry_redelivery"))
+    (prepErr (choice "?" (alt #retry_redelivery (Number 1) (Command "") .| alt #unknown Null ())))
+  checkEq c "prepare: bare-boolean instructions rejected" (Just (Core.BadInstructions "value"))
+    (prepErr (noulWith (Core.Instructions (Bool True)) Omitted))
+  checkEq c "prepare: duplicate structured member" (Just (Core.DuplicateInstructionKey "value" "question"))
+    (prepErr (about [("question", "again")] (noul "q")))
+  checkEq c "prepare: a premise does not hide a duplicate member" (Just (Core.DuplicateInstructionKey "value" "question"))
+    (prepErr (given "premise" (about [("question", "again")] (noul "q"))))
+  checkEq c "prepare: eleven levels rejected" (Just (Core.BadLevelCount "value" 11))
+    (prepErr (score "?" (level #l9 "" .| level #l10 "" .| nine)))
+  checkEq c "prepare: null level rejected" (Just (Core.BadLevel "value" 0))
+    (prepErr (score "?" (level #a Null .| level #b "b")))
+  checkEq c "prepare: bare-number state rejected" (Just Core.BadStateShape)
+    (case request jevLatest (state (Number 1)) (#value := noul "?" :& Nil) of Left (Prepare e) -> Just e; _ -> Nothing)
 
   -- malformed responses are decode errors, never values
-  let groups = choice @(Many Command) "?" (many [("run_retry_fixture", "r", Command "a"), ("read_publish_gate", "p", Command "b")])
-      expectDecode :: (Endpoint Value e, CellOk "value" e) => String -> Value -> Q Value e -> (DecodeError -> Bool) -> IO ()
+  let groups = choice "?" (many [("run_retry_fixture", "r", Command "a"), ("read_publish_gate", "p", Command "b")])
+      expectDecode :: (Core.Endpoint Value e, Core.CellOk "value" e) => String -> Value -> Q Value e -> (DecodeError -> Bool) -> IO ()
       expectDecode name resp q want = do
         r <- jev1 (fixed resp) jevLatest world q
         check c name (case r of Left (Decode e) -> want e; _ -> False)
       choiceAnswer sel ms = object ["type" .= ("choice" :: Text), "choice" .= sel, "confidence" .= (0.5 :: Double), "probabilities" .= object [Key.fromText k .= p | (k, p) <- ms]]
-  expectDecode "decode: unknown selection rejected" (answerMap [("value", choiceAnswer ("alien" :: Text) [("alien", 1 :: Double)])]) groups (\case UnknownSelection _ "alien" -> True; _ -> False)
-  expectDecode "decode: wrong answer kind rejected" (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)])]) groups (\case WrongKind _ -> True; _ -> False)
+  expectDecode "decode: unknown selection rejected" (answerMap [("value", choiceAnswer ("alien" :: Text) [("alien", 1 :: Double)])]) groups (\case Core.UnknownSelection _ "alien" -> True; _ -> False)
+  expectDecode "decode: wrong answer kind rejected" (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)])]) groups (\case Core.WrongKind _ -> True; _ -> False)
   expectDecode "decode: probability key outside the submitted set rejected"
-    (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.5 :: Double), ("read_publish_gate", 0.3), ("ghost", 0.2)])]) groups (\case ExtraMass _ "ghost" -> True; _ -> False)
+    (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.5 :: Double), ("read_publish_gate", 0.3), ("ghost", 0.2)])]) groups (\case Core.ExtraMass _ "ghost" -> True; _ -> False)
   expectDecode "decode: missing mass rejected"
-    (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 1 :: Double)])]) groups (\case MissingMass _ "read_publish_gate" -> True; _ -> False)
-  let rubric = levelsOf ["no risk", "adjacent cases", "crosses a contract"]
+    (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 1 :: Double)])]) groups (\case Core.MissingMass _ "read_publish_gate" -> True; _ -> False)
+  let rubric = score "?" (level #none "no risk" .| level #adjacent "adjacent cases" .| level #contract "crosses a contract")
       scoreAnswer lg = object ["type" .= ("score" :: Text), "score" .= (1 :: Double), "confidence" .= (0.5 :: Double), "legend" .= object lg
         , "probabilities" .= object ["0" .= (0.3 :: Double), "1" .= (0.4 :: Double), "2" .= (0.3 :: Double)]]
   expectDecode "decode: altered legend rejected" (answerMap [("value", scoreAnswer ["0" .= ("no risk" :: Text), "1" .= ("altered" :: Text), "2" .= ("crosses a contract" :: Text)])])
-    (scale (question "?") rubric) (\case LegendMismatch _ -> True; _ -> False)
+    rubric (\case Core.LegendMismatch _ -> True; _ -> False)
   expectDecode "decode: extra legend key rejected" (answerMap [("value", scoreAnswer ["0" .= ("no risk" :: Text), "1" .= ("adjacent cases" :: Text), "2" .= ("crosses a contract" :: Text), "3" .= ("x" :: Text)])])
-    (scale (question "?") rubric) (\case LegendMismatch _ -> True; _ -> False)
-  expectDecode "decode: typed rubric legend must match the typed descriptions"
-    (answerMap [("value", object ["type" .= ("score" :: Text), "score" .= (1 :: Double), "confidence" .= (0.5 :: Double)
-      , "legend" .= object ["0" .= ("No current action depends on this" :: Text), "1" .= ("altered" :: Text), "2" .= ("A worker cannot take its next action" :: Text), "3" .= ("Continuing would invalidate ongoing work" :: Text)]
-      , "probabilities" .= object ["0" .= (0.25 :: Double), "1" .= (0.25 :: Double), "2" .= (0.25 :: Double), "3" .= (0.25 :: Double)]])])
-    (score @Urgency "?") (\case LegendMismatch _ -> True; _ -> False)
+    rubric (\case Core.LegendMismatch _ -> True; _ -> False)
   let big n = object ["id" .= Number n]
   expectDecode "decode: legend equality is exact, not Double"
     (answerMap [("value", object ["type" .= ("score" :: Text), "score" .= (0.5 :: Double), "confidence" .= (0.5 :: Double)
       , "legend" .= object ["0" .= big 9007199254740993, "1" .= big 9007199254740992], "probabilities" .= object ["0" .= (0.5 :: Double), "1" .= (0.5 :: Double)]])])
-    (scale (question "?") (levelsOf [big 9007199254740992, big 9007199254740993])) (\case LegendMismatch _ -> True; _ -> False)
-  expectDecode "decode: out-of-range probability rejected" (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (1.5 :: Double)])]) (noul "?") (\case ValueOutOfRange _ _ -> True; _ -> False)
+    (score "?" (level #a (big 9007199254740992) .| level #b (big 9007199254740993))) (\case Core.LegendMismatch _ -> True; _ -> False)
+  expectDecode "decode: out-of-range probability rejected" (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (1.5 :: Double)])]) (noul "?") (\case Core.ValueOutOfRange _ _ -> True; _ -> False)
   expectDecode "decode: unexpected answer key rejected"
-    (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)]), ("stray", object ["type" .= ("noul" :: Text), "noul" .= (0.1 :: Double)])]) (noul "?") (\case UnexpectedAnswer "stray" -> True; _ -> False)
-  expectDecode "decode: provider rejection surfaces as a parsed Rejection" (object ["detail" .= ("Too many choices." :: Text)]) (noul "?") (\case ProviderRejected (RejectionMessage _) -> True; _ -> False)
-  r6 <- jev1 (fixed (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)])])) jevLatest world (rawUnchecked (object ["type" .= ("noul" :: Text)]))
-  check c "decode: raw answer is the original parsed JSON" (case r6 of
-    Right a -> rawAnswer a == object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)]
-    Left _ -> False)
+    (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)]), ("stray", object ["type" .= ("noul" :: Text), "noul" .= (0.1 :: Double)])]) (noul "?") (\case Core.UnexpectedAnswer "stray" -> True; _ -> False)
+  expectDecode "decode: provider rejection surfaces as a parsed Rejection" (object ["detail" .= ("Too many choices." :: Text)]) (noul "?") (\case Core.ProviderRejected (Core.RejectionMessage _) -> True; _ -> False)
   r7 <- roundTrip (fixed (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.6 :: Double), ("read_publish_gate", 0.5)])])) jevLatest world (#value := groups :& Nil)
   check c "decode: rounded sum is a diagnostic, not a rejection" (case r7 of
-    Right resp -> length (diagnostics resp) == 1
+    Right resp -> length (Core.diagnostics resp) == 1
     Left _ -> False)
   where
-    keyOf :: Selected Routes -> Text
+    keyOf :: Core.Selected Value Routes -> Text
     keyOf = selectedKey

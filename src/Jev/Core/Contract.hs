@@ -1,6 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -13,27 +11,19 @@ module Jev.Core.Contract
     Presence (..)
   , Instructions (..)
   , question
-  , structured
-  , about
   , Criteria (..)
   , noCriteria
   , yesOnly
   , noOnly
   , bothSides
-  , PoolMode (..)
   , State (..)
-  , stateOf
-  , stateText
-  , stateObject
-  , stateArray
-  , pooled
-  , stateValue
-  , isPooled
+  , state
   , checkState
   , checkInstructions
   , checkDescription
   , checkLevel
   , renderInstructions
+  , extras
     -- * Wire questions
   , WireQuestion (..)
   , questionValue
@@ -69,23 +59,25 @@ import Jev.Core.Json
 -- omitted criteria block or side from an explicit null.
 data Presence a = Omitted | Present a deriving (Eq, Show)
 
--- | Instructions. 'Structured' keeps its pairs until 'prepare' so a
--- duplicate key is an error, never a silent merge.
+-- | Instructions. 'Structured' and 'Premised' keep their structure until
+-- preparation so a duplicate key is an error, never a silent merge.
 data Instructions v
   = NoInstructions
   | Instructions v                 -- ^ any value the provider admits: string, object, array, or null
   | Structured [(Text, v)]         -- ^ an object, checked for duplicate keys at preparation
+  | Premised Text (Instructions v) -- ^ a runtime premise over the original, rendered as @{"premise", "instructions"}@
 
 question :: JsonValue v => Text -> Instructions v
 question = Instructions . jString
 
-structured :: [(Text, v)] -> Instructions v
-structured = Structured
-
--- | @about q extras@ is @{"question": q, ...extras}@; an extras @question@
--- key is a preparation error.
-about :: JsonValue v => Text -> [(Text, v)] -> Instructions v
-about q extras = Structured (("question", jString q) : extras)
+-- | Add structured members. A plain question becomes @{"question": q, ...}@;
+-- an existing object gains the members; a premise keeps wrapping.
+extras :: JsonValue v => [(Text, v)] -> Instructions v -> Instructions v
+extras kv = \case
+  NoInstructions -> Structured kv
+  Instructions q -> Structured (("question", q) : kv)
+  Structured kv0 -> Structured (kv0 ++ kv)
+  Premised p i -> Premised p (extras kv i)
 
 -- | Noul criteria: each side independently omitted, null, or content.
 data Criteria v = Criteria
@@ -105,45 +97,16 @@ noOnly n = Present (Just (Criteria Omitted (Present n)))
 bothSides :: v -> v -> Presence (Maybe (Criteria v))
 bothSides y n = Present (Just (Criteria (Present y) (Present n)))
 
--- | Whether a state is the plain author value or the explicit envelope
--- @{"context": ..., "pools": ...}@ that pool-bearing packets require.
-data PoolMode = Plain | Pooled
-
--- | The shared input to every question. Plain states render as given;
--- pooled states render under @context@ beside the declared pools.
-data State (p :: PoolMode) v where
-  PlainState :: v -> State 'Plain v
-  PooledState :: v -> State 'Pooled v
+-- | The shared input to every question. Rendered as given, or under
+-- @context@ beside the declared pools when the packet declares any.
+newtype State v = State { stateValue :: v }
 
 -- | Total; the outer shape (string, object, or array) is checked at
 -- preparation.
-stateOf :: v -> State 'Plain v
-stateOf = PlainState
+state :: v -> State v
+state = State
 
-stateText :: JsonValue v => Text -> State 'Plain v
-stateText = PlainState . jString
-
-stateObject :: JsonValue v => [(Text, v)] -> State 'Plain v
-stateObject = PlainState . jObject
-
-stateArray :: JsonValue v => [v] -> State 'Plain v
-stateArray = PlainState . jArray
-
--- | Opt into the envelope. Address your own fields under @context@.
-pooled :: State 'Plain v -> State 'Pooled v
-pooled (PlainState v) = PooledState v
-
-stateValue :: State p v -> v
-stateValue = \case
-  PlainState v -> v
-  PooledState v -> v
-
-isPooled :: State p v -> Bool
-isPooled = \case
-  PlainState _ -> False
-  PooledState _ -> True
-
-checkState :: JsonValue v => State p v -> Either PrepError ()
+checkState :: JsonValue v => State v -> Either PrepError ()
 checkState st = case jView (stateValue st) of
   VString _ -> Right ()
   VObject _ -> Right ()
@@ -165,12 +128,14 @@ checkInstructions key = \case
   Structured kv -> case [k | (k, _) <- kv, length (filter ((== k) . fst) kv) > 1] of
     k : _ -> Left (DuplicateInstructionKey key k)
     [] -> Right ()
+  Premised _ inner -> checkInstructions key inner
 
 renderInstructions :: JsonValue v => Instructions v -> [(Text, v)]
 renderInstructions = \case
   NoInstructions -> []
   Instructions v -> [("instructions", v)]
   Structured kv -> [("instructions", jObject kv)]
+  Premised p inner -> [("instructions", jObject (("premise", jString p) : renderInstructions inner))]
 
 checkDescription :: JsonValue v => Text -> Text -> v -> Either PrepError ()
 checkDescription key alt v = if admissible v then Right () else Left (BadDescription key alt)
@@ -219,7 +184,6 @@ data PrepError
   | KeyCollidesWithLabel Text Text
   | TooManyAlternatives Text Int
   | BadLevelCount Text Int
-  | RubricMismatch Text
   | DuplicateQuestionPath Text
   | EmptyQuestionMap
   | EmptyQuestionKey Text
@@ -231,8 +195,9 @@ data PrepError
   | UndeclaredPool Text
   | ConflictingPool Text
   | DuplicatePool Text
+  | DuplicatePoolKey Text Text
+  | MultiplePoolsInChoice Text
   | PoolDeclaredInNested Text
-  | PoolsRequirePooledState
   deriving (Show, Eq)
 
 -- | A provider rejection, parsed from the observed 400 and 422 bodies.

@@ -5,17 +5,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
--- expect: #rerun stands alone where the disjunction continues; chain alternatives with .|
+-- expect: #rerun stands alone where the disjunction continues; chain handlers with .|
 module RejectMissingHandler where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-st :: State 'Plain
-st = stateText "s"
-
 -- Every alternative needs a handler; a lone handler cannot stand for two.
 type Next = "rerun" ::> () :|: "ask_model" ::> ()
 
 bad :: A Value (Choice Next) -> String
-bad a = caseOf a (#rerun (\() -> "rerun"))
+bad a = handle (chosen a) (#rerun (\() -> "rerun"))

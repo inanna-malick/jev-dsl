@@ -11,9 +11,6 @@ module RejectPoolLabelMismatch where
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-st :: State 'Plain
-st = stateText "s"
-
 -- A pool is declared under the label that is its name; anything else misleads the reader.
-bad :: Either PrepError (Prepared (Packet '["edges" ::= PoolDecl "probes" ()]))
-bad = prepare jevLatest (pooled st) (#edges := pool #probes [("k", Null, ())] :& Nil)
+bad :: Either JevError Value
+bad = request jevLatest (state "s") (#edges := pool #probes [("k", Null, ())] :& Nil)

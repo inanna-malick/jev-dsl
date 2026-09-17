@@ -12,13 +12,15 @@ module Golden (goldenChecks, genericChecks) where
 
 import Check
 import Control.Monad (forM_, unless)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text)
 import qualified Data.Vector as V
 import Fixtures
+import qualified Jev.Core as Core
 import Jev.Operators
+import Replay
 import Shape
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Environment (lookupEnv)
@@ -29,14 +31,14 @@ import qualified Data.Aeson as Aeson
 -- Packets for the probe family that shares one state and one Noul
 -- ---------------------------------------------------------------------------
 
-probeState :: State 'Plain
-probeState = stateObject
-  [ ("message", "The worker cannot proceed until the missing configuration is supplied.")
-  , ("context", object ["active" .= True, "pending" .= (2 :: Int), "previous" .= Null])
-  ]
+probeState :: State
+probeState = state (object
+  [ "message" .= ("The worker cannot proceed until the missing configuration is supplied." :: Text)
+  , "context" .= object ["active" .= True, "pending" .= (2 :: Int), "previous" .= Null]
+  ])
 
-wakeInstructions :: Instructions
-wakeInstructions = Instructions (object ["question" .= ("Does `message` describe a blocker for current work?" :: Text)])
+wakeInstructions :: Instructions Value
+wakeInstructions = Core.Instructions (object ["question" .= ("Does `message` describe a blocker for current work?" :: Text)])
 
 wakeCriteria :: Presence (Maybe (Criteria Value))
 wakeCriteria = Present (Just (Criteria
@@ -49,32 +51,30 @@ wake q = #wake := q :& Nil
 route :: [(Text, Value, ())] -> Packet '["route" ::= Choice (Many ())] Questions
 route cs = #route := choice "Who owns configuration?" (many cs) :& Nil
 
-count :: Levels -> Packet '["count" ::= Scale] Questions
+count :: [Value] -> Packet '["count" ::= Scale] Questions
 count ls = #count := scale (question "How many messages are pending in `context.pending`?") ls :& Nil
 
--- structured-001: the canonical mixed packet. Descriptions are runtime
--- values here (the capture's wording is structured), so the alternatives
--- are bare and described at the offer.
+-- structured-001: the canonical mixed packet, on the authoring surface.
 type Owners = "configuration_owner" ::> Text :|: "reviewer" ::> Text :|: "neither" ::> ()
-type UrgencyLevels = '[ Lvl "informational", Lvl "blocking" ]
+type UrgencyLevels = "informational" :|: "blocking"
 
 triage :: Packet '[ "route" ::= Choice Owners, "urgency" ::= Score UrgencyLevels, "wake" ::= Noul ] Questions
 triage =
-     #route := choiceWith (Instructions (object ["question" .= ("Who can resolve the missing configuration?" :: Text), "focus" .= ["Current blocker" :: Text]]))
-                 (  #configuration_owner (object ["handles" .= object ["configuration" .= ["missing values" :: Text, "invalid values"]]], "config")
-                 .| #reviewer (object ["handles" .= ["completed work" :: Text]], "review")
-                 .| #neither (Null, ()) )
-  :& #urgency := scoreWith (question "How urgently does this message need attention?")
-                 [ ("informational", object ["means" .= ("Useful information, work can continue" :: Text)])
-                 , ("blocking", object ["means" .= ("Work cannot continue until someone responds" :: Text)]) ]
+     #route := about [("focus", toJSON ["Current blocker" :: Text])] (choice "Who can resolve the missing configuration?"
+                 (  alt #configuration_owner (object ["handles" .= object ["configuration" .= ["missing values" :: Text, "invalid values"]]]) "config"
+                 .| alt #reviewer (object ["handles" .= ["completed work" :: Text]]) "review"
+                 .| alt #neither Null () ))
+  :& #urgency := score "How urgently does this message need attention?"
+                 (  level #informational (object ["means" .= ("Useful information, work can continue" :: Text)])
+                 .| level #blocking (object ["means" .= ("Work cannot continue until someone responds" :: Text)]) )
   :& #wake := noulWith wakeInstructions wakeCriteria
   :& Nil
 
--- world-conflict-001: Each, two Groups, static and runtime choices, static
--- levels. Rebuilt from the fixture's own wording, since it is long; the
--- structure is what the packet proves.
+-- world-conflict-001: Each, two nested packets, static and runtime choices,
+-- static levels. Rebuilt from the fixture's own wording, since it is long;
+-- the structure is what the packet proves.
 type Actions = "continue" ::> () :|: "hold_for_contract" ::> () :|: "repair_or_revalidate" ::> ()
-type Readiness = '[ Lvl "unresolved_issue", Lvl "partial_evidence", Lvl "current_applicable" ]
+type Readiness = "unresolved_issue" :|: "partial_evidence" :|: "current_applicable"
 type Kinds = "shared_decision" ::> () :|: "local_repair" ::> () :|: "ship" ::> () :|: "unknown" ::> ()
 type Pairs = "o1_o2" ::> () :|: "o3_o4" ::> () :|: "o4_o5" ::> ()
 
@@ -85,20 +85,20 @@ type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each Branch
 
 world :: Value -> World Questions
 world req =
-     #decision := group
+     #decision :=
        (  #owner := choiceWith (instr "decision.owner") (many [(k, d, ()) | (k, d) <- crit "decision.owner"])
        :& #kind := choiceWith (instr "decision.kind")
-            (  #shared_decision (descr "decision.kind" "shared_decision", ())
-            .| #local_repair (descr "decision.kind" "local_repair", ())
-            .| #ship (descr "decision.kind" "ship", ())
-            .| #unknown (descr "decision.kind" "unknown", ()) )
+            (  alt #shared_decision (descr "decision.kind" "shared_decision") ()
+            .| alt #local_repair (descr "decision.kind" "local_repair") ()
+            .| alt #ship (descr "decision.kind" "ship") ()
+            .| alt #unknown (descr "decision.kind" "unknown") () )
        :& #witness := choiceWith (instr "decision.witness")
-            (  #o1_o2 (descr "decision.witness" "o1_o2", ())
-            .| #o3_o4 (descr "decision.witness" "o3_o4", ())
-            .| #o4_o5 (descr "decision.witness" "o4_o5", ()) )
+            (  alt #o1_o2 (descr "decision.witness" "o1_o2") ()
+            .| alt #o3_o4 (descr "decision.witness" "o3_o4") ()
+            .| alt #o4_o5 (descr "decision.witness" "o4_o5") () )
        :& Nil)
   :& #branches := each [ (b, branch b) | b <- ["delivery", "search", "ui"] ]
-  :& #evidence := group
+  :& #evidence :=
        (  #old_review_applies := noulWith (instr "evidence.old_review_applies") Omitted
        :& #opinion_overrides := noulWith (instr "evidence.opinion_overrides") Omitted
        :& Nil)
@@ -106,36 +106,36 @@ world req =
   where
     branch b =
          #action := choiceWith (instr ("branches." <> b <> ".action"))
-            (  #continue (descr ("branches." <> b <> ".action") "continue", ())
-            .| #hold_for_contract (descr ("branches." <> b <> ".action") "hold_for_contract", ())
-            .| #repair_or_revalidate (descr ("branches." <> b <> ".action") "repair_or_revalidate", ()) )
+            (  alt #continue (descr ("branches." <> b <> ".action") "continue") ()
+            .| alt #hold_for_contract (descr ("branches." <> b <> ".action") "hold_for_contract") ()
+            .| alt #repair_or_revalidate (descr ("branches." <> b <> ".action") "repair_or_revalidate") () )
       :& #affected := noulWith (instr ("branches." <> b <> ".affected")) Omitted
       :& #readiness := scoreWith (instr ("branches." <> b <> ".readiness"))
-            [ ("unresolved_issue", lvl ("branches." <> b <> ".readiness") 0)
-            , ("partial_evidence", lvl ("branches." <> b <> ".readiness") 1)
-            , ("current_applicable", lvl ("branches." <> b <> ".readiness") 2) ]
+            (  level #unresolved_issue (lvl ("branches." <> b <> ".readiness") 0)
+            .| level #partial_evidence (lvl ("branches." <> b <> ".readiness") 1)
+            .| level #current_applicable (lvl ("branches." <> b <> ".readiness") 2) )
       :& Nil
     q k = maybe Null id (lookup k (requestQuestions req))
     instr k = instructionsOf (q k)
     crit k = maybe [] objectPairs (lookup "criteria" (objectPairs (q k)))
-    descr k alt = maybe Null id (lookup alt (crit k))
+    descr k a = maybe Null id (lookup a (crit k))
     lvl k i = case lookup "criteria" (objectPairs (q k)) of
       Just (Array xs) -> xs V.! i
       _ -> Null
 
 -- ---------------------------------------------------------------------------
 
-golden :: Schema s => Checks -> String -> State p -> s Questions -> (Response s -> IO ()) -> IO ()
+golden :: Schema s => Checks -> String -> State -> s Questions -> (Response s -> IO ()) -> IO ()
 golden c name st q inspectAnswers = do
   fx <- loadFixture name
-  case prepare (Model (requestModel (fixtureRequest fx))) st q of
-    Left e -> check c (name ++ ": prepare failed: " ++ show e) False
-    Right prepared -> do
-      checkEq c (name ++ ": golden request") (fixtureRequest fx) (requestValue prepared)
-      case decodeResponse prepared (fixtureResponse fx) of
+  case request (Core.Model (requestModel (fixtureRequest fx))) st q of
+    Left e -> check c (name ++ ": request failed: " ++ show e) False
+    Right req -> do
+      checkEq c (name ++ ": golden request") (fixtureRequest fx) req
+      case decode q (fixtureResponse fx) of
         Left e -> check c (name ++ ": golden decode failed: " ++ show e) False
         Right resp -> do
-          checkEq c (name ++ ": resolved model") "jev-1.13.0" (resolvedModel resp)
+          checkEq c (name ++ ": resolved model") "jev-1.13.0" (Core.responseModel resp)
           checkEq c (name ++ ": usage verbatim") (maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))) (usage resp)
           inspectAnswers resp
 
@@ -147,15 +147,15 @@ goldenChecks c = do
   golden c "structured" probeState triage $ \resp -> do
     let a = answers resp
     checkEq c "structured: route picked configuration_owner with its payload" "config"
-      (caseOf a.route (#configuration_owner id .| #reviewer id .| #neither (\() -> "none")))
+      (handle (chosen a.route) (#configuration_owner id .| #reviewer id .| #neither (\() -> "none")))
     checkEq c "structured: route confidence" 0.97 (confidence a.route)
     checkEq c "structured: urgency expectation" 1.0 (expectation a.urgency)
-    checkEq c "structured: legend is the submitted level" (Just (object ["means" .= ("Work cannot continue until someone responds" :: Text)])) (lookup "blocking" (legend a.urgency))
+    checkEq c "structured: masses keyed by level label" ["informational", "blocking"] (map fst (masses a.urgency))
     checkEq c "structured: typed level index" 1.0 (massAtOrAbove #blocking a.urgency)
-    checkEq c "structured: wake" 0.97 (probabilityYes a.wake)
+    checkEq c "structured: wake" 0.97 (yes a.wake)
 
   -- the Noul criteria family, all over one packet and one state
-  let noulGolden name criteria = golden c name probeState (wake (noulWith wakeInstructions criteria)) (\resp -> check c (name ++ ": noul in range") (probabilityYes (answers resp).wake > 0))
+  let noulGolden name criteria = golden c name probeState (wake (noulWith wakeInstructions criteria)) (\resp -> check c (name ++ ": noul in range") (yes (answers resp).wake > 0))
   noulGolden "noul-criteria-omitted" Omitted
   noulGolden "noul-criteria-null" (Present Nothing)
   noulGolden "noul-criteria-empty" (Present (Just (Criteria Omitted Omitted)))
@@ -165,18 +165,18 @@ goldenChecks c = do
 
   -- instruction forms
   let instrGolden name i = golden c name probeState (wake (noulWith i wakeCriteria)) (\_ -> pure ())
-  instrGolden "instructions-omitted" NoInstructions
-  instrGolden "instructions-null" (Instructions Null)
-  instrGolden "instructions-array" (Instructions (Array (V.fromList ["Is current work blocked?", object ["inspect" .= ("message" :: Text)]])))
-  instrGolden "instructions-empty-array" (Instructions (Array V.empty))
-  instrGolden "instructions-empty-object" (structured [])
-  instrGolden "instructions-empty-string" (Instructions "")
+  instrGolden "instructions-omitted" Core.NoInstructions
+  instrGolden "instructions-null" (Core.Instructions Null)
+  instrGolden "instructions-array" (Core.Instructions (Array (V.fromList ["Is current work blocked?", object ["inspect" .= ("message" :: Text)]])))
+  instrGolden "instructions-empty-array" (Core.Instructions (Array V.empty))
+  instrGolden "instructions-empty-object" (Core.Structured [])
+  instrGolden "instructions-empty-string" (Core.Instructions "")
 
   -- state forms
-  golden c "state-array" (stateArray [object ["message" .= ("Waiting for configuration" :: Text)], Bool True, Number 2, Null]) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-string" (stateText "") (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-object" (stateObject []) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-array" (stateArray []) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-array" (state (toJSON [object ["message" .= ("Waiting for configuration" :: Text)], Bool True, Number 2, Null])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-string" (state "") (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-object" (state (object [])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-array" (state (Array V.empty)) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
 
   -- runtime choices and description forms
   let routeGolden name cs inspectPick = golden c name probeState (route cs) inspectPick
@@ -190,25 +190,25 @@ goldenChecks c = do
     [("owner", object ["rules" .= [Bool True, Bool False, Null, Number 3.5, object ["nested" .= ["configuration" :: Text]]]], ()), ("reviewer", "Reviews completed work", ())] (\_ -> pure ())
   fx255 <- loadFixture "choice255"
   golden c "choice255" probeState (route [(k, d, ()) | (k, d) <- maybe [] objectPairs (lookup "criteria" (objectPairs (maybe Null id (lookup "route" (requestQuestions (fixtureRequest fx255))))))]) $ \resp ->
-    checkEq c "choice255: all 255 ranked" 255 (length (ranked (answers resp).route))
+    checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route))
 
   -- exact keys at the root
-  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice @(Many Text) "Who owns configuration?" (many
-    [("configuration / ~ λ", object ["owns" .= ("configuration" :: Text)], "cfg"), ("reviewer\n\"quoted\"", Null, "rev")])))]) $ \resp ->
+  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many
+    [("configuration / ~ λ", object ["owns" .= ("configuration" :: Text)], "cfg" :: Text), ("reviewer\n\"quoted\"", Null, "rev")])))]) $ \resp ->
     check c "escaped-keys: picked payload through an exact key" (case exactAnswers (answers resp) of
       [(_, SomeA _ _)] -> True
       _ -> False)
 
   -- runtime rubrics
-  golden c "score-ten" probeState (count (levelsOf [object ["pending_messages" .= i] | i <- [0 .. 9 :: Int]])) $ \resp -> do
+  golden c "score-ten" probeState (count [object ["pending_messages" .= i] | i <- [0 .. 9 :: Int]]) $ \resp -> do
     checkEq c "score-ten: expectation" 2.0 (scaleExpectation (answers resp).count)
     checkEq c "score-ten: ten levels back in order" 10 (length (scaleMasses (answers resp).count))
-  golden c "score-one" probeState (count (levelsOf [object ["pending_messages" .= (0 :: Int)]])) (\_ -> pure ())
-  golden c "score-array-level" probeState (#urgency := scale (question "How urgent is the message?") (levelsOf [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]]) :& Nil) (\_ -> pure ())
+  golden c "score-one" probeState (count [object ["pending_messages" .= (0 :: Int)]]) (\_ -> pure ())
+  golden c "score-array-level" probeState (#urgency := scale (question "How urgent is the message?") [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]] :& Nil) (\_ -> pure ())
 
   -- the large mixed program
   fxWorld <- loadFixture "world-conflict"
-  golden c "world-conflict" (stateOf (requestState (fixtureRequest fxWorld))) (world (fixtureRequest fxWorld)) $ \resp -> do
+  golden c "world-conflict" (state (requestState (fixtureRequest fxWorld))) (world (fixtureRequest fxWorld)) $ \resp -> do
     let a = answers resp
     checkEq c "world-conflict: three branches rebuilt" ["delivery", "search", "ui"] (map fst a.branches)
     checkEq c "world-conflict: delivery action" (Just "hold_for_contract")
@@ -226,11 +226,11 @@ genericOne c name req resp
       check c (name ++ ": request-level extras are inexpressible by design " ++ show extras) True
   | otherwise = do
   let Shaped model st qs rawCount = shapeRequest req
-  case prepare model st qs of
-    Left e -> check c (name ++ ": generic prepare failed: " ++ show e) False
-    Right prepared -> do
-      check c (name ++ ": generic request equals capture" ++ (if rawCount > 0 then " (" ++ show rawCount ++ " raw)" else "")) (requestValue prepared == req)
-      case decodeResponse prepared resp of
+  case request model st qs of
+    Left e -> check c (name ++ ": generic request failed: " ++ show e) False
+    Right rendered -> do
+      check c (name ++ ": generic request equals capture" ++ (if rawCount > 0 then " (" ++ show rawCount ++ " raw)" else "")) (rendered == req)
+      case decode qs resp of
         Left e -> check c (name ++ ": generic decode failed: " ++ show e) False
         Right r -> check c (name ++ ": generic decode answer count") (length (exactAnswers (answers r)) == length (requestQuestions req))
 
@@ -245,9 +245,9 @@ genericChecks c = do
   forM_ ["choice256", "model-unknown", "empty-questions", "max-tokens-exceeded"] $ \name -> do
     fx <- loadFixture name
     let Shaped model st qs _ = shapeRequest (fixtureRequest fx)
-    case prepare model st qs of
-      Right prepared -> check c (name ++ ": rejection body parsed") (case decodeResponse prepared (fixtureResponse fx) of
-        Left (ProviderRejected _) -> True
+    case request model st qs of
+      Right _ -> check c (name ++ ": rejection body parsed") (case decode qs (fixtureResponse fx) of
+        Left (Decode (Core.ProviderRejected _)) -> True
         _ -> False)
       Left _ -> check c (name ++ ": rejected locally before decode") True
   -- the full private capture set, when available

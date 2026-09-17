@@ -3,13 +3,14 @@ name:               jev-dsl
 version:            0.1.0.0
 synopsis:           Typed packet DSL for TypeSafe's Jev: one packet renders the request and decodes the response
 description:
-  Author a packet of labelled questions once. Under the Questions mode it
-  holds wording, structured criteria, and local payloads; prepared, it
-  becomes the exact request JSON. Under the Answers mode the same packet
-  holds typed selections with their retained payloads, full distributions,
-  and confidence, decoded from the response against the alternatives this
-  request sent. Alternatives, descriptions, and rubrics live in the type.
-  No network: any transport carries the JSON.
+  Author a packet of labelled questions once, as an expression whose type is
+  inferred. Built, it becomes the exact request JSON. Decoded, the same
+  packet holds typed selections with their retained payloads, full
+  distributions, and confidence, checked against the alternatives this
+  request sent. Alternatives and rubric levels are chains of labels;
+  handlers are checked against them at compile time. It covers what a
+  program wants to express with Jev, not every request the provider
+  accepts. No network: any transport carries the JSON.
 license:            MIT
 license-file:       LICENSE
 author:             Inanna Malick
@@ -63,8 +64,10 @@ test-suite jev-dsl-test
   main-is:          Main.hs
   other-modules:
     Check
+    Corpus
     Proto
     Fixtures
+    Replay
     Shape
     Golden
     Rejections

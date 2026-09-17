@@ -5,17 +5,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
--- expect: use many/manyFrom for offers and onMany for handlers
+-- expect: #edge is written where the runtime group (Many) of this disjunction stands; use onMany
 module RejectLabelOnMany where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-st :: State 'Plain
-st = stateText "s"
-
 -- A runtime group has no static label to handle by.
 type Next = "rerun" ::> () :|: Many Int
 
 bad :: A Value (Choice Next) -> String
-bad a = caseOf a (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))
+bad a = handle (chosen a) (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))

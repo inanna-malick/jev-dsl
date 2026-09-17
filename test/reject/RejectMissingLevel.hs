@@ -11,10 +11,5 @@ module RejectMissingLevel where
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-st :: State 'Plain
-st = stateText "s"
-
-type Urgency = '[ Lvl "background", Lvl "blocked" ]
-
-bad :: A Value (Score Urgency) -> Double
+bad :: A Value (Score ("background" :|: "blocked")) -> Double
 bad = massAtOrAbove #critical
