@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | A city guard at the gate, as a catamorphism with Jev for its algebra.
 --
@@ -67,6 +68,7 @@ data World = World
   , banned :: [(Text, Text)]         -- key, what is not allowed through
   , posters :: [(Text, Text)]        -- key, the wanted poster as nailed up at the gate
   , happenings :: [Happening]        -- what may happen while you stand here
+  , again :: [(Text, [Text])]        -- how a line is put the second and later times it is asked
   }
 
 data Happening = Happening
@@ -98,6 +100,10 @@ world = World
   , posters =
       [ ("thief", "WANTED: the thief of the counting house. Slight, quick, seen leaving by the north road with a heavy satchel. Reward.")
       , ("deserter", "WANTED: a deserter from the city watch, tall, scar across the left hand. Do not approach alone.") ]
+  , again =
+      [ ("Anything else before you go through?", ["Anything else?", "Still here? Go on, then, what is it?"])
+      , ("The gate's closed to you tonight. Unless you've something to add.", ["Anything to add?", "I'm still here, and the gate's still closed."])
+      , ("Stand there. The captain's on his way. Anything to say for yourself?", ["Anything else to say?", "Still talking. Go on."]) ]
   , happenings =
       [ Happening "bell" "The curfew bell rings out over the city"
           "The curfew bell starts up over the rooftops, slow and heavy."
@@ -229,7 +235,7 @@ gate w = askOrigin
         , ("changes_story", "Gives an account that differs from what they said before")
         , evasive ]
         (\answer -> if answer == "evasive" then verdict TurnAway
-                    else weighInto (verdict Admit) (say "Fine. Go on, but I've got my eye on you." (verdict Admit)) (verdict TurnAway))
+                    else weighInto (verdict Admit) (say "Fine. But I've got my eye on you." (verdict Admit)) (verdict TurnAway))
     weighInto sound thin false = Fix (Weigh "Taken together, does this traveller's story hold up?"
       ("The answers fit each other and the road they came by; an ordinary traveller on an ordinary errand sounds like this, even when brief or odd in manner", sound)
       ("A real gap: a claim that cannot be squared with the rest, a question dodged, or an errand that does not fit the cargo", thin)
@@ -244,8 +250,8 @@ gate w = askOrigin
     admitted = knot "gate" $ happen $
       askLine "Anything else before you go through?" (Just (slip, say "Wait. Say that again." weigh))
         ( [(k, "Asks about the " <> k <> " on the posters, or the reward") | (k, _) <- w.posters]
-       ++ [(k, "Asks the way to the " <> k <> ", what goes on there, or for what it offers: " <> d) | (k, d) <- w.places]
-       ++ [ ("curfew", "Asks what the curfew means for them tonight")
+       ++ [(k, "Asks the way to the " <> k <> ", whether it is open, what goes on there, or for what it offers: " <> d) | (k, d) <- w.places]
+       ++ [ ("curfew", "Asks about the curfew: when the bell goes, what it means for them tonight")
           , ("captain", "Asks about the captain or the watch")
           , ("rumour", "Asks about the robbery, or for news and gossip")
           , ("chat", "Small talk, a remark about the night, or anything else")
@@ -368,32 +374,50 @@ data Outcome = Outcome (Maybe Action) [Turn]
 type Play = Traveller -> IO Outcome
 type Transport = Value -> IO (Either Text Value)
 
-interpret :: Transport -> GuardF Play -> Play
+-- The carrier is a program plus one fact about the subtree it came from: the line it opens with, if
+-- any. That fact lets an Ask answer a runner-up topic in the same breath as the winner.
+data Node = Node { play :: Play, quip :: Maybe Text }
+
+interpret :: Transport -> GuardF Node -> Node
 interpret call = \case
-  Ask line trip branches -> \t -> do
-    guard line
+  Ask line trip branches -> program $ \t -> do
+    let askedBefore = length [() | u <- t.turns, u.asked == line]
+        variants = fromMaybe [] (lookup line t.here.again)
+    guard (if askedBefore == 0 || null variants then line else variants !! min (askedBefore - 1) (length variants - 1))
     reply <- hear
     let st = situation t [("question", String line), ("reply", String reply)]
         sorting = given t.here.edict (choice "Which branch does the traveller's reply take?"
-                    (many [(k, String meaning, play) | (k, meaning, play) <- branches]))
-        follow a = do
-          let runnersUp = [k <> " " <> pct m | (m, s) <- contenders 0.2 a, let k = selectedKey s, k /= a.key]
+                    (many [(k, String meaning, node) | (k, meaning, node) <- branches]))
+        -- One call, many judgments: beside the branch, a Noul per topic the reply might also raise,
+        -- so "which way to the temple, and when is the bell?" gets both answers.
+        topical = [(k, meaning, node) | (k, meaning, node) <- branches, k `elem` topics t.here]
+        alsoQ = each [(k, #asked := noul ("Does any part of the reply ask about, or ask for, this? " <> meaning) :& Nil) | (k, meaning, _) <- topical]
+        follow a alsos = do
+          let others = [(m, s) | (m, s) <- contenders 0.2 a, selectedKey s /= a.key]
           aside ("heard " <> a.key <> " " <> pct a.mass
-            <> if null runnersUp then "" else "  (also " <> T.intercalate ", " runnersUp <> ")")
-          handle (chosen a) (onMany (\k play -> play (t `saw` Turn line reply k a.mass)))
-    case trip of
-      Nothing -> ask1 call jevLatest st sorting >>= must >>= follow
-      Just (wording, tripped) -> do
-        resp <- must =<< ask call jevLatest st (#branch := sorting :& #slip := noul wording :& Nil)
-        let a = answers resp
-        if a.slip.yes >= 0.75
-          then aside ("slip " <> pct (a.slip.yes) <> ", was heading for " <> a.branch.key)
-                 >> tripped (t `saw` Turn line reply "slip" (a.slip.yes))
-          else follow a.branch
+            <> if null others then "" else "  (also " <> T.intercalate ", " [selectedKey s <> " " <> pct m | (m, s) <- others] <> ")")
+          let raised = [(k, sub.asked.yes) | (k, sub) <- alsos, k /= a.key, sub.asked.yes >= 0.2]
+          unless (null raised) (aside ("also " <> T.intercalate ", " [k <> " " <> pct y | (k, y) <- raised]))
+          sequence_ [guard q | (k, y) <- raised, y >= 0.4, Just (Just q) <- [lookup k [(k', node.quip) | (k', _, node) <- topical]]]
+          handle (chosen a) (onMany (\k node -> node.play (t `saw` Turn line reply k a.mass)))
+        slipped a tripped = do
+          aside ("slip " <> pct a.slip.yes <> ", was heading for " <> a.branch.key)
+          tripped.play (t `saw` Turn line reply "slip" a.slip.yes)
+    case (trip, null topical) of
+      (Nothing, True) -> ask1 call jevLatest st sorting >>= must >>= \a -> follow a noAlso
+      (Nothing, False) -> do
+        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #also := alsoQ :& Nil))
+        follow a.branch a.also
+      (Just (wording, tripped), True) -> do
+        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #slip := noul wording :& Nil))
+        if a.slip.yes >= 0.75 then slipped a tripped else follow a.branch noAlso
+      (Just (wording, tripped), False) -> do
+        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #also := alsoQ :& #slip := noul wording :& Nil))
+        if a.slip.yes >= 0.75 then slipped a tripped else follow a.branch a.also
 
-  Say line next -> \t -> guard line >> next t
+  Say line next -> Node (\t -> guard line >> next.play t) (Just line)
 
-  Check matches none -> \t -> do
+  Check matches none -> program $ \t -> do
     let posted = pool #posters [(k, String text, ()) | (k, text) <- t.here.posters]
     resp <- must =<< ask call jevLatest (situation t [])
       ( #posters := posted
@@ -402,31 +426,35 @@ interpret call = \case
     let scored = sortOn (Down . fst) [(sub.this.yes, k) | (k, sub) <- (answers resp).fits]
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct p | (p, k) <- scored])
     case scored of
-      (p, k) : _ | p >= 0.6, Just play <- lookup k matches -> play t
-      _ -> none t
+      (p, k) : _ | p >= 0.6, Just node <- lookup k matches -> node.play t
+      _ -> none.play t
 
-  Weigh q (sound, x) (thin, y) (false, z) -> \t -> do
+  Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
     a <- must =<< ask1 call jevLatest (situation t [])
       (given t.here.edict (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false))))
-    let likeliest = fst (maximumBy (comparing snd) a.masses)
-    aside ("weighed " <> likeliest <> "  " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses])
-    case likeliest of
-      "sound" -> x t
-      "thin" -> y t
-      _ -> z t
+    let at l = fromMaybe 0 (lookup l a.masses)
+        likeliest = fst (maximumBy (comparing snd) a.masses)
+        -- A mildly thin story that is more sound than false passes: the guard has better things to do.
+        taken = if likeliest == "thin" && at "thin" < 0.6 && at "sound" >= at "false" then "sound" else likeliest
+    aside ("weighed " <> taken <> (if taken /= likeliest then ", near enough" else "")
+      <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses] <> ")")
+    case taken of
+      "sound" -> x.play t
+      "thin" -> y.play t
+      _ -> z.play t
 
-  Happen next -> \t -> do
+  Happen next -> program $ \t -> do
     -- The night moves at its own pace: something can happen at most every other exchange, and
     -- which three events are on offer turns with what has been said, so no event always comes first.
     let unused = [h | h <- t.here.happenings, h.tag `notElem` t.happened]
         turned = let n = sum [T.length u.replied | u <- t.turns] `mod` max 1 (length unused)
                  in take 3 (drop n unused ++ take n unused)
-    if null unused || even (length t.turns) then next t else do
+    if null unused || even (length t.turns) then next.play t else do
       a <- must =<< ask1 call jevLatest (situation t [])
         (given t.here.edict (choice "Which of these fits this moment at the gate, given what has happened so far?"
           (alt #nothing "The night goes on; nothing in particular happens" () .| many [(h.tag, String h.blurb, h) | h <- turned])))
       handle (chosen a)
-        (  #nothing (\() -> next t)
+        (  #nothing (\() -> next.play t)
         .| onMany (\_ h -> do
              aside ("happening " <> h.tag <> " " <> pct a.mass)
              narrate h.seen
@@ -435,18 +463,27 @@ interpret call = \case
              -- The captain's rounds end a held traveller's night; everyone else watches him pass.
              if h.tag == "captain" && take 1 t.standing == [SendForCaptain]
                then pure (Outcome (Just SendForCaptain) (reverse t'.turns))
-               else next t') )
+               else next.play t') )
 
   Knot _ next -> next
 
-  Verdict v next -> \t -> do
+  Verdict v next -> program $ \t -> do
     guard (spoken t.here v)
-    next t { standing = v : t.standing }
+    next.play t { standing = v : t.standing }
 
-  End -> \t -> pure (Outcome (headMay t.standing) (reverse t.turns))
+  End -> program $ \t -> pure (Outcome (headMay t.standing) (reverse t.turns))
   where
+    program p = Node p Nothing
     saw t turn = t { turns = turn : t.turns }
     headMay xs = case xs of { x : _ -> Just x; [] -> Nothing }
+
+-- No topics were asked about: the shape the per-topic answers would have had.
+noAlso :: [(Text, Packet '["asked" ::= Noul] Answers)]
+noAlso = []
+
+-- The hub topics the guard will answer more than one of in a breath.
+topics :: World -> [Text]
+topics w = map fst w.posters ++ map fst w.places ++ ["curfew", "captain", "rumour"]
 
 spoken :: World -> Action -> Text
 spoken w Admit | w.bellGone = "Go on through, and quick about it. The bell's gone."
@@ -479,8 +516,8 @@ main = getArgs >>= \case
   [] -> do
     hSetBuffering stdout NoBuffering
     calls <- newIORef (0 :: Int, 0 :: Int, 0 :: Int)
-    let play = cata (interpret (counted calls curl)) (gate world)
-    Outcome final taken <- play (Traveller [] [] [] world)
+    let node = cata (interpret (counted calls curl)) (gate world)
+    Outcome final taken <- node.play (Traveller [] [] [] world)
     TIO.putStrLn ""
     TIO.putStrLn ("verdict: " <> maybe "none" (T.pack . show) final)
     mapM_ (\u -> TIO.putStrLn ("  " <> quote u.replied <> " -> " <> u.taken <> " " <> pct u.sureness)) taken

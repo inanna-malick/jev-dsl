@@ -229,6 +229,12 @@ closes the gate; a bribe fetches the captain. The hubs take the same. Prompt inj
 and contradictions across turns were each tried and sorted where a person
 would put them.
 
+A reply that asks two things gets two answers. Beside the branch choice,
+the hub packet carries a Noul per topic asking whether any part of the
+reply raises it, one call for all of them, and every topic that says yes
+gets its line. The fold's carrier is a program plus the line its subtree
+opens with, which is what makes that answer available to the parent.
+
 The guard errs on the forgiving side. A story that does not hold up gets
 one plain re-ask, and after it a thin story is let through under a
 warning; a sword is bonded at the post and the talk goes on; only
