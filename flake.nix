@@ -14,7 +14,7 @@
           # Every dependency of the library, the executables, and the test suite,
           # so cabal builds without fetching from Hackage.
           ghc = hs.ghcWithPackages (p: with p; [
-            aeson aeson-pretty scientific vector containers text bytestring
+            aeson scientific vector containers text bytestring
             process directory filepath optparse-applicative
           ]);
         in {

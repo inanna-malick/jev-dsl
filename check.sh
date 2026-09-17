@@ -3,8 +3,8 @@
 # at its own site. Run inside an environment with GHC 9.12 and cabal.
 set -euo pipefail
 cd "$(dirname "$0")"
-cabal build all --enable-tests
-cabal test --test-show-details=direct
+cabal build all --enable-tests --flag strict
+cabal test --flag strict --test-show-details=direct
 out=dist-newstyle/reject
 mkdir -p "$out"
 # Every example and the documentation's code must compile under the same policy.

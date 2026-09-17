@@ -10,7 +10,6 @@ module RejectNonQCell where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
-import Jev.Transport (request)
 
 -- A cell holds a question or a nested packet, never a bare value.
 bad :: Either JevError Value

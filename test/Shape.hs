@@ -46,7 +46,7 @@ shapeQuestion q
           (someQ (noulWith (instructionsOf q) (Present (Just (Criteria (presence "true" c) (presence "false" c))))), False)
     _ -> raw
   Just (String "choice") -> case lookup "criteria" (objectPairs q) of
-    Just c@(Object _) -> (someQ (choiceWith @(Many ()) (instructionsOf q) (many [(k, d, ()) | (k, d) <- objectPairs c])), False)
+    Just c@(Object _) -> (someQ (choiceWith @(Many (Text, Value)) (instructionsOf q) (many fst snd (objectPairs c))), False)
     _ -> raw
   Just (String "score") -> case lookup "criteria" (objectPairs q) of
     Just (Array ls) -> (someQ (scale (instructionsOf q) (foldr (:) [] ls)), False)

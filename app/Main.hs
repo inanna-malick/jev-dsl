@@ -9,12 +9,12 @@
 -- @jev-dsl-example request ...flags@ prints the request JSON for a failing-
 -- check triage. @jev-dsl-example decode ...same flags@ reads the response
 -- JSON on stdin, decodes it against the same packet, and prints what the
--- typed answers say. A transport goes between them; see scripts/example.sh.
+-- typed answers say under a policy. A transport goes between them; see
+-- scripts/example.sh.
 --
--- The packet exercises one of everything: a pool of checks declared once
--- and drawn on by three questions, a runtime group with an awkward key, a
--- static disjunction with a handback, a rubric, a per-entry Noul, and a
--- premise-prefixed speculative question.
+-- The packet exercises one of everything: a runtime group with an awkward
+-- key, a static disjunction with a handback, a per-check battery, a Noul,
+-- and a rubric.
 module Main (main) where
 
 import qualified Data.Aeson as Aeson
@@ -26,7 +26,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Jev.Operators
-import Jev.Transport (decode, request)
 import Options.Applicative (Parser, ReadM, command, eitherReader, execParser, fullDesc, help, helper, info, long, metavar, progDesc, showDefault, some, strOption, subparser, (<**>))
 import qualified Options.Applicative as Opt
 import System.Exit (exitFailure)
@@ -38,20 +37,18 @@ import System.IO (hPutStrLn, stderr)
 
 -- Local payloads. None of these are serialized; the model sees wording.
 data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
-newtype Check = Check Text
+data Check = Check { checkKey :: Text, checkText :: Text }
 newtype Handoff = Handoff Text
 
-type Next = "rerun" ::> Check :|: "read_source" ::> Text :|: "ask_model" ::> Handoff
+type Next = "rerun" ::> () :|: "read_source" ::> Text :|: "ask_model" ::> Handoff
 
 type Triage = Packet
-  '[ "checks" ::= PoolDecl "checks" Check
-   , "explains" ::= Choice ("no_match" ::> () :|: Many Diagnostic)
+  '[ "explains" ::= Choice ("no_match" ::> () :|: Many Diagnostic)
    , "next" ::= Choice Next
    , "verify" ::= Choice (Many Check :|: "defer" ::> ())
    , "relevant" ::= Each (Packet '[ "applies" ::= Noul ])
    , "sufficient" ::= Noul
    , "breadth" ::= Score ("localized" :|: "adjacent" :|: "contract")
-   , "if_flaky" ::= Choice (Many Check)
    ]
 
 data Inputs = Inputs
@@ -67,26 +64,25 @@ triage inputs = (world, questions)
     world = state (object
       [ "failure" .= inputs.failure
       , "diagnostics" .= object [Key.fromText k .= t | (k, t) <- inputs.diagnosticLines]
+      , "checks" .= object [Key.fromText k .= t | (k, t) <- inputs.checks]
       ])
-    available = pool #checks [(k, String t, Check k) | (k, t) <- inputs.checks]
+    diagnostics' = [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+    available = [Check k t | (k, t) <- inputs.checks]
     questions =
-         #checks := available
-      :& #explains := choice "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"
-                        (alt #no_match "No listed diagnostic explains the failure" () .| many [(k, String t, Diagnostic k t) | (k, t) <- inputs.diagnosticLines])
+         #explains := choice "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"
+                        (alt #no_match "No listed diagnostic explains the failure" () .| many (.diagnosticKey) (String . (.diagnosticText)) diagnostics')
       :& #next := choice "What is the most useful next step given only the supplied evidence?"
-                    (  alt #rerun "Rerun the single most relevant check to confirm the failure is stable" (Check "rerun")
+                    (  alt #rerun "Rerun the single most relevant check to confirm the failure is stable" ()
                     .| alt #read_source "Read the source at the location the explaining diagnostic names" "read"
                     .| alt #ask_model "Deciding needs judgment beyond the supplied diagnostics and checks" (Handoff "needs judgment") )
       :& #verify := choice "Which available check most directly verifies a fix for the explaining diagnostic?"
-                      (manyFrom available .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
-      :& #relevant := eachIn available (\r -> #applies := askAbout r "Does this check exercise the code path the failure names?" :& Nil)
+                      (many (.checkKey) (String . (.checkText)) available .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
+      :& #relevant := each [ (c.checkKey, #applies := noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?") :& Nil) | c <- available ]
       :& #sufficient := noul "Do `diagnostics` alone establish the mechanism of `failure`?"
       :& #breadth := score "How broadly would fixing the explaining diagnostic alter established behavior?"
                        (  level #localized "Localized to the failing check"
                        .| level #adjacent "May affect adjacent callers of the same code"
                        .| level #contract "Crosses a contract other components rely on" )
-      :& #if_flaky := given "the failure is intermittent rather than deterministic"
-                        (choice "Which check would best expose the intermittency?" (manyFrom available))
       :& Nil
 
 -- ---------------------------------------------------------------------------
@@ -131,7 +127,7 @@ die :: String -> IO a
 die msg = hPutStrLn stderr msg >> exitFailure
 
 -- ---------------------------------------------------------------------------
--- What the typed answers say
+-- What the typed answers say, under a policy
 -- ---------------------------------------------------------------------------
 
 report :: Response Triage -> IO ()
@@ -139,22 +135,26 @@ report resp = do
   let a = answers resp
   let u = usage resp
   TIO.putStrLn ("usage: " <> showT u.inputTokens <> " in, " <> showT u.outputTokens <> " out; model " <> resolvedModel resp)
-  TIO.putStrLn ("explains: " <> handle (chosen a.explains)
+  mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics resp)
+  -- Each choice is settled under a policy: a result only through a handler
+  -- per alternative, or a doubt with the numbers behind it.
+  line "explains" (explain routing a.explains) $ settle routing a.explains
     (  #no_match (\() -> "<no listed diagnostic>")
-    .| onMany (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") ))
-  TIO.putStrLn ("  ranked: " <> T.intercalate ", " [selectedKey s <> "=" <> showT p | (p, s) <- contenders 0 a.explains])
-  TIO.putStrLn ("next: " <> handle (chosen a.next)
-    (  #rerun (\(Check c) -> "rerun check " <> c)
+    .| onMany (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") )
+  line "next" (explain spawning a.next) $ settle spawning a.next
+    (  #rerun (\() -> "rerun the most relevant check")
     .| #read_source (\what -> what <> " the implicated source")
     .| #ask_model (\(Handoff why) -> "hand back to the model (" <> why <> ")") )
-    <> "  confidence " <> showT a.next.confidence)
-  TIO.putStrLn ("verify: " <> handle (chosen a.verify) (onMany (\_ (Check k) -> k) .| #defer (\() -> "<defer to the model>")))
-  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> showT sub.applies.yes | (k, sub) <- a.relevant])
-  TIO.putStrLn ("sufficient: " <> showT a.sufficient.yes
-    <> (if a.sufficient.yes >= 0.7 then "  (yes)" else if a.sufficient.yes <= 0.3 then "  (no)" else "  (unsure)"))
-  TIO.putStrLn ("breadth: " <> showT a.breadth.expectation <> "  nearest " <> a.breadth.nearest
+  line "verify" (explain spawning a.verify) $ settle spawning a.verify
+    (onMany (\_ c -> "run " <> c.checkKey) .| #defer (\() -> "<defer to the model>"))
+  -- Nouls are judged under the same policies.
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> verdict (judge routing sub.applies) | (k, sub) <- a.relevant])
+  line "sufficient" (explain merging a.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging a.sufficient)
+  -- A rubric reads as a distribution over ordered levels.
+  TIO.putStrLn ("breadth: expectation " <> showT a.breadth.expectation
     <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent a.breadth))
-  TIO.putStrLn ("if flaky: " <> handle (chosen a.if_flaky) (onMany (\_ (Check k) -> k)))
   where
+    line name why outcome = TIO.putStrLn (name <> ": " <> either (const "doubted") id outcome <> "\n  " <> why)
+    verdict = either (const "?") (\b -> if b then "yes" else "no")
     showT :: Show x => x -> Text
     showT = T.pack . show

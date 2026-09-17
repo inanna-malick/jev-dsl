@@ -16,7 +16,6 @@ import qualified Data.Text as T
 import Fixtures
 import qualified Jev.Core as Core
 import Jev.Operators
-import Jev.Transport (request)
 import Replay
 
 data Disposition
@@ -37,8 +36,8 @@ stateErr s = case request jevLatest s (#wake := noul "?" :& Nil) of
   Left (Prepare e) -> Just e
   _ -> Nothing
 
-route :: [(T.Text, Value, ())] -> Packet '["route" ::= Choice (Many ())] Questions
-route cs = #route := choice "?" (many cs) :& Nil
+route :: [(T.Text, Value)] -> Packet '["route" ::= Choice (Many (T.Text, Value))] Questions
+route cs = #route := choice "?" (many fst snd cs) :& Nil
 
 count :: [Value] -> Packet '["count" ::= Scale] Questions
 count ls = #count := scale (question "?") ls :& Nil
@@ -48,7 +47,7 @@ wake i = #wake := noulWith i Omitted :& Nil
 
 table :: [(String, Disposition, Maybe PrepError)]
 table =
-  [ ("choice256", Prep (Core.TooManyAlternatives "route" 256), prepErr (route [(T.pack ("owner_" ++ show i), Null, ()) | i <- [0 .. 255 :: Int]]))
+  [ ("choice256", Prep (Core.TooManyAlternatives "route" 256), prepErr (route [(T.pack ("owner_" ++ show i), Null) | i <- [0 .. 255 :: Int]]))
   , ("choice-zero", Prep (Core.EmptyOffer "route"), prepErr (route []))
   , ("mixed-valid-invalid-questions", Prep (Core.EmptyOffer "route"), prepErr (route []))
   , ("score-eleven", Prep (Core.BadLevelCount "count" 11), prepErr (count (replicate 11 "l")))
@@ -61,8 +60,8 @@ table =
   , ("state-number", Prep Core.BadStateShape, stateErr (state (Number 42)))
   , ("instructions-boolean", Prep (Core.BadInstructions "wake"), prepErr (wake (Core.Instructions (Bool True))))
   , ("instructions-number", Prep (Core.BadInstructions "wake"), prepErr (wake (Core.Instructions (Number 42))))
-  , ("choice-boolean-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Bool True, ()), ("owner_1", Null, ())]))
-  , ("choice-number-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Number 42, ()), ("owner_1", Null, ())]))
+  , ("choice-boolean-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Bool True), ("owner_1", Null)]))
+  , ("choice-number-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Number 42), ("owner_1", Null)]))
   , ("questions-null", Inexpressible "request takes a packet; the map is never null", Nothing)
   , ("questions-array", Inexpressible "request takes a packet; the map is never an array", Nothing)
   , ("questions-omitted", Inexpressible "request takes a packet; the map is always present", Nothing)

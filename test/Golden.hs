@@ -20,7 +20,6 @@ import qualified Data.Vector as V
 import Fixtures
 import qualified Jev.Core as Core
 import Jev.Operators
-import Jev.Transport (decode, request)
 import Replay
 import Shape
 import System.Directory (doesDirectoryExist, listDirectory)
@@ -49,8 +48,8 @@ wakeCriteria = Present (Just (Criteria
 wake :: Q Value Noul -> Packet '["wake" ::= Noul] Questions
 wake q = #wake := q :& Nil
 
-route :: [(Text, Value, ())] -> Packet '["route" ::= Choice (Many ())] Questions
-route cs = #route := choice "Who owns configuration?" (many cs) :& Nil
+route :: [(Text, Value)] -> Packet '["route" ::= Choice (Many (Text, Value))] Questions
+route cs = #route := choice "Who owns configuration?" (many fst snd cs) :& Nil
 
 count :: [Value] -> Packet '["count" ::= Scale] Questions
 count ls = #count := scale (question "How many messages are pending in `context.pending`?") ls :& Nil
@@ -61,10 +60,10 @@ type UrgencyLevels = "informational" :|: "blocking"
 
 triage :: Packet '[ "route" ::= Choice Owners, "urgency" ::= Score UrgencyLevels, "wake" ::= Noul ] Questions
 triage =
-     #route := about [("focus", toJSON ["Current blocker" :: Text])] (choice "Who can resolve the missing configuration?"
+     #route := choiceWith (Core.Instructions (object ["question" .= ("Who can resolve the missing configuration?" :: Text), "focus" .= ["Current blocker" :: Text]]))
                  (  alt #configuration_owner (object ["handles" .= object ["configuration" .= ["missing values" :: Text, "invalid values"]]]) "config"
                  .| alt #reviewer (object ["handles" .= ["completed work" :: Text]]) "review"
-                 .| alt #neither Null () ))
+                 .| alt #neither Null () )
   :& #urgency := score "How urgently does this message need attention?"
                  (  level #informational (object ["means" .= ("Useful information, work can continue" :: Text)])
                  .| level #blocking (object ["means" .= ("Work cannot continue until someone responds" :: Text)]) )
@@ -80,14 +79,14 @@ type Kinds = "shared_decision" ::> () :|: "local_repair" ::> () :|: "ship" ::> (
 type Pairs = "o1_o2" ::> () :|: "o3_o4" ::> () :|: "o4_o5" ::> ()
 
 type Branch = Packet '[ "action" ::= Choice Actions, "affected" ::= Noul, "readiness" ::= Score Readiness ]
-type Decision = Packet '[ "owner" ::= Choice (Many ()), "kind" ::= Choice Kinds, "witness" ::= Choice Pairs ]
+type Decision = Packet '[ "owner" ::= Choice (Many (Text, Value)), "kind" ::= Choice Kinds, "witness" ::= Choice Pairs ]
 type Evidence = Packet '[ "old_review_applies" ::= Noul, "opinion_overrides" ::= Noul ]
 type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each Branch, "evidence" ::= Group Evidence ]
 
 world :: Value -> World Questions
 world req =
      #decision :=
-       (  #owner := choiceWith (instr "decision.owner") (many [(k, d, ()) | (k, d) <- crit "decision.owner"])
+       (  #owner := choiceWith (instr "decision.owner") (many fst snd (crit "decision.owner"))
        :& #kind := choiceWith (instr "decision.kind")
             (  alt #shared_decision (descr "decision.kind" "shared_decision") ()
             .| alt #local_repair (descr "decision.kind" "local_repair") ()
@@ -144,8 +143,8 @@ golden c name st q inspectAnswers = do
           checkEq c (name ++ ": usage verbatim") (Usage (usageField "input_tokens") (usageField "output_tokens")) (usage resp)
           inspectAnswers resp
 
-manyKey :: Alternatives alts => A Value (Choice alts) -> Text
-manyKey = selectedKey . chosen
+manyKey :: A Value (Choice alts) -> Text
+manyKey = (.key)
 
 goldenChecks :: Checks -> IO ()
 goldenChecks c = do
@@ -174,7 +173,7 @@ goldenChecks c = do
   instrGolden "instructions-null" (Core.Instructions Null)
   instrGolden "instructions-array" (Core.Instructions (Array (V.fromList ["Is current work blocked?", object ["inspect" .= ("message" :: Text)]])))
   instrGolden "instructions-empty-array" (Core.Instructions (Array V.empty))
-  instrGolden "instructions-empty-object" (Core.Structured [])
+  instrGolden "instructions-empty-object" (Core.Instructions (object []))
   instrGolden "instructions-empty-string" (Core.Instructions "")
 
   -- state forms
@@ -185,21 +184,21 @@ goldenChecks c = do
 
   -- runtime choices and description forms
   let routeGolden name cs inspectPick = golden c name probeState (route cs) inspectPick
-  routeGolden "choice-one" [("owner_0", object ["configuration_owner" .= True], ())] $ \resp ->
+  routeGolden "choice-one" [("owner_0", object ["configuration_owner" .= True])] $ \resp ->
     checkEq c "choice-one: single alternative picked" "owner_0" (manyKey (answers resp).route)
-  routeGolden "choice-null-description" [("owner_0", Null, ()), ("owner_1", object ["configuration_owner" .= False], ())] (\_ -> pure ())
-  routeGolden "choice-array-description" [("owner_0", Array (V.fromList ["Configuration owner", object ["available" .= True]]), ()), ("owner_1", object ["configuration_owner" .= False], ())] (\_ -> pure ())
-  routeGolden "choice-empty-key" [("", object ["owns" .= ("configuration" :: Text)], ()), ("reviewer", "Reviews completed work", ())] $ \resp ->
+  routeGolden "choice-null-description" [("owner_0", Null), ("owner_1", object ["configuration_owner" .= False])] (\_ -> pure ())
+  routeGolden "choice-array-description" [("owner_0", Array (V.fromList ["Configuration owner", object ["available" .= True]])), ("owner_1", object ["configuration_owner" .= False])] (\_ -> pure ())
+  routeGolden "choice-empty-key" [("", object ["owns" .= ("configuration" :: Text)]), ("reviewer", "Reviews completed work")] $ \resp ->
     checkEq c "choice-empty-key: empty key round-trips" "" (manyKey (answers resp).route)
   routeGolden "choice-deep-description"
-    [("owner", object ["rules" .= [Bool True, Bool False, Null, Number 3.5, object ["nested" .= ["configuration" :: Text]]]], ()), ("reviewer", "Reviews completed work", ())] (\_ -> pure ())
+    [("owner", object ["rules" .= [Bool True, Bool False, Null, Number 3.5, object ["nested" .= ["configuration" :: Text]]]]), ("reviewer", "Reviews completed work")] (\_ -> pure ())
   fx255 <- loadFixture "choice255"
-  golden c "choice255" probeState (route [(k, d, ()) | (k, d) <- maybe [] objectPairs (lookup "criteria" (objectPairs (maybe Null id (lookup "route" (requestQuestions (fixtureRequest fx255))))))]) $ \resp ->
+  golden c "choice255" probeState (route (maybe [] objectPairs (lookup "criteria" (objectPairs (maybe Null id (lookup "route" (requestQuestions (fixtureRequest fx255)))))))) $ \resp ->
     checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route))
 
   -- exact keys at the root
-  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many
-    [("configuration / ~ λ", object ["owns" .= ("configuration" :: Text)], "cfg" :: Text), ("reviewer\n\"quoted\"", Null, "rev")])))]) $ \resp ->
+  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many fst snd
+    [("configuration / ~ λ", object ["owns" .= ("configuration" :: Text)]), ("reviewer\n\"quoted\"", Null)])))]) $ \resp ->
     check c "escaped-keys: picked payload through an exact key" (case exactAnswers (answers resp) of
       [(_, SomeA _ _)] -> True
       _ -> False)
@@ -217,7 +216,7 @@ goldenChecks c = do
     let a = answers resp
     checkEq c "world-conflict: three branches rebuilt" ["delivery", "search", "ui"] (map fst a.branches)
     checkEq c "world-conflict: delivery action" (Just "hold_for_contract")
-      (case a.branches of (_, delivery) : _ -> Just (selectedKey (chosen delivery.action)); [] -> Nothing)
+      (case a.branches of (_, delivery) : _ -> Just delivery.action.key; [] -> Nothing)
     checkEq c "world-conflict: owner picked from the runtime group" "planner" (manyKey a.decision.owner)
     check c "world-conflict: payload-independent Show renders nested answers" (length (show a) > 200)
 

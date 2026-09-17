@@ -13,7 +13,7 @@ in
 let
   hs = pkgs.haskell.packages.ghc912;
   ghc = hs.ghcWithPackages (p: with p; [
-    aeson aeson-pretty scientific vector containers text bytestring
+    aeson scientific vector containers text bytestring
     process directory filepath optparse-applicative
   ]);
 in pkgs.mkShell {

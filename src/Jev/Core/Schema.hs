@@ -23,38 +23,38 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 -- | The agent-facing form: an anonymous, type-indexed packet of questions,
--- alternatives and rubric levels as type-level chains of labels, pools as
--- packet cells. Polymorphic over the JSON value through "Jev.Core.Json";
+-- alternatives and rubric levels as type-level chains of labels.
+-- Polymorphic over the JSON value through "Jev.Core.Json";
 -- "Jev.Operators" fixes it.
 --
 -- The packet's type is inferred from the questions written. Labels,
--- declarations, and handler completeness are checked at compile time with
--- messages in the author's vocabulary; wording, runtime candidates, level
--- counts, and pool correspondence are checked at preparation.
+-- and handler completeness are checked at compile time with messages in
+-- the author's vocabulary; wording, runtime candidates and level counts
+-- are checked at preparation.
 module Jev.Core.Schema
   ( -- * Modes
     Questions, Answers, type (:-)
     -- * Packets
-  , type (::=), Label (..), Cell (..), CellKind, CellJson, ToQ, CellOk, Packet (..), type (++), (++.)
+  , type (::=), Label (..), Cell (..), CellKind, CellJson, ToQ, Packet (..)
   , Unique, Get, Lookup
     -- * Endpoints
-  , Noul, Choice, Score, Each, Group, PoolDecl
+  , Noul, Choice, Score, Each, Group
   , Q (..), A (..)
     -- * Alternatives and rubric levels
   , type (::>), type (:|:), Many, Offer, Handler, Level, Interp
-  , Alts (..), Single, (.|), alt, many, manyFrom, onMany, level
-  , Alternatives, AltsOk, Match, Rubric, RubricOk, Index, Selected (..)
+  , Alts (..), Single, (.|), alt, many, onMany, level
+  , Alternatives, AltsOk, Match, Rubric, RubricOk, Index, Selected (..), Ranked (..)
     -- * Builders
-  , noul, choice, score, each, pool, eachIn, askAbout, given, about
-  , Ref (..), PoolUse, Worded (..)
+  , noul, choice, score, each
     -- * Results
-  , selectedKey, contenders, handle, accept, explain, Doubt (..), Policy (..)
+  , Weighed (..), Weight (..), Doubt (..), Policy (..)
+  , settle, judge, explain, contenders, handle
   , massAtOrAbove
     -- * The operation
   , Schema (..), PacketSchema, Model (..), jevLatest
   , request, decode, Response (..), JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
-  , Endpoint (..), Path (..), encodePath, extend, Compiled (..), leaf, lookupAnswer
+  , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
   , previewAnswer, checkLegend, checkExpectation, prepareWire
   ) where
 
@@ -80,12 +80,11 @@ data Questions (v :: Type)
 data Answers (v :: Type)
 
 -- | How a cell of endpoint @e@ reads under a mode. Questions are always the
--- leaf; answers are transparent for nesting, and a pool has no answer.
+-- leaf; answers are transparent for nesting.
 type family mode :- (e :: Type) :: Type where
   Questions v :- e = Q v e
   Answers v :- Group s = s (Answers v)
   Answers v :- Each s = [(Text, s (Answers v))]
-  Answers v :- PoolDecl n a = ()
   Answers v :- e = A v e
 infixr 0 :-
 
@@ -98,7 +97,6 @@ data Choice (alts :: Type)
 data Score (levels :: k)
 data Each (s :: Type -> Type)
 data Group (s :: Type -> Type)
-data PoolDecl (name :: Symbol) (a :: Type)
 
 data family Q (v :: Type) (e :: Type)
 data family A (v :: Type) (e :: Type)
@@ -130,11 +128,9 @@ data Level (v :: Type)
 
 type family Interp (f :: Type) (x :: Type) :: Type where
   Interp (Offer v) (k ::> p) = (v, p)
-  Interp (Offer v) (Many p) = ManyOffer v p
+  Interp (Offer v) (Many p) = [(Text, v, p)]
   Interp (Handler v r) (k ::> p) = p -> r
   Interp (Handler v r) (Many p) = Text -> p -> r
-
-data ManyOffer v p = ManyOffer [(Text, v, p)] (Maybe (PoolUse v))
 
 -- | Offers, handlers, or levels for a whole chain.
 type Alts :: Type -> forall k. k -> Type
@@ -161,8 +157,10 @@ infixr 4 .|
 alt :: KnownSymbol k => Label k -> v -> p -> Alts (Offer v) (k ::> p)
 alt _ d p = One (d, p)
 
-many :: [(Text, v, p)] -> Alts (Offer v) (Many p)
-many es = Grp (ManyOffer es Nothing)
+-- | A runtime group: one wire key and one wording per row, and the row
+-- itself is the payload the handler receives.
+many :: (a -> Text) -> (a -> v) -> [a] -> Alts (Offer v) (Many a)
+many key wording rows = Grp [(key x, wording x, x) | x <- rows]
 
 onMany :: (Text -> p -> r) -> Alts (Handler v r) (Many p)
 onMany = Grp
@@ -210,7 +208,9 @@ type family Describe (x :: Type) :: ErrorMessage where
   Describe (Many p) = 'Text "the runtime group (Many)"
   Describe (h :|: hs) = Describe h
 
--- | The selected alternative, carrying the payload it was offered with.
+-- | The selected alternative, carrying the payload it was offered with. A
+-- selection has no key of its own: it is consumed by 'handle', and the
+-- answer record it came from carries the key for logs.
 data Selected v alts where
   SelOne :: p -> Selected v (k ::> p)
   SelMany :: Text -> v -> p -> Selected v (Many p)
@@ -232,30 +232,30 @@ type family SymbolAbsent (l :: Symbol) (ls :: [Symbol]) :: Constraint where
   SymbolAbsent l (l ': ls) = TypeError ('Text "Jev: duplicate label #" ':<>: 'Text l)
   SymbolAbsent l (j ': ls) = SymbolAbsent l ls
 
+type family (++) (a :: [k]) (b :: [k]) :: [k] where
+  '[] ++ b = b
+  (x ': a) ++ b = x ': (a ++ b)
+
 -- | Compile, decode, and eliminate a disjunction shape by shape.
 class Alternatives (alts :: Type) where
   altWire :: JsonValue v => Text -> Alts (Offer v) alts -> Either PrepError [(Text, v)]
-  altUses :: Alts (Offer v) alts -> [PoolUse v]
   altSelect :: Alts (Offer v) alts -> Text -> Maybe (Selected v alts)
   altHandle :: Alts (Handler v r) alts -> Selected v alts -> r
   altKeyOf :: Selected v alts -> Text
 
 instance KnownSymbol k => Alternatives (k ::> p) where
   altWire key (One (d, _)) = checkDescription key (label @k) d >> Right [(label @k, d)]
-  altUses _ = []
   altSelect (One (_, p)) sel = if sel == label @k then Just (SelOne p) else Nothing
   altHandle (One h) (SelOne p) = h p
   altKeyOf _ = label @k
 
 instance Alternatives (Many p) where
-  altWire key (Grp (ManyOffer es pooled)) = do
+  altWire key (Grp es) = do
     let keys = [k | (k, _, _) <- es]
     if length keys /= length (nub keys) then Left (DuplicateKeys key [k | k <- nub keys, length (filter (== k) keys) > 1]) else Right ()
-    case pooled of
-      Nothing -> mapM_ (\(k, d, _) -> checkDescription key k d) es >> Right [(k, d) | (k, d, _) <- es]
-      Just _ -> Right [(k, jNull) | (k, _, _) <- es]
-  altUses (Grp (ManyOffer _ u)) = maybe [] pure u
-  altSelect (Grp (ManyOffer es _)) sel =
+    mapM_ (\(k, d, _) -> checkDescription key k d) es
+    Right [(k, d) | (k, d, _) <- es]
+  altSelect (Grp es) sel =
     case [SelMany k d p | (k, d, p) <- es, k == sel] of
       e : _ -> Just e
       [] -> Nothing
@@ -264,7 +264,6 @@ instance Alternatives (Many p) where
 
 instance (Alternatives x, Alternatives rest) => Alternatives (x :|: rest) where
   altWire key (c :| rest) = (++) <$> altWire key c <*> altWire key rest
-  altUses (c :| rest) = altUses c ++ altUses rest
   altSelect (c :| rest) sel = case altSelect c sel of
     Just s -> Just (SelLeft s)
     Nothing -> SelRight <$> altSelect rest sel
@@ -311,9 +310,7 @@ type family IndexIn (l :: Symbol) (ls :: [Symbol]) :: Nat where
 -- Leaves
 -- ---------------------------------------------------------------------------
 
-type PoolUse v = (Text, v)   -- pool name, serialized {key: description}
-
-data instance Q v Noul = NoulQ (Instructions v) (Presence (Maybe (Criteria v))) [PoolUse v]
+data instance Q v Noul = NoulQ (Instructions v) (Presence (Maybe (Criteria v)))
 
 -- | What the provider said about a proposition, in one field.
 newtype instance A v Noul = NoulA { yes :: Double }
@@ -329,16 +326,19 @@ data instance A v (Choice alts) = Chosen
   , margin :: Double                     -- ^ winner minus runner-up; the mass when it stands alone
   , confidence :: Double                 -- ^ the provider's own confidence
   , masses :: [(Text, Double)]           -- ^ the full distribution, best first
-  , ranked :: [(Double, Selected v alts)] -- ^ every alternative as a selection, best first
+  , ranked :: Ranked v alts              -- ^ for 'contenders'; opaque on the authoring surface
   }
+
+-- | Every alternative as a selection, best first. The constructor stays in
+-- the core so the authoring surface reads it only through 'contenders'.
+newtype Ranked v alts = Ranked [(Double, Selected v alts)]
 
 data instance Q v (Score levels) = ScoreQ (Instructions v) (Alts (Level v) levels)
 
 -- | Where on the rubric the provider landed. Read with record dot:
--- @a.urgency.nearest@, @a.urgency.expectation@.
+-- @a.urgency.expectation@, @a.urgency.masses@.
 data instance A v (Score levels) = Scored
   { expectation :: Double        -- ^ the expected level index
-  , nearest :: Text              -- ^ the label of the level nearest the expectation
   , confidence :: Double         -- ^ the provider's own confidence
   , masses :: [(Text, Double)]   -- ^ the distribution, by level label, in level order
   }
@@ -348,17 +348,6 @@ newtype instance A v (Each s) = EachA [(Text, s (Answers v))]
 
 newtype instance Q v (Group s) = GroupQ (s (Questions v))
 newtype instance A v (Group s) = GroupA (s (Answers v))
-
-newtype instance Q v (PoolDecl n a) = PoolQ [(Text, v, a)]
-data instance A v (PoolDecl n a) = PoolA
-
--- | A reference into a declared pool; constructor hidden.
-data Ref v (n :: Symbol) a = Ref
-  { refKey :: Text
-  , refDescription :: v
-  , refPayload :: a
-  , refUse :: PoolUse v
-  }
 
 -- Internal readers: 'confidence' and 'masses' are fields of two records, so
 -- the module names them by pattern rather than by an ambiguous selector.
@@ -385,8 +374,8 @@ instance Show (A v (Choice alts)) where
       <> ", confidence = " <> T.unpack (fmt2 (chosenConfidence a)) <> ", masses = " <> T.unpack (showMasses (chosenMasses a)) <> "}"
 
 instance Show (A v (Score levels)) where
-  show a@Scored { nearest = l, expectation = e } =
-    "Score {nearest = " <> show l <> ", expectation = " <> T.unpack (fmt2 e)
+  show a@Scored { expectation = e } =
+    "Score {expectation = " <> T.unpack (fmt2 e)
       <> ", confidence = " <> T.unpack (fmt2 (scoreConfidence a)) <> ", masses = " <> T.unpack (showMasses (scoreMasses a)) <> "}"
 
 fmt2 :: Double -> Text
@@ -400,7 +389,7 @@ showMasses ms = "[" <> T.intercalate ", " [T.pack (show k) <> " " <> fmt2 m | (k
 -- ---------------------------------------------------------------------------
 
 noul :: JsonValue v => Text -> Q v Noul
-noul t = NoulQ (question t) Omitted []
+noul t = NoulQ (question t) Omitted
 
 choice :: forall alts v. (JsonValue v, AltsOk alts) => Text -> Alts (Offer v) alts -> Q v (Choice alts)
 choice t = ChoiceQ (question t)
@@ -408,126 +397,110 @@ choice t = ChoiceQ (question t)
 score :: forall levels v. (JsonValue v, RubricOk levels) => Text -> Alts (Level v) levels -> Q v (Score levels)
 score t = ScoreQ (question t)
 
+-- | A sub-packet per item, keyed at runtime. The per-item battery: each
+-- item's questions carry their own wording, and the answers come back as
+-- a keyed list of sub-packets.
 each :: [(Text, s (Questions v))] -> Q v (Each s)
 each = EachQ
-
--- | A pool declaration, named at its binding; the cell it is placed in
--- must carry the same label.
-pool :: Label n -> [(Text, v, a)] -> Q v (PoolDecl n a)
-pool _ = PoolQ
-
-poolUse :: forall n v a. (JsonValue v, KnownSymbol n) => Q v (PoolDecl n a) -> PoolUse v
-poolUse (PoolQ es) = (label @n, jObject [(k, d) | (k, d, _) <- es])
-
-refs :: forall n v a. (JsonValue v, KnownSymbol n) => Q v (PoolDecl n a) -> [Ref v n a]
-refs p@(PoolQ es) = [Ref k d a (poolUse p) | (k, d, a) <- es]
-
--- | Runtime alternatives drawn from a pool: null wording on the wire, the
--- pool named in the question, the pool's wording retained locally.
-manyFrom :: forall n v a. (JsonValue v, KnownSymbol n) => Q v (PoolDecl n a) -> Alts (Offer v) (Many a)
-manyFrom p@(PoolQ es) = Grp (ManyOffer es (Just (poolUse p)))
-
-eachIn :: forall n v a s. (JsonValue v, KnownSymbol n) => Q v (PoolDecl n a) -> (Ref v n a -> s (Questions v)) -> Q v (Each s)
-eachIn p f = EachQ [(refKey r, f r) | r <- refs p]
-
--- | A question about one pool entry, addressed by structured fields.
-askAbout :: forall n v a. (JsonValue v, KnownSymbol n) => Ref v n a -> Text -> Q v Noul
-askAbout r t = NoulQ (Structured [("question", jString t), ("pool", jString (label @n)), ("key", jString (refKey r))]) Omitted [refUse r]
-
--- | Endpoints whose wording can be reshaped after building.
-class Worded e where
-  reword :: (Instructions v -> Instructions v) -> Q v e -> Q v e
-
-instance Worded Noul where reword f (NoulQ i c u) = NoulQ (f i) c u
-instance Worded (Choice alts) where reword f (ChoiceQ i o) = ChoiceQ (f i) o
-instance Worded (Score levels) where reword f (ScoreQ i d) = ScoreQ (f i) d
-
--- | Prefix a runtime premise. The original wording is preserved under the
--- premise; nested premises wrap again.
-given :: Worded e => Text -> Q v e -> Q v e
-given p = reword (Premised p)
-
--- | Add structured members beside the question: @{"question": …, …}@. A
--- duplicate member is a preparation error.
-about :: (JsonValue v, Worded e) => [(Text, v)] -> Q v e -> Q v e
-about kv = reword (extras kv)
 
 -- ---------------------------------------------------------------------------
 -- Results
 -- ---------------------------------------------------------------------------
 
--- | The wire key of a selection: a label or a runtime element key.
-selectedKey :: Alternatives alts => Selected v alts -> Text
-selectedKey = altKeyOf
+-- | What a policy weighs: the winner, its mass, its margin over the
+-- runner-up, and the provider's confidence where the wire carries one.
+data Weight = Weight
+  { winner :: Text
+  , winnerMass :: Double
+  , runnerUp :: Maybe (Text, Double)
+  , winnerConfidence :: Maybe Double
+  }
 
--- | A selection reads its own wire key: @s.key@, the same field an answer
--- carries.
-instance Alternatives alts => HasField "key" (Selected v alts) Text where
-  getField = altKeyOf
+-- | Answers a 'Policy' can weigh. A choice weighs its distribution; a Noul
+-- weighs yes against no, with no confidence to consult.
+class Weighed e where
+  weigh :: A v e -> Weight
 
--- | The fundamental eliminator: a selection (the chosen one, an accepted
--- one, or a contender) against a handler per alternative in declaration
--- order. A missing, extra, or misordered handler is a type error naming
--- the labels.
-handle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Selected v alts -> Alts (Handler v r) hs -> r
-handle s hs = altHandle hs s
+instance Weighed (Choice alts) where
+  weigh a@Chosen { key = k, mass = m } = Weight
+    { winner = k
+    , winnerMass = m
+    , runnerUp = case [r | r@(k', _) <- chosenMasses a, k' /= k] of { r : _ -> Just r; [] -> Nothing }
+    , winnerConfidence = Just (chosenConfidence a)
+    }
 
--- | Every alternative at or above a mass floor, best first, as typed
--- selections the same handlers eliminate.
-contenders :: Double -> A v (Choice alts) -> [(Double, Selected v alts)]
-contenders floor' a = [(m, s) | (m, s) <- ranked a, m >= floor']
+instance Weighed Noul where
+  weigh (NoulA y)
+    | y >= 0.5 = Weight "yes" y (Just ("no", 1 - y)) Nothing
+    | otherwise = Weight "no" (1 - y) (Just ("yes", y)) Nothing
 
 data Doubt
-  = NearTie (Text, Double) (Text, Double)  -- winner and runner-up too close
-  | Underweight Double                     -- the winner's mass is below the floor
-  | Unconfident Double                     -- the provider's confidence is below the floor
+  = NearTie (Text, Double) (Text, Double)  -- ^ winner and runner-up too close
+  | Underweight Double                     -- ^ the winner's mass is below the floor
+  | Unconfident Double                     -- ^ the provider's confidence is below the floor
   deriving (Show, Eq)
 
 data Policy = Policy
   { minMass :: Double
   , minMargin :: Double
   , minConfidence :: Double
-  }
+  } deriving (Show, Eq)
 
--- | Pure policy-aware selection: the chosen alternative, or structured
--- doubt. The answer stays in hand for inspection or resumption.
-accept :: Alternatives alts => Policy -> A v (Choice alts) -> Either Doubt (Selected v alts)
-accept policy a =
-  let winner = altKeyOf (chosen a)
-      mass = maybe 0 id (lookup winner (chosenMasses a))
-      runnerUp = [r | r@(k, _) <- chosenMasses a, k /= winner]
-  in if chosenConfidence a < minConfidence policy then Left (Unconfident (chosenConfidence a))
-     else if mass < minMass policy then Left (Underweight mass)
-     else case runnerUp of
-       (k2, p2) : _ | mass - p2 < minMargin policy -> Left (NearTie (winner, mass) (k2, p2))
-       _ -> Right (chosen a)
+doubt :: Weighed e => Policy -> A v e -> Maybe Doubt
+doubt policy a =
+  let w = weigh a
+  in case winnerConfidence w of
+    Just c | c < minConfidence policy -> Just (Unconfident c)
+    _ | winnerMass w < minMass policy -> Just (Underweight (winnerMass w))
+    _ | Just (k2, m2) <- runnerUp w, winnerMass w - m2 < minMargin policy -> Just (NearTie (winner w, winnerMass w) (k2, m2))
+    _ -> Nothing
 
--- | One line explaining why 'accept' returned what it did: which check
--- passed or failed, and the numbers behind it. Two-decimal formatting.
-explain :: forall alts v. Alternatives alts => Policy -> A v (Choice alts) -> Text
-explain policy a@Chosen { mass = mass, margin = margin } =
-  let conf = chosenConfidence a
-      items = [("confidence" :: Text, conf, minConfidence policy), ("mass", mass, minMass policy), ("margin", margin, minMargin policy)]
-  in case accept policy a of
-    Right _ -> "accepted: " <> T.intercalate ", " [n <> " " <> fmt2 v <> " \8805 " <> fmt2 t | (n, v, t) <- items]
-    Left doubt ->
-      let (ctor, failedName, failedValue, floorValue) = case doubt of
+-- | The winner under a policy, or structured doubt. There is no way to get
+-- a result without a handler for every alternative, so a confident answer
+-- that means "no" or "missing" runs its own handler and never reads as a
+-- pass.
+settle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Policy -> A v (Choice alts) -> Alts (Handler v r) hs -> Either Doubt r
+settle policy a hs = maybe (Right (handle (chosen a) hs)) Left (doubt policy a)
+
+-- | A proposition under a policy: yes, no, or structured doubt when the
+-- provider was not clear either way.
+judge :: Policy -> A v Noul -> Either Doubt Bool
+judge policy a = maybe (Right (yes a >= 0.5)) Left (doubt policy a)
+
+-- | One line saying why the policy settled or doubted the answer, with the
+-- numbers behind it. Two-decimal formatting. This is the line a log or a
+-- planner reads.
+explain :: Weighed e => Policy -> A v e -> Text
+explain policy a =
+  let w = weigh a
+      margin = maybe (winnerMass w) (\(_, m2) -> winnerMass w - m2) (runnerUp w)
+      items = [("confidence" :: Text, c, minConfidence policy) | Just c <- [winnerConfidence w]]
+           ++ [("mass", winnerMass w, minMass policy), ("margin", margin, minMargin policy)]
+  in case doubt policy a of
+    Nothing -> "settled on " <> winner w <> ": " <> T.intercalate ", " [n <> " " <> fmt2 v <> " \8805 " <> fmt2 t | (n, v, t) <- items]
+    Just d ->
+      let (ctor, failedName, failedValue, floorValue) = case d of
             Unconfident c -> ("Unconfident", "confidence" :: Text, c, minConfidence policy)
             Underweight m -> ("Underweight", "mass", m, minMass policy)
             NearTie (_, m) (_, m2) -> ("NearTie", "margin", m - m2, minMargin policy)
           floorLine = failedName <> " " <> fmt2 failedValue <> " < " <> fmt2 floorValue <> " by " <> fmt2 (floorValue - failedValue)
           rest = [n <> " " <> fmt2 v | (n, v, _) <- items, n /= failedName]
-      in "doubted (" <> ctor <> "): " <> floorLine <> "; " <> T.intercalate ", " rest
+      in "doubted " <> winner w <> " (" <> ctor <> "): " <> floorLine <> "; " <> T.intercalate ", " rest
+
+-- | The fundamental eliminator: a selection (the chosen one or a
+-- contender) against a handler per alternative in declaration order. A
+-- missing, extra, or misordered handler is a type error naming the labels.
+handle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Selected v alts -> Alts (Handler v r) hs -> r
+handle s hs = altHandle hs s
+
+-- | Every alternative at or above a mass floor, best first, as typed
+-- selections the same handlers eliminate.
+contenders :: Double -> A v (Choice alts) -> [(Double, Selected v alts)]
+contenders floor' a = let Ranked rs = ranked a in [(m, s) | (m, s) <- rs, m >= floor']
 
 -- | Mass at or beyond a level, by label.
 massAtOrAbove :: forall l levels v. KnownNat (Index l levels) => Label l -> A v (Score levels) -> Double
 massAtOrAbove _ a = sum [m | (i, m) <- zip [0 :: Integer ..] (map snd (scoreMasses a)), i >= natVal (Proxy @(Index l levels))]
-
--- | The label of the level nearest an expectation, over the levels in order.
-nearestLevel :: Double -> [Text] -> Text
-nearestLevel e ls = case drop (round e) ls of
-  l : _ -> l
-  [] -> if null ls then "" else last ls
 
 -- ---------------------------------------------------------------------------
 -- Paths and compilation output
@@ -549,30 +522,14 @@ extend :: Path -> Text -> Path
 extend (Segments ss) s = Segments (ss ++ [s])
 extend (Exactly k) s = Segments [k, s]
 
-isTopLevel :: Path -> Bool
-isTopLevel = \case
-  Segments [_] -> True
-  Exactly _ -> True
-  _ -> False
-
-data Compiled v = Compiled
-  { wire :: [(Text, WireQuestion v)]
-  , declared :: [PoolUse v]
-  , used :: [PoolUse v]
-  }
-instance Semigroup (Compiled v) where
-  Compiled w d u <> Compiled w' d' u' = Compiled (w ++ w') (d ++ d') (u ++ u')
-instance Monoid (Compiled v) where
-  mempty = Compiled [] [] []
-
 -- ---------------------------------------------------------------------------
 -- Endpoints: compile, decode, unwrap, preview
 -- ---------------------------------------------------------------------------
 
 class JsonValue v => Endpoint v e where
-  compileQ :: Path -> Q v e -> Either PrepError (Compiled v)
+  compileQ :: Path -> Q v e -> Either PrepError [(Text, WireQuestion v)]
   decodeA :: Path -> Q v e -> [(Text, v)] -> Either DecodeError (A v e)
-  -- | The answer as a cell reads it (transparent for nesting and pools).
+  -- | The answer as a cell reads it (transparent for nesting).
   unwrapA :: A v e -> Answers v :- e
   -- | A payload-independent summary for inspection.
   previewA :: Answers v :- e -> v
@@ -585,11 +542,11 @@ lookupAnswer :: Path -> [(Text, v)] -> Either DecodeError v
 lookupAnswer p ws = maybe (Left (MissingAnswer key)) Right (lookup key ws)
   where key = encodePath p
 
-leaf :: JsonValue v => Text -> WireQuestion v -> Compiled v
-leaf key q = Compiled [(key, q)] [] []
+leaf :: Text -> WireQuestion v -> [(Text, WireQuestion v)]
+leaf key q = [(key, q)]
 
 instance JsonValue v => Endpoint v Noul where
-  compileQ p (NoulQ i c uses) = do
+  compileQ p (NoulQ i c) = do
     let key = encodePath p
     checkInstructions key i
     case c of
@@ -597,7 +554,7 @@ instance JsonValue v => Endpoint v Noul where
         mapM_ (checkDescription key "true") [d | Present d <- [y]]
         mapM_ (checkDescription key "false") [d | Present d <- [n]]
       _ -> Right ()
-    Right (leaf key (WNoul i c)) { used = uses }
+    Right (leaf key (WNoul i c))
   decodeA p _ ws = lookupAnswer p ws >>= \v -> do
     NoulAnswer x <- parseNoul (encodePath p) v
     Right (NoulA x)
@@ -605,12 +562,8 @@ instance JsonValue v => Endpoint v Noul where
   previewA a = jObject [("yes", jNumber (yes a))]
 
 instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
-  compileQ p (ChoiceQ i0 offer) = do
+  compileQ p (ChoiceQ i offer) = do
     let key = encodePath p
-    i <- case altUses offer of
-      [] -> Right i0
-      [(n, _)] -> Right (extras [("pool", jString n)] i0)
-      _ -> Left (MultiplePoolsInChoice key)
     checkInstructions key i
     alts <- altWire key offer
     if null alts then Left (EmptyOffer key) else Right ()
@@ -618,7 +571,7 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
     case [k | k <- map fst alts, length (filter (== k) (map fst alts)) > 1] of
       k : _ -> Left (KeyCollidesWithLabel key k)
       [] -> Right ()
-    Right (leaf key (WChoice i alts)) { used = altUses offer }
+    Right (leaf key (WChoice i alts))
   decodeA p (ChoiceQ _ offer) ws = lookupAnswer p ws >>= \v -> do
     let key = encodePath p
     ChoiceAnswer sel ms conf <- parseChoice key v
@@ -639,7 +592,7 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
       , margin = winnerMargin
       , confidence = conf
       , masses = best
-      , ranked = rankedAll
+      , ranked = Ranked rankedAll
       }
   unwrapA = id
   previewA a@Chosen { key = k, mass = m, margin = g } = jObject
@@ -671,11 +624,10 @@ instance (JsonValue v, Rubric levels) => Endpoint v (Score levels) where
     checkLegend key (map snd entries) lg
     checkExpectation key (length labels) e
     let byIndex = [(l, maybe 0 id (lookup i ms)) | (i, l) <- zip indices labels]
-    Right Scored { expectation = e, nearest = nearestLevel e labels, confidence = conf, masses = byIndex }
+    Right Scored { expectation = e, confidence = conf, masses = byIndex }
   unwrapA = id
-  previewA a@Scored { expectation = e, nearest = l } = jObject
-    [ ("nearest", jString l)
-    , ("expectation", jNumber e)
+  previewA a@Scored { expectation = e } = jObject
+    [ ("expectation", jNumber e)
     , ("confidence", jNumber (scoreConfidence a))
     , ("masses", jObject [(ml, jNumber m) | (ml, m) <- scoreMasses a])
     ]
@@ -692,7 +644,7 @@ checkExpectation key n e =
   if isNaN e || isInfinite e || e < 0 || e > fromIntegral (n - 1) then Left (ValueOutOfRange key "score") else Right ()
 
 instance Schema v s => Endpoint v (Each s) where
-  compileQ p (EachQ items) = mconcat <$> mapM (\(k, q) -> compileSchema (extend p k) q) items
+  compileQ p (EachQ items) = concat <$> mapM (\(k, q) -> compileSchema (extend p k) q) items
   decodeA p (EachQ items) ws = EachA <$> mapM (\(k, q) -> (,) k <$> decodeSchema (extend p k) q ws) items
   unwrapA (EachA xs) = xs
   previewA xs = jObject [(k, previewSchema x) | (k, x) <- xs]
@@ -703,18 +655,6 @@ instance Schema v s => Endpoint v (Group s) where
   unwrapA (GroupA x) = x
   previewA = previewSchema
 
-instance (JsonValue v, KnownSymbol n) => Endpoint v (PoolDecl n a) where
-  compileQ p q@(PoolQ es) = do
-    if isTopLevel p then Right () else Left (PoolDeclaredInNested (label @n))
-    let keys = [k | (k, _, _) <- es]
-    case [k | k <- nub keys, length (filter (== k) keys) > 1] of
-      k : _ -> Left (DuplicatePoolKey (label @n) k)
-      [] -> Right ()
-    Right (Compiled [] [poolUse q] [])
-  decodeA _ _ _ = Right PoolA
-  unwrapA _ = ()
-  previewA _ = jNull
-
 -- ---------------------------------------------------------------------------
 -- Packets
 -- ---------------------------------------------------------------------------
@@ -722,9 +662,9 @@ instance (JsonValue v, KnownSymbol n) => Endpoint v (PoolDecl n a) where
 data (k :: Symbol) ::= (e :: Type)
 
 -- | A cell: a labeled question under 'Questions', a decoded answer under
--- 'Answers'. A pool cell's label is its pool's name, by construction.
+-- 'Answers'.
 data Cell (k :: Symbol) (e :: Type) mode where
-  (:=) :: (ToQ x, CellOk k (CellKind x)) => Label k -> x -> Cell k (CellKind x) (Questions (CellJson x))
+  (:=) :: ToQ x => Label k -> x -> Cell k (CellKind x) (Questions (CellJson x))
   Answered :: (Answers v :- e) -> Cell k e (Answers v)
 infix 6 :=
 
@@ -743,27 +683,10 @@ class ToQ (x :: Type) where
 instance ToQ (Q v e) where toQ = id
 instance ToQ (Packet fs (Questions v)) where toQ = GroupQ
 
-type family CellOk (k :: Symbol) (e :: Type) :: Constraint where
-  CellOk k (PoolDecl n a) = PoolNamed k n
-  CellOk k e = ()
-
-type family PoolNamed (k :: Symbol) (n :: Symbol) :: Constraint where
-  PoolNamed k k = ()
-  PoolNamed k n = TypeError ('Text "Jev: pool #" ':<>: 'Text n ':<>: 'Text " placed under label #" ':<>: 'Text k ':<>: 'Text "; a pool's cell label must be its name")
-
 data Packet (fs :: [Type]) mode where
   Nil :: Packet '[] mode
   (:&) :: Cell k e mode -> Packet fs mode -> Packet (k ::= e ': fs) mode
 infixr 5 :&
-
-type family (++) (a :: [k]) (b :: [k]) :: [k] where
-  '[] ++ b = b
-  (x ': a) ++ b = x ': (a ++ b)
-
-(++.) :: Packet fs m -> Packet gs m -> Packet (fs ++ gs) m
-Nil ++. g = g
-(c :& p) ++. g = c :& (p ++. g)
-infixr 5 ++.
 
 type family Labels (fs :: [Type]) :: ErrorMessage where
   Labels '[] = 'Text "nothing"
@@ -803,17 +726,17 @@ instance (Get k fs fs e, r ~ (Answers v :- e)) => HasField k (Packet fs (Answers
 
 -- | The packet traversal, by induction over the labels.
 class JsonValue v => PacketSchema v (fs :: [Type]) where
-  packetCompile :: Path -> Packet fs (Questions v) -> Either PrepError (Compiled v)
+  packetCompile :: Path -> Packet fs (Questions v) -> Either PrepError [(Text, WireQuestion v)]
   packetDecode :: Path -> Packet fs (Questions v) -> [(Text, v)] -> Either DecodeError (Packet fs (Answers v))
   packetPreview :: Packet fs (Answers v) -> [(Text, v)]
 
 instance JsonValue v => PacketSchema v '[] where
-  packetCompile _ Nil = Right mempty
+  packetCompile _ Nil = Right []
   packetDecode _ Nil _ = Right Nil
   packetPreview Nil = []
 
 instance (KnownSymbol k, Endpoint v e, PacketSchema v fs) => PacketSchema v (k ::= e ': fs) where
-  packetCompile p (_ := x :& rest) = (<>) <$> compileQ (extend p (label @k)) (toQ x) <*> packetCompile p rest
+  packetCompile p (_ := x :& rest) = (++) <$> compileQ (extend p (label @k)) (toQ x) <*> packetCompile p rest
   packetDecode p (_ := x :& rest) ws = (:&) <$> (Answered . unwrapA <$> decodeA (extend p (label @k)) (toQ x) ws) <*> packetDecode p rest ws
   packetPreview (Answered a :& rest) = (label @k, previewA @v @e a) : packetPreview rest
 
@@ -825,7 +748,7 @@ instance (Show v, PacketSchema v fs) => Show (Packet fs (Answers v)) where
 -- ---------------------------------------------------------------------------
 
 class JsonValue v => Schema v (s :: Type -> Type) where
-  compileSchema :: Path -> s (Questions v) -> Either PrepError (Compiled v)
+  compileSchema :: Path -> s (Questions v) -> Either PrepError [(Text, WireQuestion v)]
   decodeSchema :: Path -> s (Questions v) -> [(Text, v)] -> Either DecodeError (s (Answers v))
   previewSchema :: s (Answers v) -> v
 
@@ -844,17 +767,10 @@ instance IsString Model where fromString = Model . T.pack
 jevLatest :: Model
 jevLatest = Model "jev-latest"
 
--- | The flattened questions and declared pools, with every preparation
--- check applied.
-prepareWire :: Schema v s => s (Questions v) -> Either PrepError (Compiled v)
+-- | The flattened questions, with every preparation check applied.
+prepareWire :: Schema v s => s (Questions v) -> Either PrepError [(Text, WireQuestion v)]
 prepareWire q = do
-  c@(Compiled qs decl uses) <- compileSchema (Segments []) q
-  case [n | (n, _) <- decl, length (filter ((== n) . fst) decl) > 1] of
-    n : _ -> Left (DuplicatePool n)
-    [] -> Right ()
-  mapM_ (\(n, u) -> case lookup n decl of
-    Nothing -> Left (UndeclaredPool n)
-    Just d -> if jEqual d u then Right () else Left (ConflictingPool n)) uses
+  qs <- compileSchema (Segments []) q
   let keys = map fst qs
   if null qs then Left EmptyQuestionMap else Right ()
   case [k | k <- keys, T.null k] of
@@ -863,16 +779,16 @@ prepareWire q = do
   case [k | k <- keys, length (filter (== k) keys) > 1] of
     k : _ -> Left (DuplicateQuestionPath k)
     [] -> Right ()
-  Right c
+  Right qs
 
 -- | The request body a transport sends.
 request :: Schema v s => Model -> State v -> s (Questions v) -> Either JevError v
 request (Model m) st q = either (Left . Prepare) Right $ do
   checkState st
-  Compiled qs decl _ <- prepareWire q
+  qs <- prepareWire q
   Right (jObject
     [ ("model", jString m)
-    , ("state", if null decl then stateValue st else jObject [("context", stateValue st), ("pools", jObject decl)])
+    , ("state", stateValue st)
     , ("questions", jObject [(k, questionValue w) | (k, w) <- qs])
     ])
 
@@ -880,7 +796,7 @@ data Response v s = Response
   { answers :: s (Answers v)
   , responseModel :: Text
   , usage :: v
-  , diagnostics :: [Text]
+  , diagnostics :: [Text]   -- ^ distributions that do not sum to one, and the like: worth a log line, never a rejection
   }
 
 -- | A response prints as its answers: the packet's labels over each
@@ -891,7 +807,7 @@ instance (Show v, Schema v s) => Show (Response v s) where
 -- | Decode a response body against the packet that produced the request.
 decode :: Schema v s => s (Questions v) -> v -> Either JevError (Response v s)
 decode q body = do
-  Compiled qs _ _ <- either (Left . Prepare) Right (prepareWire q)
+  qs <- either (Left . Prepare) Right (prepareWire q)
   either (Left . Decode) Right $ parseEnvelope body >>= \case
     Rejected r -> Left (ProviderRejected r)
     Evaluated model use ws -> do
@@ -923,7 +839,7 @@ roundTrip transport model st q = case request model st q of
 
 -- | The tiny use: one question, one answer.
 jev1
-  :: (Monad m, Endpoint v e, CellOk "value" e)
+  :: (Monad m, Endpoint v e)
   => (v -> m (Either Text v)) -> Model -> State v -> Q v e
   -> m (Either JevError (Answers v :- e))
 jev1 transport model st q = fmap (fmap (\r -> case answers r of Answered a :& Nil -> a)) (roundTrip transport model st ((Label :: Label "value") := q :& Nil))

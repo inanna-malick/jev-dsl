@@ -23,7 +23,6 @@ module Jev.Core.Contract
   , checkDescription
   , checkLevel
   , renderInstructions
-  , extras
     -- * Wire questions
   , WireQuestion (..)
   , questionValue
@@ -59,25 +58,14 @@ import Jev.Core.Json
 -- omitted criteria block or side from an explicit null.
 data Presence a = Omitted | Present a deriving (Eq, Show)
 
--- | Instructions. 'Structured' and 'Premised' keep their structure until
--- preparation so a duplicate key is an error, never a silent merge.
+-- | Instructions: omitted, or any value the provider admits (string,
+-- object, array, or null).
 data Instructions v
   = NoInstructions
-  | Instructions v                 -- ^ any value the provider admits: string, object, array, or null
-  | Structured [(Text, v)]         -- ^ an object, checked for duplicate keys at preparation
-  | Premised Text (Instructions v) -- ^ a runtime premise over the original, rendered as @{"premise", "instructions"}@
+  | Instructions v
 
 question :: JsonValue v => Text -> Instructions v
 question = Instructions . jString
-
--- | Add structured members. A plain question becomes @{"question": q, ...}@;
--- an existing object gains the members; a premise keeps wrapping.
-extras :: JsonValue v => [(Text, v)] -> Instructions v -> Instructions v
-extras kv = \case
-  NoInstructions -> Structured kv
-  Instructions q -> Structured (("question", q) : kv)
-  Structured kv0 -> Structured (kv0 ++ kv)
-  Premised p i -> Premised p (extras kv i)
 
 -- | Noul criteria: each side independently omitted, null, or content.
 data Criteria v = Criteria
@@ -97,8 +85,7 @@ noOnly n = Present (Just (Criteria Omitted (Present n)))
 bothSides :: v -> v -> Presence (Maybe (Criteria v))
 bothSides y n = Present (Just (Criteria (Present y) (Present n)))
 
--- | The shared input to every question. Rendered as given, or under
--- @context@ beside the declared pools when the packet declares any.
+-- | The shared input to every question, sent as given.
 newtype State v = State { stateValue :: v }
 
 -- | Total; the outer shape (string, object, or array) is checked at
@@ -125,17 +112,11 @@ checkInstructions :: JsonValue v => Text -> Instructions v -> Either PrepError (
 checkInstructions key = \case
   NoInstructions -> Right ()
   Instructions v -> if admissible v then Right () else Left (BadInstructions key)
-  Structured kv -> case [k | (k, _) <- kv, length (filter ((== k) . fst) kv) > 1] of
-    k : _ -> Left (DuplicateInstructionKey key k)
-    [] -> Right ()
-  Premised _ inner -> checkInstructions key inner
 
 renderInstructions :: JsonValue v => Instructions v -> [(Text, v)]
 renderInstructions = \case
   NoInstructions -> []
   Instructions v -> [("instructions", v)]
-  Structured kv -> [("instructions", jObject kv)]
-  Premised p inner -> [("instructions", jObject (("premise", jString p) : renderInstructions inner))]
 
 checkDescription :: JsonValue v => Text -> Text -> v -> Either PrepError ()
 checkDescription key alt v = if admissible v then Right () else Left (BadDescription key alt)
@@ -189,15 +170,8 @@ data PrepError
   | EmptyQuestionKey Text
   | BadStateShape
   | BadInstructions Text
-  | DuplicateInstructionKey Text Text
   | BadDescription Text Text
   | BadLevel Text Int
-  | UndeclaredPool Text
-  | ConflictingPool Text
-  | DuplicatePool Text
-  | DuplicatePoolKey Text Text
-  | MultiplePoolsInChoice Text
-  | PoolDeclaredInNested Text
   deriving (Show, Eq)
 
 -- | A provider rejection, parsed from the observed 400 and 422 bodies.

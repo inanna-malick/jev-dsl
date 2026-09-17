@@ -1,7 +1,7 @@
 cabal-version:      3.0
 name:               jev-dsl
 version:            0.1.0.0
-synopsis:           Typed packet DSL for TypeSafe's Jev: one packet renders the request and decodes the response
+synopsis:           Typed question packets for TypeSafe's Jev
 description:
   Author a packet of labelled questions once, as an expression whose type is
   inferred. Built, it becomes the exact request JSON. Decoded, the same
@@ -19,48 +19,57 @@ category:           AI
 homepage:           https://github.com/inanna-malick/jev-dsl
 bug-reports:        https://github.com/inanna-malick/jev-dsl/issues
 build-type:         Simple
-extra-doc-files:    README.md
+extra-doc-files:
+  README.md
+  CHANGELOG.md
 extra-source-files:
   docs/*.md
   examples/*.hs
-  scripts/*
+  scripts/*.sh
+  scripts/*.py
   test/reject/*.hs
   test/fixtures/*.json
   test/fixtures/*.md
   test/fixtures/MANIFEST
-tested-with:        GHC == 9.12.2
+tested-with:        GHC == 9.12.3
 
 source-repository head
   type:     git
   location: https://github.com/inanna-malick/jev-dsl.git
 
+-- check.sh builds with -Werror; a released package must not, since new GHC
+-- warnings would break downstream builds.
+flag strict
+  description: Treat warnings as errors
+  default:     False
+  manual:      True
+
 common shared
   default-language: GHC2021
-  ghc-options:      -Wall -Werror
+  ghc-options:      -Wall
+  if flag(strict)
+    ghc-options:    -Werror
 
 library
   import:           shared
   hs-source-dirs:   src
   -- Jev.Core.* import boot packages only (base, containers, text) so they can
   -- be copied verbatim into an environment without aeson and given another
-  -- JsonValue instance. Only Jev, Jev.Operators, and Jev.Aeson depend on aeson.
+  -- JsonValue instance. Only Jev.Operators and Jev.Aeson depend on aeson.
   exposed-modules:
-    Jev
-    Jev.Aeson
     Jev.Operators
-    Jev.Transport
+    Jev.Aeson
     Jev.Core
     Jev.Core.Json
     Jev.Core.Contract
     Jev.Core.Schema
   build-depends:
     , base        >= 4.21 && < 5
-    , containers  >= 0.6
-    , text        >= 2.0
+    , containers  >= 0.6 && < 0.9
+    , text        >= 2.0 && < 2.2
     , aeson       ^>= 2.2
-    , aeson-pretty >= 0.8
-    , scientific  >= 0.3
-    , vector      >= 0.13
+    , scientific  >= 0.3 && < 0.4
+    , vector      >= 0.13 && < 0.14
 
 executable jev-dsl-example
   import:           shared
@@ -69,9 +78,9 @@ executable jev-dsl-example
   build-depends:
     , base
     , aeson
-    , bytestring
+    , bytestring >= 0.11 && < 0.13
     , text
-    , optparse-applicative >= 0.18
+    , optparse-applicative >= 0.18 && < 0.20
     , jev-dsl
 
 executable jev-dsl-guard
@@ -81,8 +90,8 @@ executable jev-dsl-guard
   build-depends:
     , base
     , aeson
-    , bytestring
-    , process
+    , bytestring >= 0.11 && < 0.13
+    , process >= 1.6 && < 1.7
     , text
     , jev-dsl
 

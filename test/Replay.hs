@@ -117,7 +117,7 @@ instance JsonValue v => Schema v Exact where
 -- ---------------------------------------------------------------------------
 
 noulWith :: Instructions Value -> Presence (Maybe (Criteria Value)) -> Q Value Noul
-noulWith i c = NoulQ i c []
+noulWith i c = NoulQ i c
 
 choiceWith :: Instructions Value -> Alts (Offer Value) alts -> Q Value (Choice alts)
 choiceWith = ChoiceQ

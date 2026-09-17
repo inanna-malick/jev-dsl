@@ -15,7 +15,7 @@
 --
 --   * 'Ask'    — a free-form reply is sorted into one branch: a choice; with an
 --                optional tripwire Noul in the same packet for admissions and slips
---   * 'Check'  — the story is held against each wanted poster in a pool: one Noul per poster
+--   * 'Check'  — the story is held against each wanted poster: one Noul per poster, in one call
 --   * 'Weigh'  — the story so far is graded on a rubric: a score
 --   * 'Happen' — something may happen at the gate: a choice among authored events
 --
@@ -61,7 +61,7 @@ import System.Process
 -- ---------------------------------------------------------------------------
 
 data World = World
-  { edict :: Text                    -- the premise on every Jev call
+  { edict :: Text                    -- the standing orders, in the state of every Jev call
   , bellGone :: Bool                 -- the curfew bell has rung
   , neighbours :: [(Text, Text)]     -- key, what the guard knows of the road
   , places :: [(Text, Text)]         -- key, what people go there for
@@ -171,12 +171,12 @@ gate :: World -> Fix GuardF
 gate w = askOrigin
   where
     -- The approach: three questions, the posters if the road or the errand warrants, then the weighing.
-    askOrigin = askPatient "Halt. Where do you hail from, traveller?" True w.neighbours $ \origin ->
-      if origin == "evasive" then askCargo False else askPurpose $ \purpose ->
+    askOrigin = askPatient "origin" "Halt. Where do you hail from, traveller?" True w.neighbours $ \origin ->
+      if origin == "evasive" then askCargo False else askPurpose origin $ \purpose ->
         -- The posters concern the north road and the taverns; nobody else is held against them.
         askCargo (origin == "north_road" || purpose == "tavern")
-    askPurpose = askPatient "And what brings you to Greyhaven?" False w.places
-    askCargo suspect = askPatient "Anything to declare? Weapons, goods, anything the customs officer should see?" False
+    askPurpose origin = askPatient ("purpose_after_" <> origin) "And what brings you to Greyhaven?" False w.places
+    askCargo suspect = askPatient (if suspect then "cargo_suspect" else "cargo") "Anything to declare? Weapons, goods, anything the customs officer should see?" False
       (w.banned ++ [("nothing", "Nothing to declare: personal effects, ordinary goods, a bonded weapon")]) $ \cargo ->
         -- Contraband is a rule, not a judgment. A weapon gets bonded at the post and the talk goes on;
         -- smuggled goods end it.
@@ -190,9 +190,13 @@ gate w = askOrigin
     -- the questions back, flattering, name-dropping, drunk, pleading, or lost for words gets a retort
     -- and the question again, twice at most, then counts as evasive. A threat closes the gate; a bribe
     -- fetches the captain. Where pressEvasive is set, a first evasive answer is asked again too.
-    askPatient line pressEvasive branches k = go (0 :: Int)
+    --
+    -- Each retry level is a knot, because every sidetrack at one level leads to the same next level.
+    -- Without that the printed script would re-expand one subtree per sidetrack, which is exponential;
+    -- the name must identify the node, so it carries whatever the continuation was built from.
+    askPatient name line pressEvasive branches k = go (0 :: Int)
       where
-        go n = askLine line Nothing (branches ++ [evasive] ++ [(l, m) | (l, m, _) <- sidetracks line] ++ [threat, bribe]) $ \answer ->
+        go n = knot (name <> "_" <> T.pack (show n)) $ askLine line Nothing (branches ++ [evasive] ++ [(l, m) | (l, m, _) <- sidetracks line] ++ [threat, bribe]) $ \answer ->
           case lookup answer [(l, r) | (l, _, r) <- sidetracks line] of
             Just retort | n < 2 -> say retort (go (n + 1))
             Just _ -> k "evasive"
@@ -228,8 +232,8 @@ gate w = askOrigin
     -- A story that does not hold up gets one plain re-ask before any verdict. Dodging that closes the
     -- gate; otherwise thin is let through with a warning and false is turned away. The captain is for
     -- posters, bribes, and runners.
-    weigh = weighInto (verdict Admit) pressOnce pressOnce
-    pressOnce =
+    weigh = knot "weigh" (weighInto (verdict Admit) pressOnce pressOnce)
+    pressOnce = knot "press_again" $
       askLine "Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?" Nothing
         [ ("straight", "Answers plainly, with detail a guard could check")
         , ("changes_story", "Gives an account that differs from what they said before")
@@ -386,23 +390,27 @@ interpret call = \case
     guard (if askedBefore == 0 || null variants then line else variants !! min (askedBefore - 1) (length variants - 1))
     reply <- hear
     let st = situation t [("question", String line), ("reply", String reply)]
-        sorting = given t.here.edict (choice "Which branch does the traveller's reply take?"
-                    (many [(k, String meaning, node) | (k, meaning, node) <- branches]))
+        sorting = choice "Which branch does the traveller's reply take?"
+                    (many (\(k, _, _) -> k) (\(_, meaning, _) -> String meaning) branches)
         -- One call, many judgments: beside the branch, a Noul per topic the reply might also raise,
         -- so "which way to the temple, and when is the bell?" gets both answers.
         topical = [(k, meaning, node) | (k, meaning, node) <- branches, k `elem` topics t.here]
         alsoQ = each [(k, #asked := noul ("Does any part of the reply ask about, or ask for, this? " <> meaning) :& Nil) | (k, meaning, _) <- topical]
-        follow a alsos = do
-          let others = [(m, s) | (m, s) <- contenders 0.2 a, selectedKey s /= a.key]
+        follow (a :: A Value (Choice (Many (Text, Text, Node)))) alsos = do
+          let others = [(k, m) | (k, m) <- a.masses, k /= a.key, m >= 0.2]
           aside ("heard " <> a.key <> " " <> pct a.mass
-            <> if null others then "" else "  (also " <> T.intercalate ", " [selectedKey s <> " " <> pct m | (m, s) <- others] <> ")")
-          let raised = [(k, sub.asked.yes) | (k, sub) <- alsos, k /= a.key, sub.asked.yes >= 0.2]
-          unless (null raised) (aside ("also " <> T.intercalate ", " [k <> " " <> pct y | (k, y) <- raised]))
-          sequence_ [guard q | (k, y) <- raised, y >= 0.4, Just (Just q) <- [lookup k [(k', node.quip) | (k', _, node) <- topical]]]
-          handle (chosen a) (onMany (\k node -> node.play (t `saw` Turn line reply k a.mass)))
+            <> if null others then "" else "  (also " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- others] <> ")")
+          let raised = [(k, sub.asked) | (k, sub) <- alsos, k /= a.key, sub.asked.yes >= 0.2]
+          unless (null raised) (aside ("also " <> T.intercalate ", " [k <> " " <> pct n.yes | (k, n) <- raised]))
+          -- A topic the reply clearly raised gets its line too, under the read-only policy.
+          sequence_ [guard q | (k, n) <- raised, judge routing n == Right True, Just (Just q) <- [lookup k [(k', node.quip) | (k', _, node) <- topical]]]
+          -- The guard follows the winner regardless: a sorting has no floor, every branch is a legal next line.
+          handle (chosen a) (onMany (\k (_, _, node) -> node.play (t `saw` Turn line reply k a.mass)))
         slipped a tripped = do
           aside ("slip " <> pct a.slip.yes <> ", was heading for " <> a.branch.key)
           tripped.play (t `saw` Turn line reply "slip" a.slip.yes)
+        -- The tripwire fires only when the provider is clear about it: the receipt policy.
+        tripwire a = judge merging a.slip == Right True
     case (trip, null topical) of
       (Nothing, True) -> ask1 call jevLatest st sorting >>= must >>= \a -> follow a noAlso
       (Nothing, False) -> do
@@ -410,28 +418,28 @@ interpret call = \case
         follow a.branch a.also
       (Just (wording, tripped), True) -> do
         a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #slip := noul wording :& Nil))
-        if a.slip.yes >= 0.75 then slipped a tripped else follow a.branch noAlso
+        if tripwire a then slipped a tripped else follow a.branch noAlso
       (Just (wording, tripped), False) -> do
         a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #also := alsoQ :& #slip := noul wording :& Nil))
-        if a.slip.yes >= 0.75 then slipped a tripped else follow a.branch a.also
+        if tripwire a then slipped a tripped else follow a.branch a.also
 
   Say line next -> Node (\t -> guard line >> next.play t) (Just line)
 
   Check matches none -> program $ \t -> do
-    let posted = pool #posters [(k, String text, ()) | (k, text) <- t.here.posters]
+    -- One Noul per poster, each carrying its own wording: the per-item battery.
     resp <- must =<< ask call jevLatest (situation t [])
-      ( #posters := posted
-      :& #fits := eachIn posted (\poster -> #this := askAbout poster "Does the traveller's story so far match this wanted poster?" :& Nil)
+      ( #fits := each [ (k, #this := noul ("Does the traveller's story so far match this wanted poster? " <> text) :& Nil) | (k, text) <- t.here.posters ]
       :& Nil )
-    let scored = sortOn (Down . fst) [(sub.this.yes, k) | (k, sub) <- (answers resp).fits]
-    aside ("posters " <> T.intercalate ", " [k <> " " <> pct p | (p, k) <- scored])
+    let scored = sortOn (Down . (.yes) . fst) [(sub.this, k) | (k, sub) <- (answers resp).fits]
+    aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | (n, k) <- scored])
+    -- A match holds someone, so it is judged under the policy for starting something.
     case scored of
-      (p, k) : _ | p >= 0.6, Just node <- lookup k matches -> node.play t
+      (n, k) : _ | judge spawning n == Right True, Just node <- lookup k matches -> node.play t
       _ -> none.play t
 
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
     a <- must =<< ask1 call jevLatest (situation t [])
-      (given t.here.edict (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false))))
+      (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false)))
     let at l = fromMaybe 0 (lookup l a.masses)
         likeliest = fst (maximumBy (comparing snd) a.masses)
         -- A mildly thin story that is more sound than false passes: the guard has better things to do.
@@ -451,8 +459,8 @@ interpret call = \case
                  in take 3 (drop n unused ++ take n unused)
     if null unused || even (length t.turns) then next.play t else do
       a <- must =<< ask1 call jevLatest (situation t [])
-        (given t.here.edict (choice "Which of these fits this moment at the gate, given what has happened so far?"
-          (alt #nothing "The night goes on; nothing in particular happens" () .| many [(h.tag, String h.blurb, h) | h <- turned])))
+        (choice "Which of these fits this moment at the gate, given what has happened so far?"
+          (alt #nothing "The night goes on; nothing in particular happens" () .| many (.tag) (String . (.blurb)) turned))
       handle (chosen a)
         (  #nothing (\() -> next.play t)
         .| onMany (\_ h -> do
@@ -491,11 +499,13 @@ spoken w Admit | w.bellGone = "Go on through, and quick about it. The bell's gon
 spoken _ TurnAway = "Not tonight. Move along, and don't let me see you at this gate again."
 spoken _ SendForCaptain = "Guards! Hold this one. Someone fetch the captain."
 
--- What every call sees: the gate as the guard knows it tonight, the
--- conversation so far, the verdicts already spoken, and whatever the node adds.
+-- What every call sees: the standing orders, the gate as the guard knows
+-- it tonight, the conversation so far, the verdicts already spoken, and
+-- whatever the node adds.
 situation :: Traveller -> [(Text, Value)] -> State
 situation t extra = state $ object $
-  [ "gate" .= object
+  [ "standing_orders" .= t.here.edict
+  , "gate" .= object
       [ "city" .= ("Greyhaven" :: Text)
       , "roads_in" .= object [Key.fromText k .= d | (k, d) <- t.here.neighbours]
       , "places" .= object [Key.fromText k .= d | (k, d) <- t.here.places]
