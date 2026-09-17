@@ -25,7 +25,7 @@ answer <- ask1 transport jevLatest (state source)
   (choice "Which line begins the retry-timeout branch?"
      (alt #not_here "The branch is not in this file" () .| many [(key, String line, (lineNo, revision)) | ...]))
 case answer of
-  Right a -> handle (chosen a) (#not_here (\() -> handBack) .| onMany (\_ (n, rev) -> editAt n rev))
+  Right a -> handle a.chosen (#not_here (\() -> handBack) .| onMany (\_ (n, rev) -> editAt n rev))
   Left err -> ...
 ```
 
@@ -88,6 +88,14 @@ Choice {key = "rerun", mass = 0.82, margin = 0.65, confidence = 0.72, masses = [
 `margin` is the winner's mass less the runner-up's, and equals the mass
 when nothing competes. A margin at or near 1.0 means no other option was
 in play — usually a sign the alternatives were not really rivals.
+
+Record dot needs the field selectors in scope, so importing `Jev.Operators`
+unqualified brings eight short names into your module: `key`, `mass`,
+`margin`, `confidence`, `masses`, `chosen`, `yes`, `nearest` (plus
+`expectation` and `ranked`). Under `-Wall -Werror` a local binding with one of
+those names is a shadowing error; name your own fields `tag`, `weight`, and
+so on, or import qualified. Reach the winner as `a.chosen` (the field), not
+`chosen a`; `handle a.chosen handlers` is the one idiom the docs use.
 
 `accept policy answer` weighs those fields and returns either the selection
 or a `Doubt`: `NearTie`, `Underweight`, or `Unconfident`. Three named
@@ -159,7 +167,7 @@ the compiler's sake.
 Elimination is a handler list in declaration order:
 
 ```haskell
-handle (chosen a.next)
+handle a.next.chosen
   (  #use_witness (\(Witness w) -> ...)
   .| #ask_model (\(Handoff h) -> ...)
   .| onMany (\key e -> ...) )

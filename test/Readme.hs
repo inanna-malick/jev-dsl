@@ -30,7 +30,7 @@ locate transport source numbered = do
        (alt #not_here "No line in this file begins that branch" () .| many [(T.pack (show n), String l, n) | (n, l) <- numbered]))
   pure $ case answer of
     Left _ -> Nothing
-    Right a -> handle (chosen a) (#not_here (\() -> Nothing) .| onMany (\_ n -> Just n))
+    Right a -> handle a.chosen (#not_here (\() -> Nothing) .| onMany (\_ n -> Just n))
 
 -- A packet: the type is inferred from the questions.
 inspection edges =
@@ -68,7 +68,7 @@ report a =
 -- The continuation, when the program must act on the payload rather than the key.
 act :: Inspection Answers -> Text
 act a =
-  handle (chosen a.next)
+  handle a.next.chosen
     (  #use_witness (\(Witness w) -> "located at " <> w)
     .| #ask_model   (\(Handoff h) -> "hand back: " <> h)
     .| onMany       (\k _ -> "follow " <> k) )
