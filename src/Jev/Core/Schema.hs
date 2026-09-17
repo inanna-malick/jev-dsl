@@ -36,7 +36,7 @@ module Jev.Core.Schema
   , Q (..), A (..), SomeQ (..), SomeA (..)
     -- * Builders (all total; shapes are checked at 'prepare')
   , noul, noulWith, choice, choiceWith, choose, chooseWith, score, scoreWith, scale
-  , each, group, many, rawUnchecked, option, optionWith, optionKeyed, level
+  , each, group, many, rawUnchecked, option, optionWith, optionKeyed, level, levelWith
   , Candidates, candidates, Candidate (..), Exit (..), noMatch, deferToModel
   , Levels, levelsOf, Premised (..)
     -- * Results
@@ -44,7 +44,7 @@ module Jev.Core.Schema
   , Picked (..), pickOr, ranked, yesAbove, noBelow, unsure
   , eachAnswers, groupAnswer, manyAnswers, rawAnswer
     -- * Schemas and the operation
-  , Schema (..), Only (..), Exact (..), ExactLeaf, exact
+  , Schema (..), Only (..), Exact (..), ExactLeaf, exact, exactAnswers
   , Model (..), jevLatest
   , Prepared, preparedQuestions, preparedModel, preparedState, preparedWire
   , prepare, requestValue, decodeResponse, Response (..), JevError (..), roundTrip, jev1
@@ -224,6 +224,9 @@ optionKeyed k = OptionQ (Just k)
 
 level :: JsonValue v => Text -> Q v Level
 level = LevelQ . jString
+
+levelWith :: v -> Q v Level
+levelWith = LevelQ
 
 -- | Prefix a premise to a question's instructions, so a speculative question
 -- states the branch it assumes. The original instruction is preserved as-is
@@ -686,6 +689,9 @@ type family ExactLeaf mode where
 
 exact :: [(Text, SomeQ v)] -> Exact (Questions v)
 exact = Exact
+
+exactAnswers :: Exact (Answers v) -> [(Text, SomeA v)]
+exactAnswers (Exact xs) = xs
 
 instance Schema Exact where
   compileSchema _ (Exact qs) = concat <$> mapM (\(k, SomeQ q) -> compileQ (Exactly k) q) qs

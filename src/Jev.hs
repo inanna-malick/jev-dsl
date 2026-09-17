@@ -27,13 +27,13 @@ module Jev
     -- * Endpoints
   , Noul, Choice, Choose, Score, Scale, Each, Group, Many, Raw, Option, Level
     -- * Leaves and schemas
-  , Q, A, Schema, Only (..), Exact, exact, SomeQ, someQ, SomeA, pattern SomeA
+  , Q, A, Schema, Only (..), Exact, exact, exactAnswers, SomeQ, someQ, SomeA, pattern SomeA
     -- * Positions
   , Presence (..), Instructions, Description, NoulCriteria, pattern NoulCriteria, yes, no
   , State, stateOf, stateText, stateObject, stateArray, stateValue
     -- * Builders (total; shapes are checked at 'prepare')
   , noul, noulWith, choice, choiceWith, choose, chooseWith, score, scoreWith, scale
-  , each, group, many, rawUnchecked, option, optionWith, optionKeyed, level
+  , each, group, many, rawUnchecked, option, optionWith, optionKeyed, level, levelWith
   , Candidates, candidates, Candidate, candidateKey, candidateDescription, candidatePayload
   , Exit, exit, exitKey, exitDescription, noMatch, deferToModel
   , Levels, levelsOf, given
@@ -114,6 +114,9 @@ someQ = Core.SomeQ
 exact :: [(Text, SomeQ)] -> Exact Questions
 exact = Core.exact
 
+exactAnswers :: Exact Answers -> [(Text, SomeA)]
+exactAnswers = Core.exactAnswers
+
 -- Positions
 yes, no :: NoulCriteria -> Presence Description
 yes = Core.yes
@@ -185,6 +188,9 @@ optionKeyed = Core.optionKeyed
 
 level :: Text -> Q Level
 level = Core.level
+
+levelWith :: Value -> Q Level
+levelWith = Core.levelWith
 
 candidates :: [(Text, Description, a)] -> Candidates a
 candidates = Core.candidates

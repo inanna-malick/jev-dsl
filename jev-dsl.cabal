@@ -49,6 +49,10 @@ test-suite jev-dsl-test
   other-modules:
     Check
     Proto
+    Fixtures
+    Shape
+    Golden
+    Rejections
   build-depends:
     , base
     , containers
