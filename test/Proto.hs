@@ -205,7 +205,9 @@ protoChecks c = do
   -- pools: named at their binding; the state envelope follows the packet;
   -- every question that draws on a pool names it
   let probes = pool #probes [("run_retry_fixture", "Retries m42 and counts callbacks", Command "just test-target actor retry"), ("read.gate", "Reads publish_if_active", Command "sed -n 30,60p x.rs")]
-      relevance r = #useful := askAbout r "Does this probe help answer the inquiry?" :& Nil
+      relevance r =
+        let Command command = refPayload r
+        in #useful := askAbout r ("Does probe " <> refKey r <> " running `" <> command <> "` help answer the inquiry?") :& Nil
       pooledPacket = #probes := probes
                   :& #best := choice "Which probe first?" (manyFrom probes .| alt #none "No probe helps" ())
                   :& #per := eachIn probes relevance
@@ -224,8 +226,11 @@ protoChecks c = do
         (Just (object ["question" .= ("Which probe first?" :: Text), "pool" .= ("probes" :: Text)]))
         (lookup "best" qs >>= field "instructions")
       checkEq c "pools: askAbout addresses by structured fields"
-        (Just (object ["question" .= ("Does this probe help answer the inquiry?" :: Text), "pool" .= ("probes" :: Text), "key" .= ("read.gate" :: Text)]))
+        (Just (object ["question" .= ("Does probe read.gate running `sed -n 30,60p x.rs` help answer the inquiry?" :: Text), "pool" .= ("probes" :: Text), "key" .= ("read.gate" :: Text)]))
         (lookup "per.read\\.gate.useful" qs >>= field "instructions")
+      checkEq c "pools: eachIn refs expose each public key and payload"
+        (Just (object ["question" .= ("Does probe run_retry_fixture running `just test-target actor retry` help answer the inquiry?" :: Text), "pool" .= ("probes" :: Text), "key" .= ("run_retry_fixture" :: Text)]))
+        (lookup "per.run_retry_fixture.useful" qs >>= field "instructions")
       checkEq c "pools: no question emitted for the declaration" 3 (length qs)
   r4 <- roundTrip (stub "read.gate") jevLatest world pooledPacket
   case r4 of
