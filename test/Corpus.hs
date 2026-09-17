@@ -38,7 +38,7 @@ locate transport source numbered = do
     Right a ->
       let edit = #not_here (\() -> HandBack) .| onMany (\_ l -> EditAt l.lineNo l.revision)
           winner = either (const HandBack) id (settle (Policy 0.3 0.1 0.5) a edit)
-          alsoPlausible = [handle s edit | (_, s) <- contenders 0.2 a]
+          alsoPlausible = map snd (contenders 0.2 a edit)
       in (winner, alsoPlausible)
 
 -- ---------------------------------------------------------------------------
@@ -54,15 +54,15 @@ diagnose transport inquiry hypotheses = do
   let offers = alt #neither "None of these explains the evidence" () .| many (.hKey) (String . (.hText)) hypotheses
       hypothesisOf = #neither (\() -> Nothing) .| onMany (\_ h -> Just h)
       first = #mechanism := choice "Which mechanism explains the failure?" offers
-           :& #probes := each [ (h.hKey, #useful := noul ("Supposing the mechanism is " <> h.hText <> ": would running " <> h.probe <> " discriminate?") :& Nil) | h <- hypotheses ]
+           :& #probes := each [ (h.hKey, noul ("Supposing the mechanism is " <> h.hText <> ": would running " <> h.probe <> " discriminate?")) | h <- hypotheses ]
            :& Nil
   r1 <- ask transport jevLatest (state (String inquiry)) first
   case r1 of
     Left e -> pure (Left e)
     Right resp -> do
       let a = answers resp
-          live = [h | (_, s) <- contenders 0.3 a.mechanism, Just h <- [handle s hypothesisOf]]
-          worthProbing = [h | h <- live, Just sub <- [lookup h.hKey a.probes], judge routing sub.useful == Right True]
+          live = [h | (_, Just h) <- contenders 0.3 a.mechanism hypothesisOf]
+          worthProbing = [h | h <- live, Just n <- [lookup h.hKey a.probes], judge routing n == Right True]
           observations = [(h.hKey, String ("ran " <> h.probe)) | h <- worthProbing]
       r2 <- ask1 transport jevLatest (state (object ["inquiry" .= inquiry, "observations" .= object [(Key.fromText k, v) | (k, v) <- observations]]))
               (choice "Which mechanism do the observations support?" offers)
@@ -76,13 +76,13 @@ diagnose transport inquiry hypotheses = do
 data Edge = Edge { edgeKey :: Text, edgeText :: Text, command :: Text }
 
 expand transport inquiry edges = do
-  let packet = #relevant := each [ (e.edgeKey, #applies := noul ("Does following " <> e.edgeKey <> " (" <> e.edgeText <> ") bear on the inquiry?") :& Nil) | e <- edges ]
+  let packet = #relevant := each [ (e.edgeKey, noul ("Does following " <> e.edgeKey <> " (" <> e.edgeText <> ") bear on the inquiry?")) | e <- edges ]
             :& #next := choice "Which edge should be followed first?" (many (.edgeKey) (String . (.edgeText)) edges .| alt #stop "No edge is worth following" ())
             :& Nil
   r <- ask transport jevLatest (state (String inquiry)) packet
   pure $ fmap (\resp ->
     let a = answers resp
-    in ( [k | (k, sub) <- a.relevant, judge routing sub.applies == Right True]
+    in ( [k | (k, n) <- a.relevant, judge routing n == Right True]
        , settle routing a.next (onMany (\_ e -> Just e.command) .| #stop (\() -> Nothing)) )) r
 
 -- ---------------------------------------------------------------------------

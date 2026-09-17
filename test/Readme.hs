@@ -41,7 +41,7 @@ inspection edges =
                     .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
                     .| many (.edgeKey) (String . (.edgeText)) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
-  :& #children := each [ (e.edgeKey, #useful := noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?") :& Nil) | e <- edges ]
+  :& #children := each [ (e.edgeKey, noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) | e <- edges ]
   :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
   :& Nil
 
@@ -50,7 +50,7 @@ type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edg
 type Inspection = Packet
   '[ "next" ::= Choice Routes
    , "enough" ::= Noul
-   , "children" ::= Each (Packet '[ "useful" ::= Noul ])
+   , "children" ::= Each Noul
    , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
 
 _inspectionTyped :: [Edge] -> Inspection Questions
@@ -70,7 +70,7 @@ act a =
 report :: Inspection Answers -> Text
 report a =
   a.next.key <> " by " <> pct a.next.margin
-    <> ", relevant: " <> T.intercalate ", " [k | (k, sub) <- a.children, judge routing sub.useful == Right True]
+    <> ", relevant: " <> T.intercalate ", " [k | (k, n) <- a.children, judge routing n == Right True]
     <> (if judge routing a.evidence.gap == Right True then ", source missing" else "")
   where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
 
@@ -95,4 +95,4 @@ routes :: Handlers Text Routes
 routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)
 
 alive :: Inspection Answers -> [Text]
-alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
+alive a = map snd (contenders 0.25 a.next routes)

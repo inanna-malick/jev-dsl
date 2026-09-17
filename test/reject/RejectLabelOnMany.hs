@@ -15,4 +15,4 @@ import Jev.Operators
 type Next = "rerun" ::> () :|: Many Int
 
 bad :: A Value (Choice Next) -> String
-bad a = handle (chosen a) (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))
+bad a = handle a (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))

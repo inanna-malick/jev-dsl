@@ -15,4 +15,4 @@ import Jev.Operators
 type Next = "rerun" ::> () :|: "ask_model" ::> ()
 
 bad :: A Value (Choice Next) -> String
-bad a = handle (chosen a) (#rerun (\() -> "rerun") .| #ask_model (\() -> "ask") .| #more (\() -> "more"))
+bad a = handle a (#rerun (\() -> "rerun") .| #ask_model (\() -> "ask") .| #more (\() -> "more"))

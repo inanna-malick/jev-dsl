@@ -114,19 +114,19 @@ settled on rerun: confidence 0.72 ≥ 0.70, mass 0.82 ≥ 0.55, margin 0.65 ≥ 
 doubted ask_model (NearTie): margin 0.06 < 0.20 by 0.14; confidence 0.70, mass 0.45
 ```
 
-`handle selection handlers` is `settle` without a policy, for when the
-program follows the winner regardless: a dialogue branch, a sorting where
-every outcome is a legal next step. Reach the winner as `a.next.chosen`.
-`contenders floor answer` is every alternative at or above a mass floor,
-best first, as selections the same handler list eliminates. A handler list
-is an ordinary value: bind it once and use it on the winner and on every
-contender.
+`handle answer handlers` is `settle` without a policy, for when the program
+follows the winner regardless: a dialogue branch, a sorting where every
+outcome is a legal next step. `contenders floor answer handlers` is every
+alternative at or above a mass floor, best first, each already through those
+handlers. All three take the answer and the branches, so there is nothing to
+thread between them, and a handler list is an ordinary value you bind once
+and use on the winner and on every contender.
 
 The rest of an answer is fields, read with record dot:
 
 | Question | Fields |
 |---|---|
-| `choice` | `key`, `mass`, `margin`, `confidence`, `masses` (best first), `chosen` |
+| `choice` | `key`, `mass`, `margin`, `confidence`, `masses` (best first) |
 | `noul` | `yes` |
 | `score` | `expectation`, `confidence`, `masses` (by level, in order) |
 
@@ -142,7 +142,7 @@ play, usually a sign the alternatives were not really rivals.
 
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
-`margin`, `confidence`, `masses`, `chosen`, `yes`, `expectation`. The
+`margin`, `confidence`, `masses`, `yes`, `expectation`. The
 verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `settle`,
 `judge`, `grade`, `handle`, `explain`. Under `-Wall` a local binding with any of
 these names shadows; name your own `tag`, `weight`, `askLine`, or import
@@ -245,12 +245,14 @@ When the question is "for each of these N things, ...", `each` asks a
 sub-packet per item, keyed at runtime, in one call:
 
 ```haskell
-#clauses := each [ (c.key, #holds := noul ("Does the draft satisfy " <> c.key <> "? " <> c.text) :& Nil) | c <- clauses ]
+#clauses := each [ (c.key, noul ("Does the draft satisfy " <> c.key <> "? " <> c.text)) | c <- clauses ]
 ```
 
-The answers come back as `[(key, sub-packet)]`, read with `lookup`. Each
-item's wording is written where the question is, so a battery is an
-ordinary fold over whatever list the program has. This is the highest-value
+`each` holds a question or a nested packet, exactly as a cell does, so one
+question per item needs nothing around it and several per item is the same
+call with a packet in it. The answers come back as `[(key, answer)]`, read
+with `lookup`. Each item's wording is written where the question is, so a
+battery is an ordinary fold over whatever list the program has. This is the highest-value
 shape in the corpus: per-item questions catch things a single summary
 question waves through.
 

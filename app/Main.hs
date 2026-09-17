@@ -46,7 +46,7 @@ type Triage = Packet
   '[ "explains" ::= Choice ("no_match" ::> () :|: Many Diagnostic)
    , "next" ::= Choice Next
    , "verify" ::= Choice (Many Check :|: "defer" ::> ())
-   , "relevant" ::= Each (Packet '[ "applies" ::= Noul ])
+   , "relevant" ::= Each Noul
    , "sufficient" ::= Noul
    , "breadth" ::= Score ("localized" :|: "adjacent" :|: "contract")
    ]
@@ -77,7 +77,7 @@ triage inputs = (world, questions)
                     .| alt #ask_model "Deciding needs judgment beyond the supplied diagnostics and checks" (Handoff "needs judgment") )
       :& #verify := choice "Which available check most directly verifies a fix for the explaining diagnostic?"
                       (many (.checkKey) (String . (.checkText)) available .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
-      :& #relevant := each [ (c.checkKey, #applies := noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?") :& Nil) | c <- available ]
+      :& #relevant := each [ (c.checkKey, noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?")) | c <- available ]
       :& #sufficient := noul "Do `diagnostics` alone establish the mechanism of `failure`?"
       :& #breadth := score "How broadly would fixing the explaining diagnostic alter established behavior?"
                        (  level #localized "Localized to the failing check"
@@ -148,7 +148,7 @@ report resp = do
   line "verify" (explain spawning a.verify) $ settle spawning a.verify
     (onMany (\_ c -> "run " <> c.checkKey) .| #defer (\() -> "<defer to the model>"))
   -- Nouls are judged under the same policies.
-  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> verdict (judge routing sub.applies) | (k, sub) <- a.relevant])
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> verdict (judge routing n) | (k, n) <- a.relevant])
   line "sufficient" (explain merging a.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging a.sufficient)
   -- A rubric is graded, not read off: the level half the weight reaches.
   TIO.putStrLn ("breadth: " <> grade 0.5 a.breadth

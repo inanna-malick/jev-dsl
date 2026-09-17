@@ -65,7 +65,7 @@ module Jev.Operators
   , request, decode
     -- * Types, for signatures only
   , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
-  , Noul, Choice, Score, Each, Group, Selected
+  , Noul, Choice, Score, Each, Group
   , Q, Questions, Answers, type (:-), State, state, Model, Response
   , Schema, Alternatives
   ) where
@@ -80,7 +80,7 @@ import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
   ( A (..), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, JevError (..), Label, Many, Model, Noul, Weighed
-  , Packet (..), Cell (..), PrepError (..), Q, Score, Selected, type (:-), type (::=), type (::>), type (:|:), Policy (..)
+  , Packet (..), Cell (..), PrepError (..), Q, Score, type (:-), type (::=), type (::>), type (:|:), Policy (..)
   , Rejection (..), ValidationIssue (..)
   )
 
@@ -130,8 +130,9 @@ choice = Core.choice
 score :: Core.RubricOk levels => Text -> Rubric Value levels -> Q Value (Score levels)
 score = Core.score
 
--- | A sub-packet per item, keyed at runtime: the per-item battery.
-each :: [(Text, s Questions)] -> Q Value (Each s)
+-- | One question per item, keyed at runtime: the per-item battery. Takes a
+-- question or a nested packet, exactly as a cell does.
+each :: (Core.ToQ x, Core.CellJson x ~ Value) => [(Text, x)] -> Q Value (Each (Core.CellKind x))
 each = Core.each
 
 state :: Value -> State
@@ -162,14 +163,14 @@ grade = Core.grade
 explain :: Weighed e => Policy -> A Value e -> Text
 explain = Core.explain
 
--- | A selection through a handler per alternative, with no policy. For the
--- contenders, or when the program follows the winner regardless.
-handle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Selected Value alts -> Handlers r hs -> r
+-- | The winner through a handler per alternative, with no policy: for when
+-- the program follows whatever came back.
+handle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => A Value (Choice alts) -> Handlers r hs -> r
 handle = Core.handle
 
--- | Every alternative at or above a mass floor, best first, as selections
--- the same handlers eliminate.
-contenders :: Double -> A Value (Choice alts) -> [(Double, Selected Value alts)]
+-- | Every alternative at or above a mass floor, best first, each already
+-- through the same handlers.
+contenders :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Double -> A Value (Choice alts) -> Handlers r hs -> [(Double, r)]
 contenders = Core.contenders
 
 -- | Read-only choices: which file, which skill.

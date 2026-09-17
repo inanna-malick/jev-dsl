@@ -81,7 +81,7 @@ type Pairs = "o1_o2" ::> () :|: "o3_o4" ::> () :|: "o4_o5" ::> ()
 type Branch = Packet '[ "action" ::= Choice Actions, "affected" ::= Noul, "readiness" ::= Score Readiness ]
 type Decision = Packet '[ "owner" ::= Choice (Many (Text, Value)), "kind" ::= Choice Kinds, "witness" ::= Choice Pairs ]
 type Evidence = Packet '[ "old_review_applies" ::= Noul, "opinion_overrides" ::= Noul ]
-type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each Branch, "evidence" ::= Group Evidence ]
+type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each (Group Branch), "evidence" ::= Group Evidence ]
 
 world :: Value -> World Questions
 world req =
@@ -151,7 +151,7 @@ goldenChecks c = do
   golden c "structured" probeState triage $ \resp -> do
     let a = answers resp
     checkEq c "structured: route picked configuration_owner with its payload" "config"
-      (handle (chosen a.route) (#configuration_owner id .| #reviewer id .| #neither (\() -> "none")))
+      (handle a.route (#configuration_owner id .| #reviewer id .| #neither (\() -> "none")))
     checkEq c "structured: route confidence" 0.97 a.route.confidence
     checkEq c "structured: urgency expectation" 1.0 a.urgency.expectation
     checkEq c "structured: masses keyed by level label" ["informational", "blocking"] (map fst a.urgency.masses)
@@ -194,7 +194,7 @@ goldenChecks c = do
     [("owner", object ["rules" .= [Bool True, Bool False, Null, Number 3.5, object ["nested" .= ["configuration" :: Text]]]]), ("reviewer", "Reviews completed work")] (\_ -> pure ())
   fx255 <- loadFixture "choice255"
   golden c "choice255" probeState (route (maybe [] objectPairs (lookup "criteria" (objectPairs (maybe Null id (lookup "route" (requestQuestions (fixtureRequest fx255)))))))) $ \resp ->
-    checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route))
+    checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route (onMany (\k _ -> k))))
 
   -- exact keys at the root
   golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many fst snd

@@ -386,7 +386,7 @@ quote :: Text -> Text
 quote t = "\"" <> t <> "\""
 
 -- No topics were on offer here: the shape the per-topic answers would have had.
-noAlso :: [(Text, Packet '["raised" ::= Noul] Answers)]
+noAlso :: [(Text, A Value Noul)]
 noAlso = []
 
 -- The hub topics the guard will answer more than one of in a breath.
@@ -432,19 +432,18 @@ interpret call = \case
         -- "which way to the temple, and when's the bell?" gets both answers
         -- without a second round trip.
         topical = [(k, meaning, node) | (k, meaning, node) <- branches, k `elem` topics t.here]
-        alsoQ = each [ (k, #raised := noul (T.unwords
+        alsoQ = each [ (k, noul (T.unwords
                     [ "Is the traveller asking the guard about this, or asking for it?"
                     , "Mentioning it in passing, denying it, or answering the guard's own question about it is not asking."
-                    , "The topic:", meaning ]) :& Nil)
+                    , "The topic:", meaning ]))
                   | (k, meaning, _) <- topical ]
 
         follow a alsos = do
-          let winner = handle (chosen a) branchOf
+          let winner = handle a branchOf
               others = [(k, m) | (k, m) <- a.masses, k /= a.key, m >= 0.2]
               -- Judged, not thresholded by hand; a topic the guard has
               -- already spoken to is not raised again.
-              raised = [ (k, n) | (k, sub) <- alsos, let n = sub.raised, k /= a.key
-                       , judge routing n == Right True ]
+              raised = [ (k, n) | (k, n) <- alsos, k /= a.key, judge routing n == Right True ]
               alsoSaid = nub [ q | (k, _) <- raised
                               , Just (Just q) <- [lookup k [(k', node.quip) | (k', _, node) <- topical]]
                               , Just q /= winner.quip, q `notElem` t.told ]
@@ -511,9 +510,9 @@ interpret call = \case
   Check matches none -> program $ \t -> do
     -- One Noul per poster, each carrying its own wording: the per-item battery.
     resp <- must =<< ask call jevLatest (situation t [])
-      ( #fits := each [ (k, #this := noul ("Does the traveller's story so far match this wanted poster? " <> text) :& Nil) | (k, text) <- t.here.posters ]
+      ( #fits := each [ (k, noul ("Does the traveller's story so far match this wanted poster? " <> text)) | (k, text) <- t.here.posters ]
       :& Nil )
-    let scored = sortOn (Down . (.yes) . fst) [(sub.this, k) | (k, sub) <- (answers resp).fits]
+    let scored = sortOn (Down . (.yes) . fst) [(n, k) | (k, n) <- (answers resp).fits]
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | (n, k) <- scored])
     -- Holding someone starts something, so the closest poster is judged under
     -- that policy, and the policy's own line says why it went the way it did.

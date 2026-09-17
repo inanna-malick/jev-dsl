@@ -155,13 +155,16 @@ protoChecks c = do
     Right resp -> do
       let a = answers resp
       checkEq c "packet: usage kept" (Usage 100 7) (usage resp)
+      checkEq c "packet: the winner runs with no policy at all" "handback preference"
+        (handle a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
       checkEq c "packet: inline handler list ran the chosen branch" (Right "handback preference")
         (settle routing a.next (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| onMany (\k _ -> "follow " ++ T.unpack k)))
       checkEq c "packet: reusable handler list" (Right "handback preference") (settle routing a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
       checkEq c "packet: contenders eliminate through the same handlers, best first"
         ["handback preference", "follow publication_gate", "follow telemetry", "located complete_request:41"]
-        [handle s (handlers (const "handback preference")) | (_, s) <- contenders 0 a.next]
-      checkEq c "packet: a floor keeps only the mass above it" 1 (length (contenders 0.5 a.next))
+        (map snd (contenders 0 a.next (handlers (const "handback preference"))))
+      checkEq c "packet: a floor keeps only the mass above it" 1
+        (length (contenders 0.5 a.next (handlers (const ""))))
       check c "packet: a near tie is structured doubt, not a result"
         (case settle (Policy 0 0.7 0) a.next (handlers (const "")) of
           Left (NearTie ("ask_model", _) ("publication_gate", _)) -> True
@@ -245,9 +248,10 @@ protoChecks c = do
     Right resp -> do
       let a = answers resp
           live = contenders 0.3 a.mechanism
+                   (#retry_redelivery (\(Command x) -> x) .| #double_admission (\(Command x) -> x) .| #unknown (\() -> ""))
       checkEq c "contenders: a near tie keeps two mechanisms alive" 2 (length live)
-      checkEq c "contenders: both eliminate through the same handlers" ["just test-target actor retry", "just test-target node inbox"]
-        [handle s (#retry_redelivery (\(Command x) -> x) .| #double_admission (\(Command x) -> x) .| #unknown (\() -> "")) | (_, s) <- live]
+      checkEq c "contenders: each already through the handlers" ["just test-target actor retry", "just test-target node inbox"]
+        (map snd live)
 
   -- preparation errors, every builder total
   let prepErr :: Core.Endpoint Value e => Q Value e -> Maybe PrepError

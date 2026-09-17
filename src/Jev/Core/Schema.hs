@@ -84,7 +84,7 @@ data Answers (v :: Type)
 type family mode :- (e :: Type) :: Type where
   Questions v :- e = Q v e
   Answers v :- Group s = s (Answers v)
-  Answers v :- Each s = [(Text, s (Answers v))]
+  Answers v :- Each e = [(Text, Answers v :- e)]
   Answers v :- e = A v e
 infixr 0 :-
 
@@ -95,7 +95,7 @@ infixr 0 :-
 data Noul
 data Choice (alts :: Type)
 data Score (levels :: k)
-data Each (s :: Type -> Type)
+data Each (e :: Type)
 data Group (s :: Type -> Type)
 
 data family Q (v :: Type) (e :: Type)
@@ -374,8 +374,8 @@ data instance A v (Score levels) = Scored
   , masses :: [(Text, Double)]   -- ^ the distribution, by level label, in level order
   }
 
-newtype instance Q v (Each s) = EachQ [(Text, s (Questions v))]
-newtype instance A v (Each s) = EachA [(Text, s (Answers v))]
+newtype instance Q v (Each e) = EachQ [(Text, Q v e)]
+newtype instance A v (Each e) = EachA [(Text, Answers v :- e)]
 
 newtype instance Q v (Group s) = GroupQ (s (Questions v))
 newtype instance A v (Group s) = GroupA (s (Answers v))
@@ -428,11 +428,12 @@ choice t = ChoiceQ (question t)
 score :: forall levels v. (JsonValue v, RubricOk levels) => Text -> Alts (Level v) levels -> Q v (Score levels)
 score t = ScoreQ (question t)
 
--- | A sub-packet per item, keyed at runtime. The per-item battery: each
--- item's questions carry their own wording, and the answers come back as
--- a keyed list of sub-packets.
-each :: [(Text, s (Questions v))] -> Q v (Each s)
-each = EachQ
+-- | One question per item, keyed at runtime: the per-item battery. A cell
+-- holds a question or a nested packet, and so does this, so a battery of
+-- one question per item needs no packet around it and a battery of several
+-- is the same call with a packet in it.
+each :: ToQ x => [(Text, x)] -> Q (CellJson x) (Each (CellKind x))
+each items = EachQ [(k, toQ x) | (k, x) <- items]
 
 -- ---------------------------------------------------------------------------
 -- Results
@@ -491,7 +492,7 @@ doubt policy a =
 -- that means "no" or "missing" runs its own handler and never reads as a
 -- pass.
 settle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Policy -> A v (Choice alts) -> Alts (Handler v r) hs -> Either Doubt r
-settle policy a hs = maybe (Right (handle (chosen a) hs)) Left (doubt policy a)
+settle policy a hs = maybe (Right (handle a hs)) Left (doubt policy a)
 
 -- | A proposition under a policy: yes, no, or structured doubt when the
 -- provider was not clear either way.
@@ -518,16 +519,16 @@ explain policy a =
           rest = [n <> " " <> fmt2 v | (n, v, _) <- items, n /= failedName]
       in "doubted " <> winner w <> " (" <> ctor <> "): " <> floorLine <> "; " <> T.intercalate ", " rest
 
--- | The fundamental eliminator: a selection (the chosen one or a
--- contender) against a handler per alternative in declaration order. A
--- missing, extra, or misordered handler is a type error naming the labels.
-handle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Selected v alts -> Alts (Handler v r) hs -> r
-handle s hs = altHandle hs s
+-- | The winner against a handler per alternative in declaration order, with
+-- no policy: for when the program follows whatever came back. A missing,
+-- extra, or misordered handler is a type error naming the labels.
+handle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => A v (Choice alts) -> Alts (Handler v r) hs -> r
+handle a hs = altHandle hs (chosen a)
 
--- | Every alternative at or above a mass floor, best first, as typed
--- selections the same handlers eliminate.
-contenders :: Double -> A v (Choice alts) -> [(Double, Selected v alts)]
-contenders floor' a = let Ranked rs = ranked a in [(m, s) | (m, s) <- rs, m >= floor']
+-- | Every alternative at or above a mass floor, best first, each already
+-- through the same handlers. The one way to act on a runner-up.
+contenders :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Double -> A v (Choice alts) -> Alts (Handler v r) hs -> [(Double, r)]
+contenders floor' a hs = let Ranked rs = ranked a in [(m, altHandle hs s) | (m, s) <- rs, m >= floor']
 
 -- | Run the result for the level the score landed on. Levels run lowest to
 -- highest, so this walks from the highest down and takes the first whose
@@ -693,11 +694,11 @@ checkExpectation :: Text -> Int -> Double -> Either DecodeError ()
 checkExpectation key n e =
   if isNaN e || isInfinite e || e < 0 || e > fromIntegral (n - 1) then Left (ValueOutOfRange key "score") else Right ()
 
-instance Schema v s => Endpoint v (Each s) where
-  compileQ p (EachQ items) = concat <$> mapM (\(k, q) -> compileSchema (extend p k) q) items
-  decodeA p (EachQ items) ws = EachA <$> mapM (\(k, q) -> (,) k <$> decodeSchema (extend p k) q ws) items
+instance Endpoint v e => Endpoint v (Each e) where
+  compileQ p (EachQ items) = concat <$> mapM (\(k, q) -> compileQ (extend p k) q) items
+  decodeA p (EachQ items) ws = EachA <$> mapM (\(k, q) -> (,) k . unwrapA <$> decodeA (extend p k) q ws) items
   unwrapA (EachA xs) = xs
-  previewA xs = jObject [(k, previewSchema x) | (k, x) <- xs]
+  previewA xs = jObject [(k, previewA @v @e x) | (k, x) <- xs]
 
 instance Schema v s => Endpoint v (Group s) where
   compileQ p (GroupQ q) = compileSchema p q

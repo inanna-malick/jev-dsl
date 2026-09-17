@@ -74,7 +74,7 @@ inspection edges =
                     .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
                     .| many (.edgeKey) (String . (.edgeText)) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
-  :& #children := each [ (e.edgeKey, #useful := noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?") :& Nil) | e <- edges ]
+  :& #children := each [ (e.edgeKey, noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) | e <- edges ]
   :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
   :& Nil
 ```
@@ -83,8 +83,9 @@ A cell holds a question or a nested packet. Nesting flattens to dotted wire
 keys and reads back through the labels, so `a.evidence.gap` is the answer to
 the question written above.
 
-`each` is the per-item battery: one sub-packet per item, keyed at runtime,
-in the same call. Per-item questions catch what a single summary question
+`each` is the per-item battery: one question per item, keyed at runtime, in
+the same call. It takes a question or a nested packet, exactly as a cell
+does, so a single question needs no packet around it. Per-item questions catch what a single summary question
 waves through, and the list is whatever the program already has.
 
 Answers come back under the same labels, and every one is consumed under a
@@ -118,15 +119,15 @@ grade 0.5 a.urgency
 mass at or above it clears the floor. A rubric's labels are known at compile
 time, so nothing has to dispatch on them as strings.
 
-A handler list is a value. The same list eliminates the winner or every
-contender above a floor:
+A handler list is a value. `settle`, `handle` and `contenders` all take the
+answer and the same list, so nothing is threaded between them:
 
 ```haskell
 routes :: Handlers Text Routes
 routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)
 
 alive :: Inspection Answers -> [Text]
-alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
+alive a = map snd (contenders 0.25 a.next routes)
 ```
 
 Signatures are optional. This one is what the compiler inferred for
@@ -137,7 +138,7 @@ type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edg
 type Inspection = Packet
   '[ "next" ::= Choice Routes
    , "enough" ::= Noul
-   , "children" ::= Each (Packet '[ "useful" ::= Noul ])
+   , "children" ::= Each Noul
    , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
 ```
 
