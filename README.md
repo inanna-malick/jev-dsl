@@ -78,7 +78,7 @@ inspection = Inspect
       }
   }
 
-Right resp <- roundTrip transport jevLatest world inspection
+resp <- either (fail . show) pure =<< roundTrip transport jevLatest world inspection
 let a = answers resp
 outcome <- match a.next Routes
   { followCaller = \(Edge e)    -> follow e
@@ -119,6 +119,7 @@ first <- roundTrip transport jevLatest world Investigation
 
 let ms   = masses a.mechanism
     live = [ h | (h, mass) <- [(retry, ms.retryRedelivery), (admission, ms.doubleAdmission)], mass > 0.3 ]
+-- or, for a dynamic choice: take (top two of) `contenders a.probe` and run their retained payloads
 observations <- traverse observe live
 second <- jev1 transport jevLatest (stateObject [("observations", toJSON observations)])
             (choice "Which mechanism now?" mechanisms)
@@ -133,8 +134,16 @@ better inputs to a larger model than an early commitment.
 - `match`, `withChoice`, `probabilityOf`, `masses`, `selectedKey`, `confidence`
   for static choices. A selection cannot be applied to another result's
   distribution; the types forbid it.
-- `picked`, `pickOr`, `ranked` for dynamic choices, with exits ranked among
-  candidates so a winning handback is first.
+- `picked`, `pickOr`, `ranked`, and `contenders` for dynamic choices, with
+  exits ranked among candidates so a winning handback is first and the top
+  two carry their payloads. `select` applies a `Policy` (mass floor, margin,
+  confidence floor) and returns the accepted candidate or a structured
+  `Doubt` that keeps the cases apart: the provider chose an exit, the winner
+  is underweight, the margin is too thin, or confidence is too low. The
+  original answer stays in hand for inspection or resumption. A one-option
+  choice has no runner-up and passes the margin check; an exit-only choice is
+  valid. `selectOr` runs a continuation or hands the doubt back. Acting on an
+  uncertain choice should not be the shortest path by accident.
 - `probabilityYes`, `yesAbove`, `noBelow`, `unsure` for Nouls, so a tree of
   natural-language conditions reads like the sentence it encodes.
 - `expectation`, `levelMasses`, `legend` for Scores; the legend is the
@@ -145,11 +154,22 @@ better inputs to a larger model than an early commitment.
 
 ## What `prepare` and `decodeResponse` guarantee
 
-`prepare` rejects, with the question key: empty or duplicate candidate keys,
-an exit colliding with a candidate, duplicate wire keys after overrides,
-more than 255 alternatives or a Score outside 1 to 10, null levels, bare
-scalars where the provider requires structure, a bare-scalar or null state,
-empty question maps, empty question ids, and duplicate flattened ids.
+Builders are total and produce drafts; a draft may be invalid. `prepare` is
+where validity is established, and only a `Prepared` value can be rendered or
+decoded against. That is a deliberate trade: every check happens in one
+place with the question key attached, and no `Either` sits between an author
+and a candidate list.
+
+`prepare` rejects, with the question key: a dynamic choice with neither
+candidates nor exits, duplicate candidate keys, an exit colliding with a
+candidate, duplicate wire keys after overrides, more than 255 alternatives
+or a runtime rubric outside 1 to 10, null levels, bare scalars where the
+provider requires structure, a bare-scalar or null state, empty question
+maps, empty question ids, and duplicate flattened ids. An empty *candidate*
+key is admitted, because the provider admits it. Static records are checked
+at compile time instead: an alternatives record with no `Option` fields or
+more than 255, a level record with none or more than 10, or a field of the
+wrong shape, each fail with a message naming the record and the rule.
 
 `decodeResponse` rejects: a selection outside the submitted set, probability
 keys that do not equal the submitted set exactly, values or confidence outside
@@ -162,11 +182,12 @@ kind.
 object and returns the answer as the original parsed JSON, and it is
 explicitly outside the guarantee.
 
-Every request shape the provider accepted in a corpus of 253 real exchanges
-renders byte-identically through this library and decodes; every rejected
-shape is either inexpressible, rejected by `prepare` with a named error, or a
-decision only the provider can make. See `test/fixtures/README.md` for
-provenance.
+Of 253 real accepted exchanges, 251 render as structurally identical JSON
+through this library and decode against the retained request; the other two
+carried unknown request-level members the harness added deliberately, which
+the closed request spine does not express. Every rejected shape is either
+inexpressible, rejected by `prepare` with a named error, or a decision only
+the provider can make. See `test/fixtures/README.md` for provenance.
 
 ## Bring your own JSON type
 

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- expect: has no Option fields
 module RejectEmptyChoice where
 
 import GHC.Generics (Generic)

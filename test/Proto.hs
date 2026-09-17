@@ -17,6 +17,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
 import Data.List (sort)
+import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
@@ -196,12 +197,44 @@ protoChecks c = do
       checkEq c "tiny: Either payload hands back without a library exit" "handback: preference" out
     Left e -> check c ("tiny either: " ++ show e) False
 
+  -- refinements: exit-only choices, typed contenders, policy-aware selection
+  r1o <- jev1 (stub "no_match") jevLatest world (choose "Any diagnostic?" (candidates ([] :: [(Text, Description, Command)])) [noMatch "Nothing listed"])
+  check c "choose: exit-only choice prepares and hands back" (case r1o of
+    Right a -> case picked a of PickedExit e -> exitKey e == "no_match"; _ -> False
+    Left _ -> False)
+  r1c <- jev1 (stubSplit ["run_retry_fixture"] "read_publish_gate") jevLatest world (choose "?" groups [deferToModel "d"])
+  case r1c of
+    Right a -> do
+      let top = NE.toList (contenders a)
+      check c "contenders: typed, ranked, includes exits" (length top == 3 && case top of
+        (p1, PickedCandidate c1) : (p2, PickedCandidate c2) : (_, PickedExit _) : _ ->
+          p1 >= p2 && candidateKey c1 == "run_retry_fixture" && candidateKey c2 == "read_publish_gate"
+        _ -> False)
+      check c "select: near-tie is structured doubt" (case select (Policy 0 0.1 0) a of
+        Left (NearTie (w, _) (r, _)) -> w == "run_retry_fixture" && r == "read_publish_gate"
+        _ -> False)
+      check c "select: lenient accepts the winner" (case select lenient a of
+        Right cand -> candidateKey cand == "run_retry_fixture"
+        Left _ -> False)
+      check c "select: confidence floor" (case select (Policy 0 0 0.9) a of Left (Unconfident _) -> True; _ -> False)
+      out <- selectOr (\_ -> pure "doubt") (Policy 0.6 0 0) a (\(Command cmd) -> pure (T.unpack cmd))
+      checkEq c "selectOr: underweight winner hands back" "doubt" out
+    Left e -> check c ("contenders: " ++ show e) False
+  -- exact numeric equality in legends: two distinct large integers must not collide
+  let big n = object ["id" .= Number n]
+      bigRubric = levelsOf [big 9007199254740992, big 9007199254740993]
+      forged _ = pure (Right (answerMap [("value", object ["type" .= ("score" :: Text), "score" .= (0.5 :: Double), "confidence" .= (0.5 :: Double)
+        , "legend" .= object ["0" .= big 9007199254740993, "1" .= big 9007199254740992]
+        , "probabilities" .= object ["0" .= (0.5 :: Double), "1" .= (0.5 :: Double)]])]))
+  r1n <- jev1 forged jevLatest world (scale (Present "?") bigRubric)
+  check c "decode: legend equality is exact, not Double" (case r1n of Left (Decode (LegendMismatch _)) -> True; _ -> False)
+
   -- preparation errors, all total builders
   let prepErr :: Schema (Only e) => Q e -> Maybe PrepError
       prepErr q = either Just (const Nothing) (prepare jevLatest world (Only q))
   checkEq c "prepare: exit key collision rejected" (Just (ExitCollidesWithCandidate "value" "defer_to_model"))
     (prepErr (choose "?" (candidates [("defer_to_model", Null, Command "x"), ("other", Null, Command "y")]) [deferToModel "dup"]))
-  checkEq c "prepare: empty candidates rejected" (Just (EmptyCandidates "value"))
+  checkEq c "prepare: no candidates and no exits rejected" (Just (EmptyCandidates "value"))
     (prepErr (choose "?" (candidates ([] :: [(Text, Description, Command)])) []))
   checkEq c "prepare: duplicate candidate keys rejected" (Just (DuplicateKeys "value" ["a"]))
     (prepErr (choose "?" (candidates [("a", Null, Command "x"), ("a", Null, Command "y")]) []))

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- expect: Level is a field of a Score level record
 module RejectBadEndpoint where
 
 import GHC.Generics (Generic)

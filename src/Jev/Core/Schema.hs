@@ -18,6 +18,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE PolyKinds #-}
 
 -- | One authored record, interpreted under 'Questions' and 'Answers'.
 --
@@ -41,7 +42,8 @@ module Jev.Core.Schema
   , Levels, levelsOf, Premised (..)
     -- * Results
   , ChoiceResult, Selected, Distribution, match, withChoice, probabilityOf, selectedKey, masses
-  , Picked (..), pickOr, ranked, yesAbove, noBelow, unsure
+  , Picked (..), pickOr, ranked, contenders, Doubt (..), Policy (..), lenient, select, selectOr
+  , yesAbove, noBelow, unsure
   , eachAnswers, groupAnswer, manyAnswers, rawAnswer
     -- * Schemas and the operation
   , Schema (..), Only (..), Exact (..), ExactLeaf, exact, exactAnswers
@@ -55,11 +57,13 @@ module Jev.Core.Schema
 import Data.Char (isUpper, toLower)
 import Data.Kind (Type)
 import Data.List (nub, sortOn)
+import qualified Data.List.NonEmpty as NE
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics
-import GHC.TypeLits (ErrorMessage (..), TypeError)
+import Data.Kind (Constraint)
+import GHC.TypeLits (ErrorMessage (..), Nat, Symbol, TypeError, type (+), type (<=?))
 import Jev.Core.Contract
 import Jev.Core.Json
 
@@ -121,6 +125,7 @@ data instance A v (Choose a) = ChooseA
   { picked :: Picked v a
   , chooseRanked :: [(Candidate v a, Double)]
   , exitMass :: [(Text, Double)]
+  , chooseExits :: [Exit v]
   , chooseConfidence :: Double
   }
 
@@ -329,7 +334,58 @@ pickOr handBack answer continue = case picked answer of
 
 -- | Every candidate and exit by descending mass, so a winning exit is first.
 ranked :: A v (Choose a) -> [(Text, Double)]
-ranked a = sortOn (negate . snd) ([(candidateKey c, p) | (c, p) <- chooseRanked a] ++ exitMass a)
+ranked a = map (\(p, x) -> (keyOf x, p)) (NE.toList (contenders a))
+  where
+    keyOf (PickedCandidate c) = candidateKey c
+    keyOf (PickedExit e) = exitKey e
+
+-- | The same ranking with the retained payloads, so the top two can be
+-- executed without looking labels up again. Nonempty: a prepared Choose has
+-- at least one alternative.
+contenders :: A v (Choose a) -> NE.NonEmpty (Double, Picked v a)
+contenders a = case sortOn (negate . fst) ([(p, PickedCandidate c) | (c, p) <- chooseRanked a]
+                                            ++ [(p, PickedExit e) | (k, p) <- exitMass a, e <- exitsOf a, exitKey e == k]) of
+  x : xs -> x NE.:| xs
+  [] -> error "a decoded Choose always has at least one alternative"
+  where
+    exitsOf = chooseExits
+
+-- | What a policy needs to say about a dynamic choice before acting on it.
+data Doubt v
+  = HandedBack (Exit v)                    -- the winner is an exit
+  | NearTie (Text, Double) (Text, Double)  -- winner and runner-up too close
+  | Underweight Double                     -- the winner's mass is below the floor
+  | Unconfident Double                     -- the provider's confidence is below the floor
+
+data Policy = Policy
+  { minMass :: Double        -- winner must carry at least this mass
+  , minMargin :: Double      -- winner must lead the runner-up by at least this
+  , minConfidence :: Double  -- provider confidence floor
+  }
+
+-- | A permissive default: act unless the provider handed back.
+lenient :: Policy
+lenient = Policy 0 0 0
+
+-- | Pure policy-aware selection: the accepted payload, or structured doubt
+-- with everything a caller needs to act on it anyway.
+select :: Policy -> A v (Choose a) -> Either (Doubt v) (Candidate v a)
+select policy a = case picked a of
+  PickedExit e -> Left (HandedBack e)
+  PickedCandidate c ->
+    let rs = ranked a
+        winner = candidateKey c
+        mass = maybe 0 id (lookup winner rs)
+        runnerUp = [r | r@(k, _) <- rs, k /= winner]
+    in if chooseConfidence a < minConfidence policy then Left (Unconfident (chooseConfidence a))
+       else if mass < minMass policy then Left (Underweight mass)
+       else case runnerUp of
+         (k2, p2) : _ | mass - p2 < minMargin policy -> Left (NearTie (winner, mass) (k2, p2))
+         _ -> Right c
+
+-- | 'select', then act or hand back.
+selectOr :: (Doubt v -> m r) -> Policy -> A v (Choose a) -> (a -> m r) -> m r
+selectOr onDoubt policy a continue = either onDoubt (continue . candidatePayload) (select policy a)
 
 -- | Decision vocabulary for Nouls, so a tree of natural-language conditions
 -- reads like the sentence it encodes.
@@ -390,6 +446,39 @@ toSnakeCase = T.pack . go
       | otherwise = c : rest cs
 
 -- ---------------------------------------------------------------------------
+-- Compile-time shape checks on static records, phrased in the author's terms
+-- ---------------------------------------------------------------------------
+
+type family FieldCount (f :: Type -> Type) :: Nat where
+  FieldCount (M1 i c f) = FieldCount f
+  FieldCount (f :*: g) = FieldCount f + FieldCount g
+  FieldCount (K1 i c) = 1
+  FieldCount U1 = 0
+
+type family RecordName (f :: Type -> Type) :: Symbol where
+  RecordName (M1 D ('MetaData name m p nt) f) = name
+  RecordName f = "<record>"
+
+type family AlternativesOk (name :: Symbol) (n :: Nat) :: Constraint where
+  AlternativesOk name 0 = TypeError
+    ('Text "Jev: alternatives record `" ':<>: 'Text name ':<>: 'Text "` has no Option fields."
+     ':$$: 'Text "A Choice needs at least one alternative; add an Option field or use Choose for runtime candidates.")
+  AlternativesOk name n = OkIf (n <=? 255)
+    ('Text "Jev: alternatives record `" ':<>: 'Text name ':<>: 'Text "` declares " ':<>: 'ShowType n
+     ':<>: 'Text " alternatives; Jev permits at most 255." ':$$: 'Text "Split the question or use Choose with a checked runtime set.")
+
+type family LevelsOk (name :: Symbol) (n :: Nat) :: Constraint where
+  LevelsOk name 0 = TypeError
+    ('Text "Jev: level record `" ':<>: 'Text name ':<>: 'Text "` has no Level fields." ':$$: 'Text "A Score needs 1 to 10 levels.")
+  LevelsOk name n = OkIf (n <=? 10)
+    ('Text "Jev: level record `" ':<>: 'Text name ':<>: 'Text "` declares " ':<>: 'ShowType n
+     ':<>: 'Text " levels; Jev permits 1 to 10." ':$$: 'Text "Remove a level or use separate scoring questions.")
+
+type family OkIf (ok :: Bool) (msg :: ErrorMessage) :: Constraint where
+  OkIf 'True msg = ()
+  OkIf 'False msg = TypeError msg
+
+-- ---------------------------------------------------------------------------
 -- Endpoints: compile and decode per leaf
 -- ---------------------------------------------------------------------------
 
@@ -421,6 +510,7 @@ instance JsonValue v => Endpoint v Noul where
     Right (NoulA x)
 
 instance (JsonValue v, Generic (opts (Questions v)), GAlts v (Rep (opts (Questions v))),
+          AlternativesOk (RecordName (Rep (opts Masses))) (FieldCount (Rep (opts Masses))),
           GSelectors (Rep (opts (Questions v))),
           Generic (opts Masses), GBuild Double (Rep (opts Masses)), GCollect Double (Rep (opts Masses)))
       => Endpoint v (Choice opts) where
@@ -451,7 +541,7 @@ instance JsonValue v => Endpoint v (Choose a) where
     let keys = map candidateKey cs
         key = encodePath p
     checkInstructions key i
-    if null cs then Left (EmptyCandidates key) else Right ()
+    if null cs && null exits then Left (EmptyCandidates key) else Right ()
     if length keys /= length (nub keys) then Left (DuplicateKeys key [k | k <- nub keys, length (filter (== k) keys) > 1]) else Right ()
     mapM_ (\e -> if exitKey e `elem` keys then Left (ExitCollidesWithCandidate key (exitKey e)) else Right ()) exits
     uniqueWire key (map exitKey exits)
@@ -473,7 +563,7 @@ instance JsonValue v => Endpoint v (Choose a) where
     distribution key (map candidateKey cs ++ map exitKey exits) ms conf
     rankedCs <- mapM (\c -> (,) c <$> mass (candidateKey c)) cs
     exitMs <- mapM (\e -> (,) (exitKey e) <$> mass (exitKey e)) exits
-    Right (ChooseA pick (sortOn (negate . snd) rankedCs) exitMs conf)
+    Right (ChooseA pick (sortOn (negate . snd) rankedCs) exitMs exits conf)
 
 checkLegend :: JsonValue v => Text -> [v] -> [(Text, v)] -> Either DecodeError ()
 checkLegend key levels lg =
@@ -487,6 +577,7 @@ checkExpectation key n e =
   if isNaN e || isInfinite e || e < 0 || e > fromIntegral (n - 1) then Left (ValueOutOfRange key "score") else Right ()
 
 instance (JsonValue v, Generic (ls (Questions v)), GLevels v (Rep (ls (Questions v))),
+          LevelsOk (RecordName (Rep (ls Masses))) (FieldCount (Rep (ls Masses))),
           Generic (ls Masses), GBuild Double (Rep (ls Masses)),
           Generic (ls (Legend v)), GBuild v (Rep (ls (Legend v))))
       => Endpoint v (Score ls) where
@@ -616,12 +707,15 @@ class GAlts v f where
 instance GAlts v f => GAlts v (M1 D d f) where gAlts (M1 x) = gAlts @v x
 instance GAlts v f => GAlts v (M1 C c f) where gAlts (M1 x) = gAlts @v x
 instance (GAlts v f, GAlts v g) => GAlts v (f :*: g) where gAlts (l :*: r) = gAlts @v l ++ gAlts @v r
-instance Selector sel => GAlts v (M1 S sel (K1 i (Q v (Option a)))) where
+instance {-# OVERLAPPING #-} Selector ('MetaSel ('Just name) su ss ds)
+  => GAlts v (M1 S ('MetaSel ('Just name) su ss ds) (K1 i (Q v (Option a)))) where
   gAlts m@(M1 (K1 (OptionQ k d _))) = [(optionKey k m, d)]
-instance
-  TypeError ('Text "a Choice alternatives record must have at least one Option field")
-  => GAlts v U1 where
+instance {-# OVERLAPPABLE #-}
+  TypeError ('Text "Jev: field `" ':<>: 'Text name ':<>: 'Text "` of an alternatives record has type `" ':<>: 'ShowType x ':<>: 'Text "`."
+             ':$$: 'Text "Every field of a Choice alternatives record must be `mode :- Option payload`.")
+  => GAlts v (M1 S ('MetaSel ('Just name) su ss ds) (K1 i x)) where
   gAlts = undefined
+instance GAlts v U1 where gAlts U1 = []
 
 optionKey :: Selector sel => Maybe Text -> M1 S sel f x -> Text
 optionKey override m = maybe (toSnakeCase (selName m)) id override
@@ -638,8 +732,15 @@ class GLevels v f where
 instance GLevels v f => GLevels v (M1 D d f) where gLevels (M1 x) = gLevels @v x
 instance GLevels v f => GLevels v (M1 C c f) where gLevels (M1 x) = gLevels @v x
 instance (GLevels v f, GLevels v g) => GLevels v (f :*: g) where gLevels (l :*: r) = gLevels @v l ++ gLevels @v r
-instance Selector sel => GLevels v (M1 S sel (K1 i (Q v Level))) where
+instance {-# OVERLAPPING #-} Selector ('MetaSel ('Just name) su ss ds)
+  => GLevels v (M1 S ('MetaSel ('Just name) su ss ds) (K1 i (Q v Level))) where
   gLevels m@(M1 (K1 (LevelQ c))) = [(T.pack (selName m), c)]
+instance {-# OVERLAPPABLE #-}
+  TypeError ('Text "Jev: field `" ':<>: 'Text name ':<>: 'Text "` of a level record has type `" ':<>: 'ShowType x ':<>: 'Text "`."
+             ':$$: 'Text "Every field of a Score level record must be `mode :- Level`.")
+  => GLevels v (M1 S ('MetaSel ('Just name) su ss ds) (K1 i x)) where
+  gLevels = undefined
+instance GLevels v U1 where gLevels U1 = []
 
 -- Build a record whose leaves are all one type from a lookup by field name.
 class GBuild leaf f where

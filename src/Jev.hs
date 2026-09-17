@@ -40,7 +40,9 @@ module Jev
     -- * Reading answers
   , probabilityYes, yesAbove, noBelow, unsure
   , Matchable, match, Selected, Distribution, withChoice, probabilityOf, selectedKey, masses, confidence
-  , Picked, pattern PickedCandidate, pattern PickedExit, picked, pickOr, ranked, chooseRanked, exitMass, chooseConfidence
+  , Picked, pattern PickedCandidate, pattern PickedExit, picked, pickOr, ranked, contenders, chooseRanked, exitMass, chooseConfidence
+  , Doubt, pattern HandedBack, pattern NearTie, pattern Underweight, pattern Unconfident
+  , Policy (..), lenient, select, selectOr
   , expectation, levelMasses, legend, scoreConfidence
   , scaleExpectation, scaleMasses, scaleConfidence
   , eachAnswers, groupAnswer, manyAnswers, rawAnswer
@@ -59,8 +61,9 @@ import Data.Text (Text)
 import GHC.Generics (Generic, Rep)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
+import Data.List.NonEmpty (NonEmpty)
 import Jev.Core
-  ( Choice, Choose, DecodeError (..), Each, Group, Handlers, JevError (..), Level, Many, Masses
+  ( Choice, Choose, DecodeError (..), Policy (..), lenient, Each, Group, Handlers, JevError (..), Level, Many, Masses
   , Model (..), Noul, Only (..), Option, PrepError (..), Presence (..), Raw, Rejection (..), Scale
   , Schema, Score, ValidationIssue (..), type (:-)
   )
@@ -83,6 +86,17 @@ type Candidate = Core.Candidate Value
 type Exit = Core.Exit Value
 type Levels = Core.Levels Value
 type Picked = Core.Picked Value
+type Doubt = Core.Doubt Value
+
+pattern HandedBack :: Exit -> Doubt
+pattern HandedBack e = Core.HandedBack e
+pattern NearTie :: (Text, Double) -> (Text, Double) -> Doubt
+pattern NearTie a b = Core.NearTie a b
+pattern Underweight :: Double -> Doubt
+pattern Underweight m = Core.Underweight m
+pattern Unconfident :: Double -> Doubt
+pattern Unconfident c = Core.Unconfident c
+{-# COMPLETE HandedBack, NearTie, Underweight, Unconfident #-}
 type Prepared = Core.Prepared Value
 type Response = Core.Response Value
 type Selected scope = Core.Selected scope Value
@@ -264,6 +278,15 @@ pickOr = Core.pickOr
 
 ranked :: A (Choose a) -> [(Text, Double)]
 ranked = Core.ranked
+
+contenders :: A (Choose a) -> NonEmpty (Double, Picked a)
+contenders = Core.contenders
+
+select :: Policy -> A (Choose a) -> Either Doubt (Candidate a)
+select = Core.select
+
+selectOr :: (Doubt -> m r) -> Policy -> A (Choose a) -> (a -> m r) -> m r
+selectOr = Core.selectOr
 
 chooseRanked :: A (Choose a) -> [(Candidate a, Double)]
 chooseRanked = Core.chooseRanked

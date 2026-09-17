@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- expect: Couldn't match type ‘Other’ with ‘Routes’
 module RejectForeignHandlers where
 
 import GHC.Generics (Generic)

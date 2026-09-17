@@ -2,6 +2,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- expect: Couldn't match type ‘scope
 module RejectCrossScope where
 
 import GHC.Generics (Generic)

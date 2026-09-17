@@ -27,3 +27,5 @@ instance JsonValue Aeson.Value where
     Aeson.String s -> VString s
     Aeson.Array xs -> VArray (V.toList xs)
     Aeson.Object kv -> VObject [(Key.toText k, v) | (k, v) <- KeyMap.toList kv]
+  -- aeson's Eq is exact on Scientific and order-insensitive on objects.
+  jEqual = (==)

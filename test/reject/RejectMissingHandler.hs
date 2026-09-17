@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Werror=missing-fields #-}
+-- expect: Fields of ‘Routes’ not initialised
 module RejectMissingHandler where
 
 import GHC.Generics (Generic)

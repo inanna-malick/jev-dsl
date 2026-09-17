@@ -11,7 +11,7 @@
 module Jev.Core.Json
   ( JsonValue (..)
   , View (..)
-  , jEqual
+  , structuralEqual
   , lookupKey
   , viewObject
   , viewNumber
@@ -29,6 +29,12 @@ class JsonValue v where
   jArray :: [v] -> v
   jObject :: [(Text, v)] -> v
   jView :: v -> View v
+  -- | Exact structural equality, insensitive to object member order. The
+  -- default compares through 'jView', which sees numbers as 'Double';
+  -- an instance whose numbers are exact should override with its own
+  -- equality so validation cannot be fooled by large integers.
+  jEqual :: v -> v -> Bool
+  jEqual = structuralEqual
 
 -- | One layer of structure. Object members are in the value's own order.
 data View v
@@ -39,9 +45,8 @@ data View v
   | VArray [v]
   | VObject [(Text, v)]
 
--- | Structural equality, insensitive to object member order.
-jEqual :: JsonValue v => v -> v -> Bool
-jEqual a b = case (jView a, jView b) of
+structuralEqual :: JsonValue v => v -> v -> Bool
+structuralEqual a b = case (jView a, jView b) of
   (VNull, VNull) -> True
   (VBool x, VBool y) -> x == y
   (VNumber x, VNumber y) -> x == y

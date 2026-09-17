@@ -17,5 +17,12 @@ for f in test/reject/Reject*.hs; do
     cat "$out/$fixture.log" >&2
     exit 1
   fi
-  echo "Rejected as expected: $fixture"
+  # The diagnostic phrase is part of the tested interface.
+  phrase=$(sed -n 's/^-- expect: //p' "$f" | head -1)
+  if [ -n "$phrase" ] && ! grep -qF -- "$phrase" "$out/$fixture.log"; then
+    echo "WRONG DIAGNOSTIC for $fixture; expected: $phrase" >&2
+    cat "$out/$fixture.log" >&2
+    exit 1
+  fi
+  echo "Rejected as expected: $fixture ($phrase)"
 done
