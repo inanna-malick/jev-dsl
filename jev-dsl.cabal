@@ -48,6 +48,7 @@ library
     Jev
     Jev.Aeson
     Jev.Operators
+    Jev.Transport
     Jev.Core
     Jev.Core.Json
     Jev.Core.Contract

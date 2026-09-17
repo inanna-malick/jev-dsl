@@ -14,7 +14,12 @@ module Jev
   , PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..), JevError (..)
   , Policy (..), Doubt (..)
   , Presence (..)
+    -- * The operation, when a program carries the JSON itself
+  , module Jev.Transport
   ) where
 
 import Jev.Aeson ()
-import Jev.Core
+-- The four transport verbs come from "Jev.Transport", already fixed to
+-- aeson's 'Data.Aeson.Value'; the polymorphic ones are not re-exported here.
+import Jev.Core hiding (decode, jev1, request, roundTrip)
+import Jev.Transport

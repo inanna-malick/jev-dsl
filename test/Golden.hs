@@ -20,6 +20,7 @@ import qualified Data.Vector as V
 import Fixtures
 import qualified Jev.Core as Core
 import Jev.Operators
+import Jev.Transport (decode, request)
 import Replay
 import Shape
 import System.Directory (doesDirectoryExist, listDirectory)
@@ -152,14 +153,14 @@ goldenChecks c = do
     let a = answers resp
     checkEq c "structured: route picked configuration_owner with its payload" "config"
       (handle (chosen a.route) (#configuration_owner id .| #reviewer id .| #neither (\() -> "none")))
-    checkEq c "structured: route confidence" 0.97 (confidence a.route)
-    checkEq c "structured: urgency expectation" 1.0 (expectation a.urgency)
-    checkEq c "structured: masses keyed by level label" ["informational", "blocking"] (map fst (masses a.urgency))
+    checkEq c "structured: route confidence" 0.97 a.route.confidence
+    checkEq c "structured: urgency expectation" 1.0 a.urgency.expectation
+    checkEq c "structured: masses keyed by level label" ["informational", "blocking"] (map fst a.urgency.masses)
     checkEq c "structured: typed level index" 1.0 (massAtOrAbove #blocking a.urgency)
-    checkEq c "structured: wake" 0.97 (yes a.wake)
+    checkEq c "structured: wake" 0.97 a.wake.yes
 
   -- the Noul criteria family, all over one packet and one state
-  let noulGolden name criteria = golden c name probeState (wake (noulWith wakeInstructions criteria)) (\resp -> check c (name ++ ": noul in range") (yes (answers resp).wake > 0))
+  let noulGolden name criteria = golden c name probeState (wake (noulWith wakeInstructions criteria)) (\resp -> check c (name ++ ": noul in range") ((answers resp).wake.yes > 0))
   noulGolden "noul-criteria-omitted" Omitted
   noulGolden "noul-criteria-null" (Present Nothing)
   noulGolden "noul-criteria-empty" (Present (Just (Criteria Omitted Omitted)))

@@ -16,7 +16,7 @@
 module Proto (protoChecks, stub, stubSplit, questionsOf, field) where
 
 import Check
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List (sort)
@@ -25,6 +25,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified Jev.Core as Core
 import Jev.Operators
+import Jev.Transport (request)
 import Replay (noulWith, Presence (..))
 
 -- ---------------------------------------------------------------------------
@@ -102,13 +103,13 @@ protoChecks c = do
       edges = [("publication_gate", "gates publication on cancellation", Edge "publish_if_active"), ("telemetry", "records latency", Edge "record_latency")]
 
   -- tiny use: one question, one answer, no declarations
-  r1 <- jev1 (stub "publication_gate") jevLatest world (choice "Which edge next?" (many edges))
+  r1 <- ask1 (stub "publication_gate") jevLatest world (choice "Which edge next?" (many edges))
   case r1 of
     Left e -> check c ("tiny: " ++ show e) False
     Right a -> do
       checkEq c "tiny: the chosen runtime element carries its payload" (Just (Edge "publish_if_active"))
         (handle (chosen a) (onMany (\_ e -> Just e)))
-      checkEq c "tiny: masses are wire keys" ["publication_gate", "telemetry"] (map fst (masses a))
+      checkEq c "tiny: masses are wire keys" ["publication_gate", "telemetry"] (map fst a.masses)
 
   -- a packet inferred from its questions; a reusable handler list; accept then handle
   let handlers :: (Handoff -> String) -> Handlers String Routes
@@ -144,7 +145,7 @@ protoChecks c = do
       checkEq c "packet: rubric levels in order" (Just (Array (V.fromList ["No current action depends on this", "Useful at the next ordinary checkpoint", "A worker cannot take its next action", "Continuing would invalidate ongoing work"])))
         (lookup "urgency" qs >>= field "criteria")
       checkEq c "packet: plain state stays as given" (Just (String "Where can cancellation drop a computed reply?")) (field "state" req >>= field "inquiry")
-  r2 <- roundTrip (stubSplit ["ask_model", "publication_gate"] "") jevLatest world packet
+  r2 <- ask (stubSplit ["ask_model", "publication_gate"] "") jevLatest world packet
   case r2 of
     Left e -> check c ("packet: " ++ show e) False
     Right resp -> do
@@ -166,16 +167,34 @@ protoChecks c = do
       checkEq c "packet: explain names an acceptance with every check"
         "accepted: confidence 0.70 \8805 0.00, mass 0.70 \8805 0.00, margin 0.60 \8805 0.00"
         (explain (Policy 0 0 0) a.next)
-      checkEq c "packet: noul" 0.8 (yes a.enough)
-      checkEq c "packet: rubric expectation" 1.5 (expectation a.urgency)
+      checkEq c "packet: noul" 0.8 a.enough.yes
+      checkEq c "packet: rubric expectation" 1.5 a.urgency.expectation
       checkEq c "packet: typed rubric index" 0.5 (massAtOrAbove #blocked a.urgency)
-      checkEq c "packet: nearest level rounds the expectation" "blocked" (levelOf a.urgency)
-      checkEq c "packet: one confidence for choices and scores" (0.7, 0.5) (confidence a.next, confidence a.urgency)
+      checkEq c "packet: nearest level rounds the expectation" "blocked" a.urgency.nearest
+      checkEq c "packet: one confidence for choices and scores" (0.7, 0.5) (a.next.confidence, a.urgency.confidence)
       check c "packet: each answers are a transparent keyed list" (case lookup "e.2" a.children of
         Just sub -> yes sub.useful == 0.8
         Nothing -> False)
       check c "packet: nested packet answers are the transparent sub-packet" (yes a.evidence.gap == 0.8)
       check c "packet: payload-independent Show" (length (show a) > 50)
+      -- answers are plain records: every kind reads by field
+      checkEq c "fields: a choice carries key, mass, margin and confidence"
+        ("ask_model", 70, 60, 70) (a.next.key, cents a.next.mass, cents a.next.margin, cents a.next.confidence)
+      checkEq c "fields: choice masses are best first" [("ask_model", 70)] [(k, cents m) | (k, m) <- take 1 a.next.masses]
+      checkEq c "fields: a selection reads its own key" "ask_model" (chosen a.next).key
+      checkEq c "fields: a noul is one number" 0.8 a.enough.yes
+      checkEq c "fields: a score reads nearest, expectation, confidence and masses"
+        ("blocked", 150, 50, 4) (a.urgency.nearest, cents a.urgency.expectation, cents a.urgency.confidence, length a.urgency.masses)
+      checkEq c "fields: a nested answer reads through its label" 0.8 a.evidence.gap.yes
+      check c "show: a choice answer prints its own fields"
+        (T.pack "Choice {key = \"ask_model\", mass = 0.70, margin = 0.60, confidence = 0.70, masses = [\"ask_model\" 0.70,"
+          `T.isPrefixOf` T.pack (show a.next))
+      checkEq c "show: a noul answer prints its own field" "Noul {yes = 0.80}" (show a.enough)
+      check c "show: a response prints the answers under their labels"
+        (all (`T.isInfixOf` T.pack (show resp)) ["next", "ask_model", "urgency", "blocked", "evidence"])
+      checkEq c "json: an answer is a ledger row" (Just (String "ask_model")) (field "key" (toJSON a.next))
+      checkEq c "json: a whole packet is a ledger row" (Just (Just (Number 0.8)))
+        (fmap (field "yes") (field "gap" (toJSON a.evidence)))
 
   -- append; structured wording; premise and structured members on a question
   let front = #mechanism := choice "Which mechanism explains the second callback?"
@@ -198,7 +217,7 @@ protoChecks c = do
       checkEq c "append: premise wraps the structured question"
         (Just (object ["premise" .= ("the mechanism is retry redelivery" :: Text), "instructions" .= object ["question" .= ("Which check verifies?" :: Text), "focus" .= ("callbacks" :: Text)]]))
         (lookup "check" qs >>= field "instructions")
-  r3 <- roundTrip (stubSplit ["retry_redelivery"] "double_admission") jevLatest world both
+  r3 <- ask (stubSplit ["retry_redelivery"] "double_admission") jevLatest world both
   case r3 of
     Left e -> check c ("append: " ++ show e) False
     Right resp -> do
@@ -238,7 +257,7 @@ protoChecks c = do
         (Just (object ["question" .= ("Does probe run_retry_fixture running `just test-target actor retry` help answer the inquiry?" :: Text), "pool" .= ("probes" :: Text), "key" .= ("run_retry_fixture" :: Text)]))
         (lookup "per.run_retry_fixture.useful" qs >>= field "instructions")
       checkEq c "pools: no question emitted for the declaration" 3 (length qs)
-  r4 <- roundTrip (stub "read.gate") jevLatest world pooledPacket
+  r4 <- ask (stub "read.gate") jevLatest world pooledPacket
   case r4 of
     Left e -> check c ("pools: " ++ show e) False
     Right resp -> do
@@ -305,7 +324,7 @@ protoChecks c = do
   let groups = choice "?" (many [("run_retry_fixture", "r", Command "a"), ("read_publish_gate", "p", Command "b")])
       expectDecode :: (Core.Endpoint Value e, Core.CellOk "value" e) => String -> Value -> Q Value e -> (DecodeError -> Bool) -> IO ()
       expectDecode name resp q want = do
-        r <- jev1 (fixed resp) jevLatest world q
+        r <- ask1 (fixed resp) jevLatest world q
         check c name (case r of Left (Decode e) -> want e; _ -> False)
       choiceAnswer sel ms = object ["type" .= ("choice" :: Text), "choice" .= sel, "confidence" .= (0.5 :: Double), "probabilities" .= object [Key.fromText k .= p | (k, p) <- ms]]
   expectDecode "decode: unknown selection rejected" (answerMap [("value", choiceAnswer ("alien" :: Text) [("alien", 1 :: Double)])]) groups (\case Core.UnknownSelection _ "alien" -> True; _ -> False)
@@ -330,10 +349,13 @@ protoChecks c = do
   expectDecode "decode: unexpected answer key rejected"
     (answerMap [("value", object ["type" .= ("noul" :: Text), "noul" .= (0.5 :: Double)]), ("stray", object ["type" .= ("noul" :: Text), "noul" .= (0.1 :: Double)])]) (noul "?") (\case Core.UnexpectedAnswer "stray" -> True; _ -> False)
   expectDecode "decode: provider rejection surfaces as a parsed Rejection" (object ["detail" .= ("Too many choices." :: Text)]) (noul "?") (\case Core.ProviderRejected (Core.RejectionMessage _) -> True; _ -> False)
-  r7 <- roundTrip (fixed (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.6 :: Double), ("read_publish_gate", 0.5)])])) jevLatest world (#value := groups :& Nil)
+  r7 <- ask (fixed (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.6 :: Double), ("read_publish_gate", 0.5)])])) jevLatest world (#value := groups :& Nil)
   check c "decode: rounded sum is a diagnostic, not a rejection" (case r7 of
     Right resp -> length (Core.diagnostics resp) == 1
     Left _ -> False)
   where
     keyOf :: Core.Selected Value Routes -> Text
     keyOf = selectedKey
+    -- Probabilities compared as whole percents, never as exact Doubles.
+    cents :: Double -> Int
+    cents x = round (x * 100)

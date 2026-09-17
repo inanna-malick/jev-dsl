@@ -16,6 +16,7 @@ import qualified Data.Text as T
 import Fixtures
 import qualified Jev.Core as Core
 import Jev.Operators
+import Jev.Transport (request)
 import Replay
 
 data Disposition

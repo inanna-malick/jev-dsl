@@ -18,6 +18,7 @@ import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Jev.Operators
+import Jev.Transport (request)
 import Proto (field, questionsOf, stub, stubSplit)
 
 -- ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ import Proto (field, questionsOf, stub, stubSplit)
 data Edit = EditAt Int Text | HandBack deriving (Show, Eq)
 
 locate transport source numbered revision = do
-  r <- jev1 transport jevLatest (state (String source))
+  r <- ask1 transport jevLatest (state (String source))
     (choice "Which line begins the retry-timeout branch?"
        (alt #not_here "The branch is not in this file" () .| many [(T.pack (show n), String l, (n, revision)) | (n, l) <- numbered]))
   pure $ case r of
@@ -55,7 +56,7 @@ diagnose transport inquiry hypotheses = do
       first = #mechanism := choice "Which mechanism explains the failure?" offers
            :& #probes := each [ (hKey h, #useful := given ("the mechanism is " <> hText h) (noul ("Would running " <> probe h <> " discriminate?")) :& Nil) | h <- hypotheses ]
            :& Nil
-  r1 <- roundTrip transport jevLatest (state (String inquiry)) first
+  r1 <- ask transport jevLatest (state (String inquiry)) first
   case r1 of
     Left e -> pure (Left e)
     Right resp -> do
@@ -63,7 +64,7 @@ diagnose transport inquiry hypotheses = do
           live = [h | (_, s) <- contenders 0.3 a.mechanism, Just h <- [hypothesisOf s]]
           worthProbing = [h | h <- live, Just sub <- [lookup (hKey h) a.probes], yes sub.useful > 0.5]
           observations = [(hKey h, String ("ran " <> probe h)) | h <- worthProbing]
-      r2 <- jev1 transport jevLatest (state (object ["inquiry" .= inquiry, "observations" .= object [(Key.fromText k, v) | (k, v) <- observations]]))
+      r2 <- ask1 transport jevLatest (state (object ["inquiry" .= inquiry, "observations" .= object [(Key.fromText k, v) | (k, v) <- observations]]))
               (choice "Which mechanism do the observations support?" offers)
       pure $ fmap (\final -> case accept (Policy 0.6 0.2 0.5) final of
         Left _ -> Undecided live
@@ -82,7 +83,7 @@ expand transport inquiry edges = do
             :& #relevant := eachIn pooled (\r -> #applies := askAbout r "Does following this edge bear on the inquiry?" :& Nil)
             :& #next := choice "Which edge should be followed first?" (manyFrom pooled .| alt #stop "No edge is worth following" ())
             :& Nil
-  r <- roundTrip transport jevLatest (state (String inquiry)) packet
+  r <- ask transport jevLatest (state (String inquiry)) packet
   pure $ fmap (\resp ->
     let a = answers resp
     in ( [k | (k, sub) <- a.relevant, yes sub.applies > 0.5]
@@ -95,7 +96,7 @@ expand transport inquiry edges = do
 data Disposition = WakeNow | NextCheckpoint | Background deriving (Show, Eq)
 
 attention transport message = do
-  r <- jev1 transport jevLatest (state (String message))
+  r <- ask1 transport jevLatest (state (String message))
     (score "What is the consequence of waiting to act on this message?"
        (  level #background "No current action depends on it"
        .| level #checkpoint "Useful at the next ordinary checkpoint"
@@ -121,7 +122,7 @@ composed transport = do
   let (buildQ, _) = buildFragment
       (mailQ, _) = mailFragment
       both = buildQ ++. mailQ
-  r <- roundTrip transport jevLatest (state "world") both
+  r <- ask transport jevLatest (state "world") both
   pure $ fmap (\resp ->
     let a = answers resp
         cmd s = handle s (onMany (\_ (Command c) -> c))

@@ -1,25 +1,32 @@
 # jev-dsl
 
-Typed Haskell packets for [TypeSafe's Jev](https://docs.typesafe.ai): write a
-packet of labelled questions once, get the exact request JSON out of it, and
-get the same packet back with typed answers under the same labels, every
-selection carrying the local payload it was offered with. The library does
-no networking. Any transport that can post JSON and hand the body back will
-do.
+A Haskell DSL for models working in a stateful session. A packet is an
+expression: a few labelled questions written once, whose type is inferred
+from the questions themselves. Sent, it becomes the exact request JSON for
+[TypeSafe's Jev](https://docs.typesafe.ai). Answered, it comes back under
+the same labels as plain records you read by field — `a.next.key`,
+`a.next.margin`, `a.enough.yes` — with every selection still carrying the
+local payload it was offered with. Declarations are a liability in a
+session, so there are none to write: no schema type, no instance, no
+codec. The library does no networking; any transport that posts JSON and
+hands the body back will do.
 
-The library covers what a program wants to express with Jev, not every
-request the provider accepts. It is an early alpha, shaped by having other
-models write with it and say what got in the way.
+Written for an agent that has a Haskell session and a question it would
+rather have judged than guessed, and for the person reviewing what that
+agent wrote. The library covers what a program wants to express with Jev,
+not every request the provider accepts. It is an early alpha, shaped by
+having other models write with it and say what got in the way.
 
 | Module | Audience | Status |
 |---|---|---|
 | `Jev.Operators` | Agent use and review: anonymous packets, inferred alternatives and rubrics, handler lists | implemented |
 | `Jev.Records` | Human use and review: declared records, ordinary sums and enums, `case` | [designed](docs/records-dsl.md) |
 
-`Jev.Core` is the shared core, polymorphic over the JSON type. The guide
-written for a model is [docs/authoring.md](docs/authoring.md). Every example
-below is compiled by `test/Readme.hs`; the acceptance suite is the five
-microprograms in `test/Corpus.hs`.
+`Jev.Transport` holds `request` and `decode` for a program that carries the
+JSON itself; `Jev.Core` is the shared core, polymorphic over the JSON type.
+The guide written for a model is [docs/authoring.md](docs/authoring.md).
+Every example below is compiled by `test/Readme.hs`; the acceptance suite is
+the five microprograms in `test/Corpus.hs`.
 
 ## The tiny use
 
@@ -28,9 +35,9 @@ One question, one answer, and either a retained payload or a handback.
 ```haskell
 locate :: Transport -> Text -> [(Int, Text)] -> IO (Maybe Int)
 locate transport source numbered = do
-  answer <- jev1 transport jevLatest (state (String source))
+  answer <- ask1 transport jevLatest (state (String source))
     (choice "Which line begins the retry-timeout branch?"
-       (alt #not_here "The branch is not in this file" () .| many [(T.pack (show n), String l, n) | (n, l) <- numbered]))
+       (alt #not_here "No line in this file begins that branch" () .| many [(T.pack (show n), String l, n) | (n, l) <- numbered]))
   pure $ case answer of
     Left _ -> Nothing
     Right a -> handle (chosen a) (#not_here (\() -> Nothing) .| onMany (\_ n -> Just n))
@@ -41,6 +48,22 @@ type Transport = Value -> IO (Either Text Value)
 
 Everything is inferred from the offer. The payload is a line number, never
 a string the model produced.
+
+The answer is a record, and it displays:
+
+```
+> a
+Choice {key = "142", mass = 0.78, margin = 0.61, confidence = 0.80, masses = ["142" 0.78, "137" 0.17, "not_here" 0.05]}
+> a.key
+"142"
+> accept merging a
+Left (Unconfident 0.8)
+```
+
+`key`, `mass`, `margin`, `confidence` and `masses` are fields, not
+accessors to look up. `accept` weighs them against a policy and gives back
+the selection or a named doubt; `handle` is for the branch that must run
+the payload.
 
 ## A packet
 
@@ -71,7 +94,24 @@ type Inspection = Packet
    , "evidence" ::= Group (Packet '[ "enough" ::= Noul ]) ]
 ```
 
-Answers come back under the same labels:
+Answers come back under the same labels, as records:
+
+```haskell
+report :: Inspection Answers -> Text
+report a =
+  a.next.key <> " by " <> pct a.next.margin
+    <> ", urgency " <> a.urgency.nearest
+    <> (if a.evidence.enough.yes > 0.8 then ", evidence suffices" else "")
+  where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
+```
+
+A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`;
+a Noul with `yes`; a score with `nearest`, `expectation`, `confidence` and
+`masses`. `toJSON` on any of them, or on a whole answers packet, is a
+ledger row.
+
+Handlers are for the other path: when the branch must run the payload the
+alternative carried.
 
 ```haskell
 act :: Inspection Answers -> Text
@@ -79,9 +119,8 @@ act a =
   handle (chosen a.next)
     (  #use_witness (\(Witness w) -> "located at " <> w)
     .| #ask_model   (\(Handoff h) -> "hand back: " <> h)
-    .| onMany       (\key _ -> "follow " <> key) )
+    .| onMany       (\k _ -> "follow " <> k) )
   <> (if massAtOrAbove #blocked a.urgency > 0.5 then " now" else " later")
-  <> (if yes a.evidence.enough > 0.8 then ", evidence suffices" else "")
 ```
 
 Handlers follow declaration order. The compiler rejects a misordered,
@@ -91,14 +130,18 @@ and every contender above a floor, or the winner under a policy:
 
 ```haskell
 routes :: Handlers Text Routes
-routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\key _ -> key)
+routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)
 
 alive :: Inspection Answers -> [Text]
 alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
 
 decide :: Inspection Answers -> Either Doubt Text
-decide a = fmap (`handle` routes) (accept (Policy { minMass = 0.4, minMargin = 0.15, minConfidence = 0.5 }) a.next)
+decide a = fmap (`handle` routes) (accept spawning a.next)
 ```
+
+Three named policies cover the usual cases: `routing` for a read-only
+choice, `spawning` for starting work, `merging` for anything with a
+receipt.
 
 ## Pools and premises
 

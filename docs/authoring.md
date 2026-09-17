@@ -9,12 +9,19 @@ was already inferred.
 Import `Jev.Operators` with `DataKinds`, `OverloadedLabels`,
 `OverloadedRecordDot`, `OverloadedStrings`, and `TypeOperators`. The JSON
 type is aeson's `Value`; it appears in your code only where you build a
-state or structured wording by hand.
+state or structured wording by hand. A bare string literal in wording
+position is wording: `alt #rerun "Rerun the focused check" c` sends the
+string. Structured wording is any `Value` the provider admits — an object,
+an array, or `Null`.
+
+`Jev.Transport` has `request`, `decode`, and the same round trip under its
+older names; `Jev.Operators` has `ask` and `ask1`, which are what authoring
+code writes.
 
 ## One question
 
 ```haskell
-answer <- jev1 transport jevLatest (state source)
+answer <- ask1 transport jevLatest (state source)
   (choice "Which line begins the retry-timeout branch?"
      (alt #not_here "The branch is not in this file" () .| many [(key, String line, (lineNo, revision)) | ...]))
 case answer of
@@ -22,7 +29,7 @@ case answer of
   Left err -> ...
 ```
 
-`jev1` is a whole packet with one question under the label `value`.
+`ask1` is a whole packet with one question under the label `value`.
 `transport :: Value -> m (Either Text Value)` is anything that posts JSON
 and hands the body back. The alternative type was inferred from the offer:
 `"not_here" ::> () :|: Many (Int, Revision)`. The payload is what the
@@ -41,17 +48,94 @@ packet =
 ```
 
 A cell holds a question or a nested packet. Two packets join with `++.`.
+Under a `let` in a session, keep `:&` at the start of each continuation
+line and indent every line past the first, as above; a `:&` left at the end
+of a line, or a continuation line starting in the same column as the
+binding, ends the expression early.
 Labels are the wire keys; nested packets flatten to dotted paths with dots
 in keys escaped, so a label may be anything. A duplicate label is a compile
 error naming it.
 
-`roundTrip transport model state packet` returns a `Response`; `answers` is
+`ask transport model state packet` returns a `Response`; `answers` is
 the same packet under `Answers`, read with the labels: `a.next`,
 `a.enough`, `a.children` (a list of `(key, sub-packet)`), `a.evidence.gap`.
 A label the packet lacks is a compile error listing the labels it has.
-`request model state packet` builds the body without sending it; `decode
-packet body` decodes a response against the packet. `roundTrip` is both.
+`request model state packet` (from `Jev.Transport`) builds the body without
+sending it; `decode packet body` decodes a response against the packet.
+`ask` is both.
 `usage` on the response is a `Usage { inputTokens, outputTokens }`; `resolvedModel` is the model the request actually resolved to.
+
+## Reading answers
+
+An answer is a plain record. It displays, and every number it carries is a
+field:
+
+```
+> a.next
+Choice {key = "rerun", mass = 0.82, margin = 0.65, confidence = 0.72, masses = ["rerun" 0.82, "ask_model" 0.17]}
+> a.next.key
+"rerun"
+> a.next.margin
+0.65
+```
+
+| Question | Fields |
+|---|---|
+| `choice` | `key`, `mass`, `margin`, `confidence`, `masses` (best first), `chosen` |
+| `noul` | `yes` |
+| `score` | `nearest`, `expectation`, `confidence`, `masses` (by level, in order) |
+
+`margin` is the winner's mass less the runner-up's, and equals the mass
+when nothing competes. A margin at or near 1.0 means no other option was
+in play — usually a sign the alternatives were not really rivals.
+
+`accept policy answer` weighs those fields and returns either the selection
+or a `Doubt`: `NearTie`, `Underweight`, or `Unconfident`. Three named
+policies cover the usual cases — `routing` for a read-only choice (which
+file, which skill), `spawning` for starting a worker or choosing an
+approach, `merging` for merging, stopping, or anything with a receipt.
+`explain policy answer` says in one line which check passed or failed and
+the numbers behind it. A whole `Response` displays as its answers under
+their labels, and `toJSON` on an answer or on an answers packet is a ledger
+row.
+
+```haskell
+case accept merging a.next of
+  Right s -> handle s (#rerun (\c -> run c) .| #ask_model (\h -> handBack h) .| onMany (\_ e -> follow e))
+  Left doubt -> stop (explain merging a.next) doubt
+```
+
+`handle` is the one thing fields cannot do: it runs the payload the winning
+alternative carried. `chosen` is the winner as a typed selection,
+`contenders floor answer` is every alternative at or above a mass floor as
+selections, best first, and `s.key` (or `selectedKey s`) is a selection's
+wire key. A handler list is an ordinary value: bind it once and use it on
+the winner and on every contender. `massAtOrAbove #blocked a.urgency` sums
+a rubric from a level up.
+
+## Writing questions
+
+The measured difference between a packet a model answers well and one it
+answers at 0.5 everywhere is in the wording, not the types.
+
+- **An option describes the condition that makes it apply**, in terms of
+  the state's own fields: `"The state shows every one of build, test and
+  lint"`, not `"all present"`. A vague question — "is this sufficient?" —
+  scores near 0.5 on everything; the same judgment written as three
+  conditions over named fields scores 0.95 at 0.92 confidence.
+- **A checklist is an ordinary `choice`** with one option per outcome:
+  everything present, something missing, something contradictory. Write
+  each option as the condition, and name the items in the wording.
+- **A judgment Noul carries its criteria in the question**: what makes it
+  true and what makes it false, in the question text or as structured
+  members with `about`. There is no separate place to put them.
+- **Rivals come from evidence, not from symmetry.** Offer an alternative
+  because the state could support it. An option that argues for itself
+  steers the answer; an option that merely describes its condition does
+  not.
+- **Give every choice an exit** — `#not_here`, `#none`, `#ask_model` — so
+  "none of these" is an answer rather than a forced pick.
+- **Keys are model-facing**: name them by what choosing them means.
 
 ## Alternatives
 
@@ -86,18 +170,8 @@ and on every contender. A label out of order, a handler missing or extra, a
 label where `Many` stands, or parentheses inside a chain each produce a
 compile error that says which label was expected.
 
-Answers carry the evidence. `chosen` is the winner as a typed selection;
-`contenders floor answer` is every alternative at or above a mass floor,
-best first, as selections; `confidence` and `masses` are the provider's
-numbers; `selectedKey` is a selection's wire key. `accept policy answer`
-returns the selection or a `Doubt` (`NearTie`, `Underweight`, `Unconfident`)
-under a `Policy {minMass, minMargin, minConfidence}`. Thresholds are yours;
-take them from data. `explain policy answer` gives the same verdict as one
-line of prose, naming the check order and the numbers behind it.
-
-Three named policies cover common cases: `routing` for read-only choices
-(which file, which skill), `spawning` for starting a worker or choosing an
-approach, and `merging` for merging, stopping, or anything with a receipt.
+Elimination through handlers is for the payload. Everything else about an
+answer is read as a field; see "Reading answers" below.
 
 ## Rubrics
 
@@ -112,9 +186,8 @@ urgency = level #background "No current action depends on this"
 
 Its type is `"background" :|: "checkpoint" :|: "blocked" :|: "invalidating"`.
 Duplicate labels are a compile error; one to ten levels is checked when the
-request is built. Answers give `expectation`, `masses` by label,
-`confidence`, `massAtOrAbove #blocked`, and `levelOf`, the level nearest
-the expectation.
+request is built. The answer gives `expectation`, `nearest`, `confidence`,
+and `masses` by label, plus `massAtOrAbove #blocked`.
 
 ## Pools
 
@@ -188,10 +261,10 @@ Each returns when a program in `test/Corpus.hs` needs it.
 
 - Ask one packet per semantic boundary; put every question the current
   evidence can answer into it, speculative ones under `given`.
-- Give every choice that may have no good answer an exit, and an
-  `ask_model` alternative when deciding may need judgment beyond the state.
-- Read `contenders`, not just `chosen`; a near tie is a typed outcome.
-- Keys are model-facing; name them by what choosing them means.
+- Offer an `ask_model` alternative when deciding may need judgment beyond
+  the state.
+- Read `margin` and `contenders`, not just `key`; a near tie is a typed
+  outcome, and so is a 1.0 that means nothing competed.
 - Payloads are the only thing an action should run; never a key or wording.
 - Bind a packet in the session and keep it: answers are ordinary values,
   and the labels make them legible in a later turn.

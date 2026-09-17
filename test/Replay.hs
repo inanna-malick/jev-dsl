@@ -45,19 +45,19 @@ scale i ls = ScaleQ (i, ls)
 
 instance JsonValue v => Endpoint v Scale where
   compileQ p (ScaleQ (i, ls)) = do
-    let key = encodePath p
-    checkInstructions key i
-    if null ls || length ls > 10 then Left (BadLevelCount key (length ls)) else Right ()
-    mapM_ (\(ix, l) -> checkLevel key ix l) (zip [0 ..] ls)
-    Right (leaf key (WScore i ls))
+    let qid = encodePath p
+    checkInstructions qid i
+    if null ls || length ls > 10 then Left (BadLevelCount qid (length ls)) else Right ()
+    mapM_ (\(ix, l) -> checkLevel qid ix l) (zip [0 ..] ls)
+    Right (leaf qid (WScore i ls))
   decodeA p (ScaleQ (_, ls)) ws = lookupAnswer p ws >>= \v -> do
-    let key = encodePath p
+    let qid = encodePath p
         indices = [T.pack (show i) | i <- [0 .. length ls - 1]]
-    ScoreAnswer e lg ms conf <- parseScore key v
-    distribution key indices ms conf
-    checkLegend key ls lg
-    checkExpectation key (length ls) e
-    built <- mapM (\(i, c) -> maybe (Left (MissingMass key i)) (Right . (,) c) (lookup i ms)) (zip indices ls)
+    ScoreAnswer e lg ms conf <- parseScore qid v
+    distribution qid indices ms conf
+    checkLegend qid ls lg
+    checkExpectation qid (length ls) e
+    built <- mapM (\(i, c) -> maybe (Left (MissingMass qid i)) (Right . (,) c) (lookup i ms)) (zip indices ls)
     Right (Scaled e built conf)
   unwrapA = id
   previewA a = jObject [("score", jNumber (scaleExpectation a)), ("confidence", jNumber (scaleConfidence a))]

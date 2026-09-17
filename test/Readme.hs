@@ -13,6 +13,7 @@ import Data.Aeson (Value (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Jev.Operators
+import Jev.Transport (request)
 
 newtype Witness = Witness Text
 newtype Handoff = Handoff Text
@@ -24,9 +25,9 @@ type Transport = Value -> IO (Either Text Value)
 -- The tiny use: one question, one answer, nothing declared.
 locate :: Transport -> Text -> [(Int, Text)] -> IO (Maybe Int)
 locate transport source numbered = do
-  answer <- jev1 transport jevLatest (state (String source))
+  answer <- ask1 transport jevLatest (state (String source))
     (choice "Which line begins the retry-timeout branch?"
-       (alt #not_here "The branch is not in this file" () .| many [(T.pack (show n), String l, n) | (n, l) <- numbered]))
+       (alt #not_here "No line in this file begins that branch" () .| many [(T.pack (show n), String l, n) | (n, l) <- numbered]))
   pure $ case answer of
     Left _ -> Nothing
     Right a -> handle (chosen a) (#not_here (\() -> Nothing) .| onMany (\_ n -> Just n))
@@ -56,26 +57,33 @@ type Inspection = Packet
 _inspectionTyped :: [(Text, Value, Edge)] -> Inspection Questions
 _inspectionTyped = inspection
 
--- Reading answers: exhaustive handlers, rubric mass, nested access.
+-- Reading answers: every answer is a plain record, read by field.
+report :: Inspection Answers -> Text
+report a =
+  a.next.key <> " by " <> pct a.next.margin
+    <> ", urgency " <> a.urgency.nearest
+    <> (if a.evidence.enough.yes > 0.8 then ", evidence suffices" else "")
+  where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
+
+-- The continuation, when the program must act on the payload rather than the key.
 act :: Inspection Answers -> Text
 act a =
   handle (chosen a.next)
     (  #use_witness (\(Witness w) -> "located at " <> w)
     .| #ask_model   (\(Handoff h) -> "hand back: " <> h)
-    .| onMany       (\key _ -> "follow " <> key) )
+    .| onMany       (\k _ -> "follow " <> k) )
   <> (if massAtOrAbove #blocked a.urgency > 0.5 then " now" else " later")
-  <> (if yes a.evidence.enough > 0.8 then ", evidence suffices" else "")
 
 -- The same handlers on every contender above a floor.
 routes :: Handlers Text Routes
-routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\key _ -> key)
+routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)
 
 alive :: Inspection Answers -> [Text]
 alive a = [handle s routes | (_, s) <- contenders 0.25 a.next]
 
 -- Under a policy: accept the winner or get structured doubt.
 decide :: Inspection Answers -> Either Doubt Text
-decide a = fmap (`handle` routes) (accept (Policy { minMass = 0.4, minMargin = 0.15, minConfidence = 0.5 }) a.next)
+decide a = fmap (`handle` routes) (accept spawning a.next)
 
 -- Pools: wording sent once, drawn on by several questions.
 probing probes =

@@ -26,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Jev.Operators
+import Jev.Transport (decode, request)
 import Options.Applicative (Parser, ReadM, command, eitherReader, execParser, fullDesc, help, helper, info, long, metavar, progDesc, showDefault, some, strOption, subparser, (<**>))
 import qualified Options.Applicative as Opt
 import System.Exit (exitFailure)
@@ -146,12 +147,12 @@ report resp = do
     (  #rerun (\(Check c) -> "rerun check " <> c)
     .| #read_source (\what -> what <> " the implicated source")
     .| #ask_model (\(Handoff why) -> "hand back to the model (" <> why <> ")") )
-    <> "  confidence " <> showT (confidence a.next))
+    <> "  confidence " <> showT a.next.confidence)
   TIO.putStrLn ("verify: " <> handle (chosen a.verify) (onMany (\_ (Check k) -> k) .| #defer (\() -> "<defer to the model>")))
-  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> showT (yes sub.applies) | (k, sub) <- a.relevant])
-  TIO.putStrLn ("sufficient: " <> showT (yes a.sufficient)
-    <> (if yes a.sufficient >= 0.7 then "  (yes)" else if yes a.sufficient <= 0.3 then "  (no)" else "  (unsure)"))
-  TIO.putStrLn ("breadth: " <> showT (expectation a.breadth) <> "  nearest " <> levelOf a.breadth
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> showT sub.applies.yes | (k, sub) <- a.relevant])
+  TIO.putStrLn ("sufficient: " <> showT a.sufficient.yes
+    <> (if a.sufficient.yes >= 0.7 then "  (yes)" else if a.sufficient.yes <= 0.3 then "  (no)" else "  (unsure)"))
+  TIO.putStrLn ("breadth: " <> showT a.breadth.expectation <> "  nearest " <> a.breadth.nearest
     <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent a.breadth))
   TIO.putStrLn ("if flaky: " <> handle (chosen a.if_flaky) (onMany (\_ (Check k) -> k)))
   where

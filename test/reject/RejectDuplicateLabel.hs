@@ -10,6 +10,7 @@ module RejectDuplicateLabel where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
+import Jev.Transport (request)
 
 -- Two cells with one label: the second would be unreachable.
 bad :: Either JevError Value

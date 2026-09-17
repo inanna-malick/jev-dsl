@@ -1,27 +1,39 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+-- The aeson instances for the answer types belong beside the monomorphic
+-- front, not beside the polymorphic core that must not depend on aeson.
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | FOR AGENT USE AND REVIEW. The type-operator front over aeson's 'Value'.
 --
 -- A packet is written once from its questions and its type is inferred:
 --
--- > a <- roundTrip transport jevLatest world
+-- > a <- fmap answers <$> ask transport jevLatest world
 -- >    ( #next    := choice "Most useful next step?"
 -- >                    (alt #rerun "Rerun the focused check" c .| alt #ask_model "Needs judgment" h .| many edges)
 -- >   :& #enough  := noul "Do the diagnostics establish the mechanism?"
 -- >   :& #breadth := score "How broadly would the fix alter behavior?"
 -- >                    (level #localized "…" .| level #adjacent "…" .| level #contract "…")
 -- >   :& Nil )
--- > handle (chosen a.next) (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\key e -> …))
--- > massAtOrAbove #adjacent a.breadth
+--
+-- Answers come back under the same labels and are plain records:
+--
+-- > a.next.key          -- the chosen alternative's wire key
+-- > a.next.margin       -- how far ahead of the runner-up it is
+-- > a.enough.yes        -- the provider's probability
+-- > a.breadth.nearest   -- the level nearest the expectation
+-- > handle (chosen a.next) (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\k e -> …))
 --
 -- Labels are wire ids verbatim. Duplicate labels, a missing label on
 -- access, a pool cell whose label is not its name, and a handler list that
@@ -29,30 +41,34 @@
 -- Wording, runtime candidates, level counts, and pool correspondence are
 -- checked when the request is built.
 --
--- No network: hand 'request' to any transport and give the body back to
--- 'decode', or use 'roundTrip'.
+-- No network: 'ask' and 'ask1' take a transport. "Jev.Transport" has the
+-- same operation split into 'Jev.Transport.request' and
+-- 'Jev.Transport.decode' for a program that carries the JSON itself.
 module Jev.Operators
   ( -- * Packets
-    Cell ((:=)), Packet ((:&), Nil), (++.), jev1
+    Cell ((:=)), Packet ((:&), Nil), (++.)
     -- * Alternatives
   , alt, many, manyFrom, (.|), onMany
     -- * Rubrics
-  , level, massAtOrAbove, levelOf, expectation
+  , level, massAtOrAbove
     -- * Questions
   , noul, choice, score, each, pool, eachIn, askAbout, given, about, refKey, refPayload
-    -- * Answers
-  , yes, chosen, contenders, selectedKey, handle, accept, explain, confidence, masses, Doubt (..), Policy (..)
+    -- * Answers, as fields: @a.next.key@, @a.enough.yes@
+    -- ('A' carries them: @yes@, @chosen@, @key@, @mass@, @margin@,
+    -- @confidence@, @masses@, @expectation@, @nearest@.)
+  , A (..)
+  , contenders, selectedKey, handle, accept, explain, Doubt (..), Policy (..)
   , routing, spawning, merging
-    -- * The operation
-  , jevLatest, request, decode, roundTrip, answers, usage, Usage (..), resolvedModel, JevError (..)
+    -- * Asking
+  , ask, ask1, jevLatest, answers, usage, Usage (..), resolvedModel, JevError (..)
     -- * Types, for signatures only
   , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
   , Noul, Choice, Score, Each, Group, PoolDecl, Ref, Selected
-  , Q, A, Questions, Answers, type (:-), State, state, Model, Response, PrepError, DecodeError
+  , Q, Questions, Answers, type (:-), State, state, Model, Response, PrepError, DecodeError
   , Schema, Alternatives
   ) where
 
-import Data.Aeson (Value)
+import Data.Aeson (Value, ToJSON (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -61,7 +77,7 @@ import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
-  ( A, Alternatives, Choice, DecodeError, Doubt (..), Each, Group, JevError (..), Label, Many, Model, Noul
+  ( A (..), Alternatives, Choice, DecodeError, Doubt (..), Each, Group, JevError (..), Label, Many, Model, Noul
   , Packet (..), Cell (..), PoolDecl, PrepError, Q, Score, Selected, type (:-), type (::=), type (::>), type (:|:), (++.), Policy (..)
   )
 
@@ -137,22 +153,21 @@ state :: Value -> State
 state = Core.state
 
 -- Answers
-yes :: A Value Noul -> Double
-yes = Core.yes
+--
+-- 'yes', 'chosen', 'key', 'mass', 'margin', 'confidence', 'masses',
+-- 'expectation' and 'nearest' are the fields of the answer records
+-- themselves, re-exported here. Read them with record dot.
 
-chosen :: A Value (Choice alts) -> Core.Selected Value alts
-chosen = Core.chosen
-
-contenders :: Double -> A Value (Choice alts) -> [(Double, Core.Selected Value alts)]
+contenders :: Double -> A Value (Choice alts) -> [(Double, Selected Value alts)]
 contenders = Core.contenders
 
-selectedKey :: Alternatives alts => Core.Selected Value alts -> Text
+selectedKey :: Alternatives alts => Selected Value alts -> Text
 selectedKey = Core.selectedKey
 
-handle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Core.Selected Value alts -> Handlers r hs -> r
+handle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Selected Value alts -> Handlers r hs -> r
 handle = Core.handle
 
-accept :: Alternatives alts => Policy -> A Value (Choice alts) -> Either Doubt (Core.Selected Value alts)
+accept :: Alternatives alts => Policy -> A Value (Choice alts) -> Either Doubt (Selected Value alts)
 accept = Core.accept
 
 -- | One line explaining why 'accept' returned what it did.
@@ -171,36 +186,31 @@ spawning = Policy 0.55 0.20 0.70
 merging :: Policy
 merging = Policy 0.70 0.40 0.85
 
-confidence :: Core.Judged e => A Value e -> Double
-confidence = Core.confidence
-
-masses :: Core.Judged e => A Value e -> [(Text, Double)]
-masses = Core.masses
-
-expectation :: A Value (Score levels) -> Double
-expectation = Core.expectation
-
 massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> A Value (Score levels) -> Double
 massAtOrAbove = Core.massAtOrAbove
 
-levelOf :: A Value (Score levels) -> Text
-levelOf = Core.levelOf
+-- | An answer is a ledger row: @toJSON a.next@.
+instance ToJSON (A Value Noul) where toJSON = Core.previewAnswer
+instance Alternatives alts => ToJSON (A Value (Choice alts)) where toJSON = Core.previewAnswer
+instance Core.Rubric levels => ToJSON (A Value (Score levels)) where toJSON = Core.previewAnswer
+
+-- | A whole answers packet is a ledger row too: @toJSON (answers resp)@.
+instance (Core.Unique fs, Core.PacketSchema Value fs) => ToJSON (Packet fs Answers) where
+  toJSON = Core.previewSchema
 
 -- The operation
 jevLatest :: Model
 jevLatest = Core.jevLatest
 
-request :: Schema s => Model -> State -> s Questions -> Either JevError Value
-request = Core.request
+-- | Send a packet through a transport and read back its typed 'Response'.
+-- @transport :: Value -> m (Either Text Value)@ is anything that posts JSON
+-- and hands the body back.
+ask :: (Monad m, Schema s) => (Value -> m (Either Text Value)) -> Model -> State -> s Questions -> m (Either JevError (Response s))
+ask = Core.roundTrip
 
-decode :: Schema s => s Questions -> Value -> Either JevError (Response s)
-decode = Core.decode
-
-roundTrip :: (Monad m, Schema s) => (Value -> m (Either Text Value)) -> Model -> State -> s Questions -> m (Either JevError (Response s))
-roundTrip = Core.roundTrip
-
-jev1 :: (Monad m, Core.Endpoint Value e, Core.CellOk "value" e) => (Value -> m (Either Text Value)) -> Model -> State -> Q Value e -> m (Either JevError (Answers :- e))
-jev1 = Core.jev1
+-- | The tiny use: one question, one answer, under the label @value@.
+ask1 :: (Monad m, Core.Endpoint Value e, Core.CellOk "value" e) => (Value -> m (Either Text Value)) -> Model -> State -> Q Value e -> m (Either JevError (Answers :- e))
+ask1 = Core.jev1
 
 answers :: Response s -> s Answers
 answers = Core.answers

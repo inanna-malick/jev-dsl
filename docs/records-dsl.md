@@ -73,7 +73,7 @@ urgency = score "What is the consequence of waiting?" $ \case
 The description function is exhaustiveness-checked by GHC. Levels are the
 constructors in `Enum` order; a nullary-only constraint and the 1 to 10
 bound are compile-time errors naming the type. Answers give `expectation`,
-`massAtOrAbove Blocked a.urgency`, `levelOf :: Urgency`.
+`massAtOrAbove Blocked a.urgency`, `nearest :: Urgency`.
 
 ## Pools are values
 

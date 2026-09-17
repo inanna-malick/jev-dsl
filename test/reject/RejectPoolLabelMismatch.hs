@@ -10,6 +10,7 @@ module RejectPoolLabelMismatch where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
+import Jev.Transport (request)
 
 -- A pool is declared under the label that is its name; anything else misleads the reader.
 bad :: Either JevError Value
