@@ -1,0 +1,454 @@
+{
+  "probe": "frontier-fanout-32",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "agent_000_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_000 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_001_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_001 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_002_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_002 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_003_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_003 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_004_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_004 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_005_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_005 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_006_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_006 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_007_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_007 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_008_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_008 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_009_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_009 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_010_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_010 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_011_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_011 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_012_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_012 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_013_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_013 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_014_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_014 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_015_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_015 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_016_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_016 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_017_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_017 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_018_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_018 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_019_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_019 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_020_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_020 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_021_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_021 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_022_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_022 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_023_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_023 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_024_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_024 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_025_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_025 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_026_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_026 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_027_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_027 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_028_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_028 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_029_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_029 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_030_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_030 as blocked awaiting review?"
+        },
+        "type": "noul"
+      },
+      "agent_031_blocked": {
+        "instructions": {
+          "evidence_rule": "Answer from an exact matching agent record only; absence is false.",
+          "question": "Does state.agents explicitly report agent_031 as blocked awaiting review?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "agents": [
+        {
+          "agent": "agent_000",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_002",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_004",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_006",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_008",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_010",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_012",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_014",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_016",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_018",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_020",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_022",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_024",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_026",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_028",
+          "cause": "awaiting review",
+          "status": "blocked"
+        },
+        {
+          "agent": "agent_030",
+          "cause": "awaiting review",
+          "status": "blocked"
+        }
+      ]
+    }
+  },
+  "response": {
+    "answers": {
+      "agent_000_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_001_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_002_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_003_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_004_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_005_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_006_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_007_blocked": {
+        "noul": 0.02,
+        "type": "noul"
+      },
+      "agent_008_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_009_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_010_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_011_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_012_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_013_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_014_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_015_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_016_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_017_blocked": {
+        "noul": 0.02,
+        "type": "noul"
+      },
+      "agent_018_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_019_blocked": {
+        "noul": 0.02,
+        "type": "noul"
+      },
+      "agent_020_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_021_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_022_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_023_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_024_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_025_blocked": {
+        "noul": 0.02,
+        "type": "noul"
+      },
+      "agent_026_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_027_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_028_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_029_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "agent_030_blocked": {
+        "noul": 0.98,
+        "type": "noul"
+      },
+      "agent_031_blocked": {
+        "noul": 0.03,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 2440,
+      "output_tokens": 740
+    }
+  },
+  "status": 200
+}

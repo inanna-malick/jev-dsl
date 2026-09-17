@@ -1,0 +1,111 @@
+{
+  "probe": "score-ten",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "count": {
+        "criteria": [
+          {
+            "pending_messages": 0
+          },
+          {
+            "pending_messages": 1
+          },
+          {
+            "pending_messages": 2
+          },
+          {
+            "pending_messages": 3
+          },
+          {
+            "pending_messages": 4
+          },
+          {
+            "pending_messages": 5
+          },
+          {
+            "pending_messages": 6
+          },
+          {
+            "pending_messages": 7
+          },
+          {
+            "pending_messages": 8
+          },
+          {
+            "pending_messages": 9
+          }
+        ],
+        "instructions": "How many messages are pending in `context.pending`?",
+        "type": "score"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "count": {
+        "confidence": 1.0,
+        "legend": {
+          "0": {
+            "pending_messages": 0
+          },
+          "1": {
+            "pending_messages": 1
+          },
+          "2": {
+            "pending_messages": 2
+          },
+          "3": {
+            "pending_messages": 3
+          },
+          "4": {
+            "pending_messages": 4
+          },
+          "5": {
+            "pending_messages": 5
+          },
+          "6": {
+            "pending_messages": 6
+          },
+          "7": {
+            "pending_messages": 7
+          },
+          "8": {
+            "pending_messages": 8
+          },
+          "9": {
+            "pending_messages": 9
+          }
+        },
+        "probabilities": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 1.0,
+          "3": 0.0,
+          "4": 0.0,
+          "5": 0.0,
+          "6": 0.0,
+          "7": 0.0,
+          "8": 0.0,
+          "9": 0.0
+        },
+        "score": 2.0,
+        "type": "score"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 434,
+      "output_tokens": 17
+    }
+  },
+  "status": 200
+}

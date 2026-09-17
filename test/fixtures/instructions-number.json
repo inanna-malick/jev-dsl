@@ -1,0 +1,75 @@
+{
+  "probe": "instructions-number",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": 42,
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "input": 42,
+        "loc": [
+          "body",
+          "questions",
+          "wake",
+          "noul",
+          "instructions",
+          "str"
+        ],
+        "msg": "Input should be a valid string",
+        "type": "string_type"
+      },
+      {
+        "input": 42,
+        "loc": [
+          "body",
+          "questions",
+          "wake",
+          "noul",
+          "instructions",
+          "dict[any,any]"
+        ],
+        "msg": "Input should be a valid dictionary",
+        "type": "dict_type"
+      },
+      {
+        "input": 42,
+        "loc": [
+          "body",
+          "questions",
+          "wake",
+          "noul",
+          "instructions",
+          "list[any]"
+        ],
+        "msg": "Input should be a valid list",
+        "type": "list_type"
+      }
+    ]
+  },
+  "status": 422
+}

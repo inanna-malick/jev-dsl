@@ -1,0 +1,37 @@
+{
+  "probe": "noul-criteria-null",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "wake": {
+        "criteria": null,
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "wake": {
+        "noul": 0.96,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 324,
+      "output_tokens": 20
+    }
+  },
+  "status": 200
+}

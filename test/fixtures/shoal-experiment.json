@@ -1,0 +1,72 @@
+{
+  "probe": "shoal-experiment",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "experiment": {
+        "criteria": {
+          "clear_cache": {
+            "cost_seconds": 5,
+            "plan": "Clear the cache and retry",
+            "prediction": {
+              "missing_invalidation": "passes",
+              "stale_cache": "passes"
+            }
+          },
+          "disable_cache": {
+            "cost_seconds": 4,
+            "plan": "Disable the cache and retry",
+            "prediction": {
+              "missing_invalidation": "passes",
+              "stale_cache": "passes"
+            }
+          },
+          "none": {
+            "meaning": "No supplied plan distinguishes the two hypotheses; obtain another experiment"
+          },
+          "trace_invalidation": {
+            "cost_seconds": 8,
+            "plan": "Record invalidation callback after an edit with cache enabled",
+            "prediction": {
+              "missing_invalidation": "callback absent",
+              "stale_cache": "callback is observed"
+            }
+          }
+        },
+        "instructions": "Which plan within `budget_seconds` distinguishes `hypotheses` by different predicted observations? Choose none if no plan does.",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "assumption": "Predictions supplied with plans are accurate for this synthetic example.",
+      "budget_seconds": 10,
+      "goal": "Distinguish the two supplied hypotheses, rather than merely making the symptom disappear",
+      "hypotheses": {
+        "missing_invalidation": "Edit path fails to invoke invalidation callback",
+        "stale_cache": "One stale entry from startup; subsequent edit invalidation works"
+      },
+      "observation": "Cached lookup after an edit returns the old value"
+    }
+  },
+  "response": {
+    "answers": {
+      "experiment": {
+        "choice": "trace_invalidation",
+        "confidence": 0.96,
+        "probabilities": {
+          "clear_cache": 0.0,
+          "disable_cache": 0.0,
+          "none": 0.03,
+          "trace_invalidation": 0.97
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 643,
+      "output_tokens": 55
+    }
+  },
+  "status": 200
+}

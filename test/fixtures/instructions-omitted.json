@@ -1,0 +1,44 @@
+{
+  "probe": "instructions-omitted",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "wake": {
+        "noul": 0.78,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 352,
+      "output_tokens": 20
+    }
+  },
+  "status": 200
+}

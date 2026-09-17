@@ -1,0 +1,37 @@
+{
+  "probe": "question-empty-key",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": "Question key cannot be empty."
+  },
+  "status": 400
+}

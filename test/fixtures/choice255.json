@@ -1,0 +1,1059 @@
+{
+  "probe": "choice255",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "route": {
+        "criteria": {
+          "owner_0": {
+            "configuration_owner": true
+          },
+          "owner_1": {
+            "configuration_owner": false
+          },
+          "owner_10": {
+            "configuration_owner": false
+          },
+          "owner_100": {
+            "configuration_owner": false
+          },
+          "owner_101": {
+            "configuration_owner": false
+          },
+          "owner_102": {
+            "configuration_owner": false
+          },
+          "owner_103": {
+            "configuration_owner": false
+          },
+          "owner_104": {
+            "configuration_owner": false
+          },
+          "owner_105": {
+            "configuration_owner": false
+          },
+          "owner_106": {
+            "configuration_owner": false
+          },
+          "owner_107": {
+            "configuration_owner": false
+          },
+          "owner_108": {
+            "configuration_owner": false
+          },
+          "owner_109": {
+            "configuration_owner": false
+          },
+          "owner_11": {
+            "configuration_owner": false
+          },
+          "owner_110": {
+            "configuration_owner": false
+          },
+          "owner_111": {
+            "configuration_owner": false
+          },
+          "owner_112": {
+            "configuration_owner": false
+          },
+          "owner_113": {
+            "configuration_owner": false
+          },
+          "owner_114": {
+            "configuration_owner": false
+          },
+          "owner_115": {
+            "configuration_owner": false
+          },
+          "owner_116": {
+            "configuration_owner": false
+          },
+          "owner_117": {
+            "configuration_owner": false
+          },
+          "owner_118": {
+            "configuration_owner": false
+          },
+          "owner_119": {
+            "configuration_owner": false
+          },
+          "owner_12": {
+            "configuration_owner": false
+          },
+          "owner_120": {
+            "configuration_owner": false
+          },
+          "owner_121": {
+            "configuration_owner": false
+          },
+          "owner_122": {
+            "configuration_owner": false
+          },
+          "owner_123": {
+            "configuration_owner": false
+          },
+          "owner_124": {
+            "configuration_owner": false
+          },
+          "owner_125": {
+            "configuration_owner": false
+          },
+          "owner_126": {
+            "configuration_owner": false
+          },
+          "owner_127": {
+            "configuration_owner": false
+          },
+          "owner_128": {
+            "configuration_owner": false
+          },
+          "owner_129": {
+            "configuration_owner": false
+          },
+          "owner_13": {
+            "configuration_owner": false
+          },
+          "owner_130": {
+            "configuration_owner": false
+          },
+          "owner_131": {
+            "configuration_owner": false
+          },
+          "owner_132": {
+            "configuration_owner": false
+          },
+          "owner_133": {
+            "configuration_owner": false
+          },
+          "owner_134": {
+            "configuration_owner": false
+          },
+          "owner_135": {
+            "configuration_owner": false
+          },
+          "owner_136": {
+            "configuration_owner": false
+          },
+          "owner_137": {
+            "configuration_owner": false
+          },
+          "owner_138": {
+            "configuration_owner": false
+          },
+          "owner_139": {
+            "configuration_owner": false
+          },
+          "owner_14": {
+            "configuration_owner": false
+          },
+          "owner_140": {
+            "configuration_owner": false
+          },
+          "owner_141": {
+            "configuration_owner": false
+          },
+          "owner_142": {
+            "configuration_owner": false
+          },
+          "owner_143": {
+            "configuration_owner": false
+          },
+          "owner_144": {
+            "configuration_owner": false
+          },
+          "owner_145": {
+            "configuration_owner": false
+          },
+          "owner_146": {
+            "configuration_owner": false
+          },
+          "owner_147": {
+            "configuration_owner": false
+          },
+          "owner_148": {
+            "configuration_owner": false
+          },
+          "owner_149": {
+            "configuration_owner": false
+          },
+          "owner_15": {
+            "configuration_owner": false
+          },
+          "owner_150": {
+            "configuration_owner": false
+          },
+          "owner_151": {
+            "configuration_owner": false
+          },
+          "owner_152": {
+            "configuration_owner": false
+          },
+          "owner_153": {
+            "configuration_owner": false
+          },
+          "owner_154": {
+            "configuration_owner": false
+          },
+          "owner_155": {
+            "configuration_owner": false
+          },
+          "owner_156": {
+            "configuration_owner": false
+          },
+          "owner_157": {
+            "configuration_owner": false
+          },
+          "owner_158": {
+            "configuration_owner": false
+          },
+          "owner_159": {
+            "configuration_owner": false
+          },
+          "owner_16": {
+            "configuration_owner": false
+          },
+          "owner_160": {
+            "configuration_owner": false
+          },
+          "owner_161": {
+            "configuration_owner": false
+          },
+          "owner_162": {
+            "configuration_owner": false
+          },
+          "owner_163": {
+            "configuration_owner": false
+          },
+          "owner_164": {
+            "configuration_owner": false
+          },
+          "owner_165": {
+            "configuration_owner": false
+          },
+          "owner_166": {
+            "configuration_owner": false
+          },
+          "owner_167": {
+            "configuration_owner": false
+          },
+          "owner_168": {
+            "configuration_owner": false
+          },
+          "owner_169": {
+            "configuration_owner": false
+          },
+          "owner_17": {
+            "configuration_owner": false
+          },
+          "owner_170": {
+            "configuration_owner": false
+          },
+          "owner_171": {
+            "configuration_owner": false
+          },
+          "owner_172": {
+            "configuration_owner": false
+          },
+          "owner_173": {
+            "configuration_owner": false
+          },
+          "owner_174": {
+            "configuration_owner": false
+          },
+          "owner_175": {
+            "configuration_owner": false
+          },
+          "owner_176": {
+            "configuration_owner": false
+          },
+          "owner_177": {
+            "configuration_owner": false
+          },
+          "owner_178": {
+            "configuration_owner": false
+          },
+          "owner_179": {
+            "configuration_owner": false
+          },
+          "owner_18": {
+            "configuration_owner": false
+          },
+          "owner_180": {
+            "configuration_owner": false
+          },
+          "owner_181": {
+            "configuration_owner": false
+          },
+          "owner_182": {
+            "configuration_owner": false
+          },
+          "owner_183": {
+            "configuration_owner": false
+          },
+          "owner_184": {
+            "configuration_owner": false
+          },
+          "owner_185": {
+            "configuration_owner": false
+          },
+          "owner_186": {
+            "configuration_owner": false
+          },
+          "owner_187": {
+            "configuration_owner": false
+          },
+          "owner_188": {
+            "configuration_owner": false
+          },
+          "owner_189": {
+            "configuration_owner": false
+          },
+          "owner_19": {
+            "configuration_owner": false
+          },
+          "owner_190": {
+            "configuration_owner": false
+          },
+          "owner_191": {
+            "configuration_owner": false
+          },
+          "owner_192": {
+            "configuration_owner": false
+          },
+          "owner_193": {
+            "configuration_owner": false
+          },
+          "owner_194": {
+            "configuration_owner": false
+          },
+          "owner_195": {
+            "configuration_owner": false
+          },
+          "owner_196": {
+            "configuration_owner": false
+          },
+          "owner_197": {
+            "configuration_owner": false
+          },
+          "owner_198": {
+            "configuration_owner": false
+          },
+          "owner_199": {
+            "configuration_owner": false
+          },
+          "owner_2": {
+            "configuration_owner": false
+          },
+          "owner_20": {
+            "configuration_owner": false
+          },
+          "owner_200": {
+            "configuration_owner": false
+          },
+          "owner_201": {
+            "configuration_owner": false
+          },
+          "owner_202": {
+            "configuration_owner": false
+          },
+          "owner_203": {
+            "configuration_owner": false
+          },
+          "owner_204": {
+            "configuration_owner": false
+          },
+          "owner_205": {
+            "configuration_owner": false
+          },
+          "owner_206": {
+            "configuration_owner": false
+          },
+          "owner_207": {
+            "configuration_owner": false
+          },
+          "owner_208": {
+            "configuration_owner": false
+          },
+          "owner_209": {
+            "configuration_owner": false
+          },
+          "owner_21": {
+            "configuration_owner": false
+          },
+          "owner_210": {
+            "configuration_owner": false
+          },
+          "owner_211": {
+            "configuration_owner": false
+          },
+          "owner_212": {
+            "configuration_owner": false
+          },
+          "owner_213": {
+            "configuration_owner": false
+          },
+          "owner_214": {
+            "configuration_owner": false
+          },
+          "owner_215": {
+            "configuration_owner": false
+          },
+          "owner_216": {
+            "configuration_owner": false
+          },
+          "owner_217": {
+            "configuration_owner": false
+          },
+          "owner_218": {
+            "configuration_owner": false
+          },
+          "owner_219": {
+            "configuration_owner": false
+          },
+          "owner_22": {
+            "configuration_owner": false
+          },
+          "owner_220": {
+            "configuration_owner": false
+          },
+          "owner_221": {
+            "configuration_owner": false
+          },
+          "owner_222": {
+            "configuration_owner": false
+          },
+          "owner_223": {
+            "configuration_owner": false
+          },
+          "owner_224": {
+            "configuration_owner": false
+          },
+          "owner_225": {
+            "configuration_owner": false
+          },
+          "owner_226": {
+            "configuration_owner": false
+          },
+          "owner_227": {
+            "configuration_owner": false
+          },
+          "owner_228": {
+            "configuration_owner": false
+          },
+          "owner_229": {
+            "configuration_owner": false
+          },
+          "owner_23": {
+            "configuration_owner": false
+          },
+          "owner_230": {
+            "configuration_owner": false
+          },
+          "owner_231": {
+            "configuration_owner": false
+          },
+          "owner_232": {
+            "configuration_owner": false
+          },
+          "owner_233": {
+            "configuration_owner": false
+          },
+          "owner_234": {
+            "configuration_owner": false
+          },
+          "owner_235": {
+            "configuration_owner": false
+          },
+          "owner_236": {
+            "configuration_owner": false
+          },
+          "owner_237": {
+            "configuration_owner": false
+          },
+          "owner_238": {
+            "configuration_owner": false
+          },
+          "owner_239": {
+            "configuration_owner": false
+          },
+          "owner_24": {
+            "configuration_owner": false
+          },
+          "owner_240": {
+            "configuration_owner": false
+          },
+          "owner_241": {
+            "configuration_owner": false
+          },
+          "owner_242": {
+            "configuration_owner": false
+          },
+          "owner_243": {
+            "configuration_owner": false
+          },
+          "owner_244": {
+            "configuration_owner": false
+          },
+          "owner_245": {
+            "configuration_owner": false
+          },
+          "owner_246": {
+            "configuration_owner": false
+          },
+          "owner_247": {
+            "configuration_owner": false
+          },
+          "owner_248": {
+            "configuration_owner": false
+          },
+          "owner_249": {
+            "configuration_owner": false
+          },
+          "owner_25": {
+            "configuration_owner": false
+          },
+          "owner_250": {
+            "configuration_owner": false
+          },
+          "owner_251": {
+            "configuration_owner": false
+          },
+          "owner_252": {
+            "configuration_owner": false
+          },
+          "owner_253": {
+            "configuration_owner": false
+          },
+          "owner_254": {
+            "configuration_owner": false
+          },
+          "owner_26": {
+            "configuration_owner": false
+          },
+          "owner_27": {
+            "configuration_owner": false
+          },
+          "owner_28": {
+            "configuration_owner": false
+          },
+          "owner_29": {
+            "configuration_owner": false
+          },
+          "owner_3": {
+            "configuration_owner": false
+          },
+          "owner_30": {
+            "configuration_owner": false
+          },
+          "owner_31": {
+            "configuration_owner": false
+          },
+          "owner_32": {
+            "configuration_owner": false
+          },
+          "owner_33": {
+            "configuration_owner": false
+          },
+          "owner_34": {
+            "configuration_owner": false
+          },
+          "owner_35": {
+            "configuration_owner": false
+          },
+          "owner_36": {
+            "configuration_owner": false
+          },
+          "owner_37": {
+            "configuration_owner": false
+          },
+          "owner_38": {
+            "configuration_owner": false
+          },
+          "owner_39": {
+            "configuration_owner": false
+          },
+          "owner_4": {
+            "configuration_owner": false
+          },
+          "owner_40": {
+            "configuration_owner": false
+          },
+          "owner_41": {
+            "configuration_owner": false
+          },
+          "owner_42": {
+            "configuration_owner": false
+          },
+          "owner_43": {
+            "configuration_owner": false
+          },
+          "owner_44": {
+            "configuration_owner": false
+          },
+          "owner_45": {
+            "configuration_owner": false
+          },
+          "owner_46": {
+            "configuration_owner": false
+          },
+          "owner_47": {
+            "configuration_owner": false
+          },
+          "owner_48": {
+            "configuration_owner": false
+          },
+          "owner_49": {
+            "configuration_owner": false
+          },
+          "owner_5": {
+            "configuration_owner": false
+          },
+          "owner_50": {
+            "configuration_owner": false
+          },
+          "owner_51": {
+            "configuration_owner": false
+          },
+          "owner_52": {
+            "configuration_owner": false
+          },
+          "owner_53": {
+            "configuration_owner": false
+          },
+          "owner_54": {
+            "configuration_owner": false
+          },
+          "owner_55": {
+            "configuration_owner": false
+          },
+          "owner_56": {
+            "configuration_owner": false
+          },
+          "owner_57": {
+            "configuration_owner": false
+          },
+          "owner_58": {
+            "configuration_owner": false
+          },
+          "owner_59": {
+            "configuration_owner": false
+          },
+          "owner_6": {
+            "configuration_owner": false
+          },
+          "owner_60": {
+            "configuration_owner": false
+          },
+          "owner_61": {
+            "configuration_owner": false
+          },
+          "owner_62": {
+            "configuration_owner": false
+          },
+          "owner_63": {
+            "configuration_owner": false
+          },
+          "owner_64": {
+            "configuration_owner": false
+          },
+          "owner_65": {
+            "configuration_owner": false
+          },
+          "owner_66": {
+            "configuration_owner": false
+          },
+          "owner_67": {
+            "configuration_owner": false
+          },
+          "owner_68": {
+            "configuration_owner": false
+          },
+          "owner_69": {
+            "configuration_owner": false
+          },
+          "owner_7": {
+            "configuration_owner": false
+          },
+          "owner_70": {
+            "configuration_owner": false
+          },
+          "owner_71": {
+            "configuration_owner": false
+          },
+          "owner_72": {
+            "configuration_owner": false
+          },
+          "owner_73": {
+            "configuration_owner": false
+          },
+          "owner_74": {
+            "configuration_owner": false
+          },
+          "owner_75": {
+            "configuration_owner": false
+          },
+          "owner_76": {
+            "configuration_owner": false
+          },
+          "owner_77": {
+            "configuration_owner": false
+          },
+          "owner_78": {
+            "configuration_owner": false
+          },
+          "owner_79": {
+            "configuration_owner": false
+          },
+          "owner_8": {
+            "configuration_owner": false
+          },
+          "owner_80": {
+            "configuration_owner": false
+          },
+          "owner_81": {
+            "configuration_owner": false
+          },
+          "owner_82": {
+            "configuration_owner": false
+          },
+          "owner_83": {
+            "configuration_owner": false
+          },
+          "owner_84": {
+            "configuration_owner": false
+          },
+          "owner_85": {
+            "configuration_owner": false
+          },
+          "owner_86": {
+            "configuration_owner": false
+          },
+          "owner_87": {
+            "configuration_owner": false
+          },
+          "owner_88": {
+            "configuration_owner": false
+          },
+          "owner_89": {
+            "configuration_owner": false
+          },
+          "owner_9": {
+            "configuration_owner": false
+          },
+          "owner_90": {
+            "configuration_owner": false
+          },
+          "owner_91": {
+            "configuration_owner": false
+          },
+          "owner_92": {
+            "configuration_owner": false
+          },
+          "owner_93": {
+            "configuration_owner": false
+          },
+          "owner_94": {
+            "configuration_owner": false
+          },
+          "owner_95": {
+            "configuration_owner": false
+          },
+          "owner_96": {
+            "configuration_owner": false
+          },
+          "owner_97": {
+            "configuration_owner": false
+          },
+          "owner_98": {
+            "configuration_owner": false
+          },
+          "owner_99": {
+            "configuration_owner": false
+          }
+        },
+        "instructions": "Who owns configuration?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "route": {
+        "choice": "owner_0",
+        "confidence": 0.98,
+        "probabilities": {
+          "owner_0": 0.99,
+          "owner_1": 0.0,
+          "owner_10": 0.0,
+          "owner_100": 0.0,
+          "owner_101": 0.0,
+          "owner_102": 0.0,
+          "owner_103": 0.0,
+          "owner_104": 0.0,
+          "owner_105": 0.0,
+          "owner_106": 0.0,
+          "owner_107": 0.0,
+          "owner_108": 0.0,
+          "owner_109": 0.0,
+          "owner_11": 0.0,
+          "owner_110": 0.0,
+          "owner_111": 0.0,
+          "owner_112": 0.0,
+          "owner_113": 0.0,
+          "owner_114": 0.0,
+          "owner_115": 0.0,
+          "owner_116": 0.0,
+          "owner_117": 0.0,
+          "owner_118": 0.0,
+          "owner_119": 0.0,
+          "owner_12": 0.0,
+          "owner_120": 0.0,
+          "owner_121": 0.0,
+          "owner_122": 0.0,
+          "owner_123": 0.0,
+          "owner_124": 0.0,
+          "owner_125": 0.0,
+          "owner_126": 0.0,
+          "owner_127": 0.0,
+          "owner_128": 0.0,
+          "owner_129": 0.0,
+          "owner_13": 0.0,
+          "owner_130": 0.0,
+          "owner_131": 0.0,
+          "owner_132": 0.0,
+          "owner_133": 0.0,
+          "owner_134": 0.0,
+          "owner_135": 0.0,
+          "owner_136": 0.0,
+          "owner_137": 0.0,
+          "owner_138": 0.0,
+          "owner_139": 0.0,
+          "owner_14": 0.0,
+          "owner_140": 0.0,
+          "owner_141": 0.0,
+          "owner_142": 0.0,
+          "owner_143": 0.0,
+          "owner_144": 0.0,
+          "owner_145": 0.0,
+          "owner_146": 0.0,
+          "owner_147": 0.0,
+          "owner_148": 0.0,
+          "owner_149": 0.0,
+          "owner_15": 0.0,
+          "owner_150": 0.0,
+          "owner_151": 0.0,
+          "owner_152": 0.0,
+          "owner_153": 0.0,
+          "owner_154": 0.0,
+          "owner_155": 0.0,
+          "owner_156": 0.0,
+          "owner_157": 0.0,
+          "owner_158": 0.0,
+          "owner_159": 0.0,
+          "owner_16": 0.0,
+          "owner_160": 0.0,
+          "owner_161": 0.0,
+          "owner_162": 0.0,
+          "owner_163": 0.0,
+          "owner_164": 0.0,
+          "owner_165": 0.0,
+          "owner_166": 0.0,
+          "owner_167": 0.0,
+          "owner_168": 0.0,
+          "owner_169": 0.0,
+          "owner_17": 0.0,
+          "owner_170": 0.0,
+          "owner_171": 0.0,
+          "owner_172": 0.0,
+          "owner_173": 0.0,
+          "owner_174": 0.0,
+          "owner_175": 0.0,
+          "owner_176": 0.0,
+          "owner_177": 0.0,
+          "owner_178": 0.0,
+          "owner_179": 0.0,
+          "owner_18": 0.0,
+          "owner_180": 0.0,
+          "owner_181": 0.0,
+          "owner_182": 0.0,
+          "owner_183": 0.0,
+          "owner_184": 0.0,
+          "owner_185": 0.0,
+          "owner_186": 0.0,
+          "owner_187": 0.0,
+          "owner_188": 0.0,
+          "owner_189": 0.0,
+          "owner_19": 0.0,
+          "owner_190": 0.0,
+          "owner_191": 0.0,
+          "owner_192": 0.0,
+          "owner_193": 0.0,
+          "owner_194": 0.0,
+          "owner_195": 0.0,
+          "owner_196": 0.0,
+          "owner_197": 0.0,
+          "owner_198": 0.0,
+          "owner_199": 0.0,
+          "owner_2": 0.0,
+          "owner_20": 0.0,
+          "owner_200": 0.0,
+          "owner_201": 0.0,
+          "owner_202": 0.0,
+          "owner_203": 0.0,
+          "owner_204": 0.0,
+          "owner_205": 0.0,
+          "owner_206": 0.0,
+          "owner_207": 0.0,
+          "owner_208": 0.0,
+          "owner_209": 0.0,
+          "owner_21": 0.0,
+          "owner_210": 0.0,
+          "owner_211": 0.0,
+          "owner_212": 0.0,
+          "owner_213": 0.0,
+          "owner_214": 0.0,
+          "owner_215": 0.0,
+          "owner_216": 0.0,
+          "owner_217": 0.0,
+          "owner_218": 0.0,
+          "owner_219": 0.0,
+          "owner_22": 0.0,
+          "owner_220": 0.0,
+          "owner_221": 0.0,
+          "owner_222": 0.0,
+          "owner_223": 0.0,
+          "owner_224": 0.0,
+          "owner_225": 0.0,
+          "owner_226": 0.0,
+          "owner_227": 0.0,
+          "owner_228": 0.0,
+          "owner_229": 0.0,
+          "owner_23": 0.0,
+          "owner_230": 0.0,
+          "owner_231": 0.0,
+          "owner_232": 0.0,
+          "owner_233": 0.0,
+          "owner_234": 0.0,
+          "owner_235": 0.0,
+          "owner_236": 0.0,
+          "owner_237": 0.0,
+          "owner_238": 0.0,
+          "owner_239": 0.0,
+          "owner_24": 0.0,
+          "owner_240": 0.0,
+          "owner_241": 0.0,
+          "owner_242": 0.0,
+          "owner_243": 0.0,
+          "owner_244": 0.0,
+          "owner_245": 0.0,
+          "owner_246": 0.0,
+          "owner_247": 0.0,
+          "owner_248": 0.0,
+          "owner_249": 0.0,
+          "owner_25": 0.0,
+          "owner_250": 0.0,
+          "owner_251": 0.0,
+          "owner_252": 0.0,
+          "owner_253": 0.0,
+          "owner_254": 0.0,
+          "owner_26": 0.0,
+          "owner_27": 0.0,
+          "owner_28": 0.0,
+          "owner_29": 0.0,
+          "owner_3": 0.0,
+          "owner_30": 0.0,
+          "owner_31": 0.0,
+          "owner_32": 0.0,
+          "owner_33": 0.0,
+          "owner_34": 0.0,
+          "owner_35": 0.0,
+          "owner_36": 0.0,
+          "owner_37": 0.0,
+          "owner_38": 0.0,
+          "owner_39": 0.0,
+          "owner_4": 0.0,
+          "owner_40": 0.0,
+          "owner_41": 0.0,
+          "owner_42": 0.0,
+          "owner_43": 0.0,
+          "owner_44": 0.0,
+          "owner_45": 0.0,
+          "owner_46": 0.0,
+          "owner_47": 0.0,
+          "owner_48": 0.0,
+          "owner_49": 0.0,
+          "owner_5": 0.0,
+          "owner_50": 0.0,
+          "owner_51": 0.0,
+          "owner_52": 0.0,
+          "owner_53": 0.0,
+          "owner_54": 0.0,
+          "owner_55": 0.0,
+          "owner_56": 0.0,
+          "owner_57": 0.0,
+          "owner_58": 0.0,
+          "owner_59": 0.0,
+          "owner_6": 0.0,
+          "owner_60": 0.0,
+          "owner_61": 0.0,
+          "owner_62": 0.0,
+          "owner_63": 0.0,
+          "owner_64": 0.0,
+          "owner_65": 0.0,
+          "owner_66": 0.0,
+          "owner_67": 0.0,
+          "owner_68": 0.0,
+          "owner_69": 0.0,
+          "owner_7": 0.0,
+          "owner_70": 0.0,
+          "owner_71": 0.0,
+          "owner_72": 0.0,
+          "owner_73": 0.0,
+          "owner_74": 0.0,
+          "owner_75": 0.0,
+          "owner_76": 0.0,
+          "owner_77": 0.0,
+          "owner_78": 0.0,
+          "owner_79": 0.0,
+          "owner_8": 0.0,
+          "owner_80": 0.0,
+          "owner_81": 0.0,
+          "owner_82": 0.0,
+          "owner_83": 0.0,
+          "owner_84": 0.0,
+          "owner_85": 0.0,
+          "owner_86": 0.0,
+          "owner_87": 0.0,
+          "owner_88": 0.0,
+          "owner_89": 0.0,
+          "owner_9": 0.0,
+          "owner_90": 0.0,
+          "owner_91": 0.0,
+          "owner_92": 0.0,
+          "owner_93": 0.0,
+          "owner_94": 0.0,
+          "owner_95": 0.0,
+          "owner_96": 0.0,
+          "owner_97": 0.0,
+          "owner_98": 0.0,
+          "owner_99": 0.01
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 5566,
+      "output_tokens": 2714
+    }
+  },
+  "status": 200
+}

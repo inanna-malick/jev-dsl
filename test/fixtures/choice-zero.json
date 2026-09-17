@@ -1,0 +1,25 @@
+{
+  "probe": "choice-zero",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "route": {
+        "criteria": {},
+        "instructions": "Who owns configuration?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": "Choice question must have at least one choice: route"
+  },
+  "status": 400
+}

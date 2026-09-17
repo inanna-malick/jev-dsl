@@ -1,0 +1,63 @@
+{
+  "probe": "score-array-level",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "urgency": {
+        "criteria": [
+          [
+            "Work can continue",
+            {
+              "blocked": false
+            },
+            null
+          ],
+          {
+            "blocked": true
+          }
+        ],
+        "instructions": "How urgent is the message?",
+        "type": "score"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "urgency": {
+        "confidence": 0.99,
+        "legend": {
+          "0": [
+            "Work can continue",
+            {
+              "blocked": false
+            },
+            null
+          ],
+          "1": {
+            "blocked": true
+          }
+        },
+        "probabilities": {
+          "0": 0.01,
+          "1": 0.99
+        },
+        "score": 0.99,
+        "type": "score"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 349,
+      "output_tokens": 18
+    }
+  },
+  "status": 200
+}

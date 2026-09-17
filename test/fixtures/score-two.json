@@ -1,0 +1,55 @@
+{
+  "probe": "score-two",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "count": {
+        "criteria": [
+          {
+            "pending_messages": 0
+          },
+          {
+            "pending_messages": 1
+          }
+        ],
+        "instructions": "How many messages are pending in `context.pending`?",
+        "type": "score"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "count": {
+        "confidence": 0.97,
+        "legend": {
+          "0": {
+            "pending_messages": 0
+          },
+          "1": {
+            "pending_messages": 1
+          }
+        },
+        "probabilities": {
+          "0": 0.02,
+          "1": 0.98
+        },
+        "score": 0.98,
+        "type": "score"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 346,
+      "output_tokens": 17
+    }
+  },
+  "status": 200
+}

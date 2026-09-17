@@ -1,0 +1,29 @@
+{
+  "probe": "questions-array",
+  "request": {
+    "model": "jev-latest",
+    "questions": [],
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "input": [],
+        "loc": [
+          "body",
+          "questions"
+        ],
+        "msg": "Input should be a valid dictionary",
+        "type": "dict_type"
+      }
+    ]
+  },
+  "status": 422
+}

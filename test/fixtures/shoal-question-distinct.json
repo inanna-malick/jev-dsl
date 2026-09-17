@@ -1,0 +1,63 @@
+{
+  "probe": "shoal-question-distinct",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "relationship": {
+        "criteria": {
+          "answered": {
+            "meaning": "Existing record contains an accepted answer applicable to incoming"
+          },
+          "conflict": {
+            "meaning": "The records assert incompatible answers to the same ownership decision"
+          },
+          "distinct": {
+            "meaning": "Related wording but different operations, scopes, or failure conditions"
+          },
+          "duplicate": {
+            "meaning": "Same unresolved ownership decision for the same operation and failure"
+          }
+        },
+        "instructions": {
+          "question": "How does `incoming` relate to `existing`?",
+          "rule": "Compare the actual operation and failure condition, not shared words."
+        },
+        "type": "choice"
+      }
+    },
+    "state": {
+      "existing": {
+        "question": "Who retries a provider HTTP request after a connect timeout?",
+        "revision": "synthetic-r17",
+        "scope": "HTTP transport",
+        "status": "unanswered"
+      },
+      "incoming": {
+        "question": "Who retries a settled actor assignment after its acceptance check fails?",
+        "revision": "synthetic-r17",
+        "scope": "project orchestration"
+      }
+    }
+  },
+  "response": {
+    "answers": {
+      "relationship": {
+        "choice": "distinct",
+        "confidence": 1.0,
+        "probabilities": {
+          "answered": 0.0,
+          "conflict": 0.0,
+          "distinct": 1.0,
+          "duplicate": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 524,
+      "output_tokens": 46
+    }
+  },
+  "status": 200
+}

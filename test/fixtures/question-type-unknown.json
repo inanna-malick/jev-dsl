@@ -1,0 +1,69 @@
+{
+  "probe": "question-type-unknown",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "rank"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "ctx": {
+          "discriminator": "'type'",
+          "expected_tags": "<QuestionType.Noul: 'noul'>, <QuestionType.Choice: 'choice'>, <QuestionType.Score: 'score'>, <QuestionType.BoundingBox: 'bounding_box'>",
+          "tag": "rank"
+        },
+        "input": {
+          "criteria": {
+            "false": {
+              "means": "Work can proceed without this message"
+            },
+            "true": {
+              "examples": [
+                "Missing required input"
+              ],
+              "means": "Current work cannot proceed"
+            }
+          },
+          "instructions": {
+            "question": "Does `message` describe a blocker for current work?"
+          },
+          "type": "rank"
+        },
+        "loc": [
+          "body",
+          "questions",
+          "wake"
+        ],
+        "msg": "Input tag 'rank' found using 'type' does not match any of the expected tags: <QuestionType.Noul: 'noul'>, <QuestionType.Choice: 'choice'>, <QuestionType.Score: 'score'>, <QuestionType.BoundingBox: 'bounding_box'>",
+        "type": "union_tag_invalid"
+      }
+    ]
+  },
+  "status": 422
+}

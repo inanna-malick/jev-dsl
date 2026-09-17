@@ -1,0 +1,47 @@
+{
+  "probe": "model-null",
+  "request": {
+    "model": null,
+    "questions": {
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "input": null,
+        "loc": [
+          "body",
+          "model"
+        ],
+        "msg": "Input should be a valid string",
+        "type": "string_type"
+      }
+    ]
+  },
+  "status": 422
+}

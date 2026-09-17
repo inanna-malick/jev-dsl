@@ -1,0 +1,40 @@
+{
+  "probe": "state-empty-string",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": ""
+  },
+  "response": {
+    "answers": {
+      "wake": {
+        "noul": 0.26,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 333,
+      "output_tokens": 20
+    }
+  },
+  "status": 200
+}

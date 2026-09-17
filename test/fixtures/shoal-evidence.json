@@ -1,0 +1,62 @@
+{
+  "probe": "shoal-evidence",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "evidence": {
+        "criteria": {
+          "group_1": {
+            "diagnostic": "cannot find value result in this scope",
+            "notes": [
+              "Downstream use of the binding from line 70"
+            ],
+            "span": "worker.rs:91"
+          },
+          "group_2": {
+            "diagnostic": "expected Response<Report>, found Response<Text>",
+            "notes": [
+              "The assignment was instantiated with Text; receive_report requires Report"
+            ],
+            "span": "worker.rs:70"
+          },
+          "group_3": {
+            "diagnostic": "unused import: Report",
+            "severity": "warning",
+            "span": "worker.rs:4"
+          },
+          "no_match": {
+            "meaning": "No supplied group directly documents the requested type mismatch"
+          }
+        },
+        "instructions": "Which supplied diagnostic directly documents the type mismatch described in `inquiry`?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "candidate_coverage": "Includes the original binding diagnostic and downstream messages",
+      "inquiry": "Find the diagnostic directly documenting why the assignment response cannot be passed to receive_report.",
+      "rule": "Select existing evidence; do not infer a missing diagnostic from a downstream symptom."
+    }
+  },
+  "response": {
+    "answers": {
+      "evidence": {
+        "choice": "group_2",
+        "confidence": 0.84,
+        "probabilities": {
+          "group_1": 0.0,
+          "group_2": 0.88,
+          "group_3": 0.0,
+          "no_match": 0.12
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 550,
+      "output_tokens": 56
+    }
+  },
+  "status": 200
+}

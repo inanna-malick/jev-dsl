@@ -1,0 +1,45 @@
+{
+  "probe": "escaped-keys",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "route/~. λ": {
+        "criteria": {
+          "configuration / ~ λ": {
+            "owns": "configuration"
+          },
+          "reviewer\n\"quoted\"": null
+        },
+        "instructions": "Who owns configuration?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "route/~. λ": {
+        "choice": "configuration / ~ λ",
+        "confidence": 0.91,
+        "probabilities": {
+          "configuration / ~ λ": 0.96,
+          "reviewer\n\"quoted\"": 0.04
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 355,
+      "output_tokens": 46
+    }
+  },
+  "status": 200
+}

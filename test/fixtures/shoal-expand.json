@@ -1,0 +1,71 @@
+{
+  "probe": "shoal-expand",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "step": {
+        "criteria": {
+          "edge_12": {
+            "destination": "cancel_metrics",
+            "effect": "Records cancellation counts; no reply path",
+            "relation": "referenced telemetry helper",
+            "source": "counter.increment();"
+          },
+          "edge_7": {
+            "destination": "publish",
+            "effect": "Handles transfer of the computed result",
+            "relation": "called after compute",
+            "source": "if token.cancelled() { return; } inbox.send(value);"
+          },
+          "edge_9": {
+            "destination": "compute",
+            "effect": "Constructs result",
+            "relation": "already visited",
+            "source": "parse(input)"
+          },
+          "finish": {
+            "meaning": "Current local source already identifies the relevant cancellation gate"
+          },
+          "unknown": {
+            "meaning": "No supplied relationship helps answer the inquiry"
+          }
+        },
+        "instructions": "Select the next relationship most directly useful for `inquiry`, using the source observations in the alternatives.",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "inquiry": "Where can cancellation prevent a computed result from reaching its requester?",
+      "local": {
+        "source": "let value = compute(); publish(value);",
+        "symbol": "worker"
+      },
+      "remaining_depth": 3,
+      "visited": [
+        "compute"
+      ]
+    }
+  },
+  "response": {
+    "answers": {
+      "step": {
+        "choice": "edge_7",
+        "confidence": 0.88,
+        "probabilities": {
+          "edge_12": 0.0,
+          "edge_7": 0.91,
+          "edge_9": 0.0,
+          "finish": 0.08,
+          "unknown": 0.01
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 584,
+      "output_tokens": 61
+    }
+  },
+  "status": 200
+}

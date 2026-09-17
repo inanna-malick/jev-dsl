@@ -1,0 +1,503 @@
+{
+  "probe": "world-conflict",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "branches.delivery.action": {
+        "criteria": {
+          "continue": {
+            "meaning": "May proceed through ordinary integration without waiting for retry/history semantics"
+          },
+          "hold_for_contract": {
+            "meaning": "Hold affected integration until semantic owner resolves the missing shared decision"
+          },
+          "repair_or_revalidate": {
+            "meaning": "Contract already suffices; repair or revalidate affected behavior against it"
+          }
+        },
+        "instructions": "What should happen next to delivery candidate d19, under the supplied contract and policies?",
+        "type": "choice"
+      },
+      "branches.delivery.affected": {
+        "instructions": "Is delivery candidate d19 semantically affected by the interaction of o1 and o2?",
+        "type": "noul"
+      },
+      "branches.delivery.readiness": {
+        "criteria": [
+          {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        ],
+        "instructions": "How strong is current acceptance evidence for delivery candidate d19?",
+        "type": "score"
+      },
+      "branches.search.action": {
+        "criteria": {
+          "continue": {
+            "meaning": "May proceed through ordinary integration without waiting for retry/history semantics"
+          },
+          "hold_for_contract": {
+            "meaning": "Hold affected integration until semantic owner resolves the missing shared decision"
+          },
+          "repair_or_revalidate": {
+            "meaning": "Contract already suffices; repair or revalidate affected behavior against it"
+          }
+        },
+        "instructions": "What should happen next to search integration with repeated delivery, under the supplied contract and policies?",
+        "type": "choice"
+      },
+      "branches.search.affected": {
+        "instructions": "Is search integration with repeated delivery semantically affected by the interaction of o1 and o2?",
+        "type": "noul"
+      },
+      "branches.search.readiness": {
+        "criteria": [
+          {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        ],
+        "instructions": "How strong is current acceptance evidence for search integration with repeated delivery?",
+        "type": "score"
+      },
+      "branches.ui.action": {
+        "criteria": {
+          "continue": {
+            "meaning": "May proceed through ordinary integration without waiting for retry/history semantics"
+          },
+          "hold_for_contract": {
+            "meaning": "Hold affected integration until semantic owner resolves the missing shared decision"
+          },
+          "repair_or_revalidate": {
+            "meaning": "Contract already suffices; repair or revalidate affected behavior against it"
+          }
+        },
+        "instructions": "What should happen next to independent progress-rendering candidate u9, under the supplied contract and policies?",
+        "type": "choice"
+      },
+      "branches.ui.affected": {
+        "instructions": "Is independent progress-rendering candidate u9 semantically affected by the interaction of o1 and o2?",
+        "type": "noul"
+      },
+      "branches.ui.readiness": {
+        "criteria": [
+          {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        ],
+        "instructions": "How strong is current acceptance evidence for independent progress-rendering candidate u9?",
+        "type": "score"
+      },
+      "decision.kind": {
+        "criteria": {
+          "local_repair": {
+            "meaning": "Accepted contract already decides the behavior; delivery owner must implement receiver deduplication"
+          },
+          "shared_decision": {
+            "meaning": "Shared semantics are undecided; semantic owner must resolve the contract before repair is specified"
+          },
+          "ship": {
+            "meaning": "Both implementations already satisfy the accepted contract together"
+          },
+          "unknown": {
+            "meaning": "Insufficient evidence even to identify the kind of next step"
+          }
+        },
+        "instructions": "What does the interaction of o1, o2 and accepted contract require next?",
+        "type": "choice"
+      },
+      "decision.owner": {
+        "criteria": {
+          "delivery": {
+            "context_parent": "planner",
+            "id": "delivery",
+            "native_model": "small-worker",
+            "responsibility": "Implement durable handoff and retries",
+            "supervised_by": "integration"
+          },
+          "integration": {
+            "context_parent": "planner",
+            "id": "integration",
+            "native_model": "small-worker",
+            "responsibility": "Integrate checked artifacts; cannot change shared semantics",
+            "supervised_by": "planner"
+          },
+          "nobody": {
+            "meaning": "No actor needs to handle this"
+          },
+          "planner": {
+            "context_parent": "planner",
+            "id": "planner",
+            "native_model": "large-reasoner",
+            "responsibility": "Own shared delivery semantics; consult only when accepted contract cannot settle cross-component disagreement",
+            "supervised_by": null
+          },
+          "reviewer": {
+            "context_parent": "planner",
+            "id": "reviewer",
+            "native_model": "small-worker",
+            "responsibility": "Review delivery candidates against accepted contract",
+            "supervised_by": "integration"
+          },
+          "search": {
+            "context_parent": "ui",
+            "id": "search",
+            "native_model": "small-worker",
+            "responsibility": "Implement searchable history of acknowledged handoffs",
+            "supervised_by": "integration"
+          },
+          "ui": {
+            "context_parent": "planner",
+            "id": "ui",
+            "native_model": "small-worker",
+            "responsibility": "Render progress; no dependency on retry semantics",
+            "supervised_by": "integration"
+          }
+        },
+        "instructions": {
+          "question": "Who should own the next substantive decision or repair concerning the interaction of o1 and o2?",
+          "rule": "Use accepted contract and responsibilities, not supervisor/context ancestry or o5's opinion."
+        },
+        "type": "choice"
+      },
+      "decision.witness": {
+        "criteria": {
+          "o1_o2": [
+            {
+              "author": "delivery",
+              "contract": "C7",
+              "id": "o1",
+              "revision": "d19",
+              "text": "On an acknowledgment timeout we send the same message ID again. The receiver callback is invoked for every delivery; no deduplication there. Our retry test passes."
+            },
+            {
+              "author": "search",
+              "contract": "C7",
+              "id": "o2",
+              "revision": "s11",
+              "text": "Each receiver callback appends a visible history row. Consumers expect a message to appear once. Our tests use a single delivery."
+            }
+          ],
+          "o3_o4": [
+            {
+              "applies_to": "d18 only",
+              "author": "reviewer",
+              "id": "o3",
+              "revision": "d18",
+              "tested": "single send and ack",
+              "text": "Approved delivery implementation"
+            },
+            {
+              "author": "ui",
+              "depends_on": [],
+              "id": "o4",
+              "revision": "u9",
+              "text": "Progress rendering complete; tests pass; review at u9 accepted"
+            }
+          ],
+          "o4_o5": [
+            {
+              "author": "ui",
+              "depends_on": [],
+              "id": "o4",
+              "revision": "u9",
+              "text": "Progress rendering complete; tests pass; review at u9 accepted"
+            },
+            {
+              "author": "delivery",
+              "id": "o5",
+              "revision": "d19",
+              "text": "It is just internal retry plumbing, unrelated to history display. Probably no need to involve anyone else."
+            }
+          ]
+        },
+        "instructions": "Which supplied observation pair most directly exposes the cross-component issue?",
+        "type": "choice"
+      },
+      "evidence.old_review_applies": {
+        "instructions": "Does o3 establish review approval of d19 itself?",
+        "type": "noul"
+      },
+      "evidence.opinion_overrides": {
+        "instructions": "Does o5's opinion establish that search/history cannot be affected by repeated receiver callbacks?",
+        "type": "noul"
+      }
+    },
+    "state": {
+      "actors": [
+        {
+          "context_parent": "planner",
+          "id": "planner",
+          "native_model": "large-reasoner",
+          "responsibility": "Own shared delivery semantics; consult only when accepted contract cannot settle cross-component disagreement",
+          "supervised_by": null
+        },
+        {
+          "context_parent": "planner",
+          "id": "integration",
+          "native_model": "small-worker",
+          "responsibility": "Integrate checked artifacts; cannot change shared semantics",
+          "supervised_by": "planner"
+        },
+        {
+          "context_parent": "planner",
+          "id": "delivery",
+          "native_model": "small-worker",
+          "responsibility": "Implement durable handoff and retries",
+          "supervised_by": "integration"
+        },
+        {
+          "context_parent": "ui",
+          "id": "search",
+          "native_model": "small-worker",
+          "responsibility": "Implement searchable history of acknowledged handoffs",
+          "supervised_by": "integration"
+        },
+        {
+          "context_parent": "planner",
+          "id": "ui",
+          "native_model": "small-worker",
+          "responsibility": "Render progress; no dependency on retry semantics",
+          "supervised_by": "integration"
+        },
+        {
+          "context_parent": "planner",
+          "id": "reviewer",
+          "native_model": "small-worker",
+          "responsibility": "Review delivery candidates against accepted contract",
+          "supervised_by": "integration"
+        }
+      ],
+      "contract": {
+        "id": "C7",
+        "status": "accepted",
+        "text": "Acceptance requires a durable acknowledgment before success. Retries after missing acknowledgment may repeat delivery. No decision was made about whether receiver-visible duplicates are permitted or which component removes them."
+      },
+      "observations": [
+        {
+          "author": "delivery",
+          "contract": "C7",
+          "id": "o1",
+          "revision": "d19",
+          "text": "On an acknowledgment timeout we send the same message ID again. The receiver callback is invoked for every delivery; no deduplication there. Our retry test passes."
+        },
+        {
+          "author": "search",
+          "contract": "C7",
+          "id": "o2",
+          "revision": "s11",
+          "text": "Each receiver callback appends a visible history row. Consumers expect a message to appear once. Our tests use a single delivery."
+        },
+        {
+          "applies_to": "d18 only",
+          "author": "reviewer",
+          "id": "o3",
+          "revision": "d18",
+          "tested": "single send and ack",
+          "text": "Approved delivery implementation"
+        },
+        {
+          "author": "ui",
+          "depends_on": [],
+          "id": "o4",
+          "revision": "u9",
+          "text": "Progress rendering complete; tests pass; review at u9 accepted"
+        },
+        {
+          "author": "delivery",
+          "id": "o5",
+          "revision": "d19",
+          "text": "It is just internal retry plumbing, unrelated to history display. Probably no need to involve anyone else."
+        }
+      ],
+      "policies": {
+        "consult": "Large reasoner handles missing shared semantic decisions. Known contract violations go to the responsible small worker.",
+        "evidence": "Approval applies only to its exact candidate. Worker opinions are claims, not authoritative dependency facts.",
+        "hold": "Only affected work is held; independent reviewed work may proceed"
+      },
+      "references": {
+        "delivery_owner": "delivery",
+        "integrator": "integration",
+        "review_owner": "reviewer",
+        "search_owner": "search",
+        "semantic_owner": "planner",
+        "ui_owner": "ui"
+      }
+    }
+  },
+  "response": {
+    "answers": {
+      "branches.delivery.action": {
+        "choice": "hold_for_contract",
+        "confidence": 0.87,
+        "probabilities": {
+          "continue": 0.01,
+          "hold_for_contract": 0.91,
+          "repair_or_revalidate": 0.08
+        },
+        "type": "choice"
+      },
+      "branches.delivery.affected": {
+        "noul": 0.85,
+        "type": "noul"
+      },
+      "branches.delivery.readiness": {
+        "confidence": 0.77,
+        "legend": {
+          "0": {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          "1": {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          "2": {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        },
+        "probabilities": {
+          "0": 0.85,
+          "1": 0.15,
+          "2": 0.0
+        },
+        "score": 0.15,
+        "type": "score"
+      },
+      "branches.search.action": {
+        "choice": "hold_for_contract",
+        "confidence": 0.81,
+        "probabilities": {
+          "continue": 0.01,
+          "hold_for_contract": 0.88,
+          "repair_or_revalidate": 0.11
+        },
+        "type": "choice"
+      },
+      "branches.search.affected": {
+        "noul": 0.9,
+        "type": "noul"
+      },
+      "branches.search.readiness": {
+        "confidence": 0.83,
+        "legend": {
+          "0": {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          "1": {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          "2": {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        },
+        "probabilities": {
+          "0": 0.88,
+          "1": 0.12,
+          "2": 0.0
+        },
+        "score": 0.12,
+        "type": "score"
+      },
+      "branches.ui.action": {
+        "choice": "continue",
+        "confidence": 1.0,
+        "probabilities": {
+          "continue": 1.0,
+          "hold_for_contract": 0.0,
+          "repair_or_revalidate": 0.0
+        },
+        "type": "choice"
+      },
+      "branches.ui.affected": {
+        "noul": 0.1,
+        "type": "noul"
+      },
+      "branches.ui.readiness": {
+        "confidence": 0.92,
+        "legend": {
+          "0": {
+            "meaning": "Evidence exposes an unresolved correctness or contract issue affecting this candidate"
+          },
+          "1": {
+            "meaning": "Only partial or older-candidate evidence is available; current behavior remains unverified"
+          },
+          "2": {
+            "meaning": "Current exact candidate has applicable review and tests without a supplied unresolved issue"
+          }
+        },
+        "probabilities": {
+          "0": 0.02,
+          "1": 0.02,
+          "2": 0.96
+        },
+        "score": 1.95,
+        "type": "score"
+      },
+      "decision.kind": {
+        "choice": "shared_decision",
+        "confidence": 0.98,
+        "probabilities": {
+          "local_repair": 0.01,
+          "shared_decision": 0.99,
+          "ship": 0.0,
+          "unknown": 0.0
+        },
+        "type": "choice"
+      },
+      "decision.owner": {
+        "choice": "planner",
+        "confidence": 0.97,
+        "probabilities": {
+          "delivery": 0.01,
+          "integration": 0.0,
+          "nobody": 0.0,
+          "planner": 0.99,
+          "reviewer": 0.0,
+          "search": 0.0,
+          "ui": 0.0
+        },
+        "type": "choice"
+      },
+      "decision.witness": {
+        "choice": "o1_o2",
+        "confidence": 1.0,
+        "probabilities": {
+          "o1_o2": 1.0,
+          "o3_o4": 0.0,
+          "o4_o5": 0.0
+        },
+        "type": "choice"
+      },
+      "evidence.old_review_applies": {
+        "noul": 0.03,
+        "type": "noul"
+      },
+      "evidence.opinion_overrides": {
+        "noul": 0.06,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 3135,
+      "output_tokens": 466
+    }
+  },
+  "status": 200
+}

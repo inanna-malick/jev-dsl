@@ -1,0 +1,38 @@
+{
+  "probe": "questions-omitted",
+  "request": {
+    "model": "jev-latest",
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "input": {
+          "model": "jev-latest",
+          "state": {
+            "context": {
+              "active": true,
+              "pending": 2,
+              "previous": null
+            },
+            "message": "The worker cannot proceed until the missing configuration is supplied."
+          }
+        },
+        "loc": [
+          "body",
+          "questions"
+        ],
+        "msg": "Field required",
+        "type": "missing"
+      }
+    ]
+  },
+  "status": 422
+}

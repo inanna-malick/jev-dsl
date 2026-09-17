@@ -1,0 +1,94 @@
+{
+  "probe": "shoal-attention-urgent",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "changes_action": {
+        "instructions": "Does `update` require changing `recipient.next_action` before proceeding?",
+        "type": "noul"
+      },
+      "contradiction": {
+        "instructions": "Does `update` contradict `current_assumption` about executable behavior?",
+        "type": "noul"
+      },
+      "delay": {
+        "criteria": [
+          {
+            "consequence": "Background information only",
+            "definition": "Delaying this update has no effect on the recipient's next action or its correctness."
+          },
+          {
+            "consequence": "Useful later",
+            "definition": "The update helps later work, but the recipient's next action remains valid."
+          },
+          {
+            "consequence": "Next action blocked",
+            "definition": "The recipient cannot perform its next action correctly without this information."
+          },
+          {
+            "consequence": "Incorrect approval",
+            "definition": "Proceeding before reading this update would approve behavior contradicted by the new evidence."
+          }
+        ],
+        "instructions": "What consequence would delaying this update until the next ordinary checkpoint have for this recipient?",
+        "type": "score"
+      }
+    },
+    "state": {
+      "current_assumption": "Stored offsets remain valid after edits",
+      "delivery": "Recipient has not yet approved; next ordinary checkpoint is after approval.",
+      "recipient": {
+        "assignment": "Review bookmark validity after edits",
+        "next_action": "Approve the offset-retaining caller at the current revision"
+      },
+      "update": "The new index invalidates retained byte offsets on edit. The caller under review still retains them; stable IDs are required."
+    }
+  },
+  "response": {
+    "answers": {
+      "changes_action": {
+        "noul": 0.9,
+        "type": "noul"
+      },
+      "contradiction": {
+        "noul": 0.95,
+        "type": "noul"
+      },
+      "delay": {
+        "confidence": 0.98,
+        "legend": {
+          "0": {
+            "consequence": "Background information only",
+            "definition": "Delaying this update has no effect on the recipient's next action or its correctness."
+          },
+          "1": {
+            "consequence": "Useful later",
+            "definition": "The update helps later work, but the recipient's next action remains valid."
+          },
+          "2": {
+            "consequence": "Next action blocked",
+            "definition": "The recipient cannot perform its next action correctly without this information."
+          },
+          "3": {
+            "consequence": "Incorrect approval",
+            "definition": "Proceeding before reading this update would approve behavior contradicted by the new evidence."
+          }
+        },
+        "probabilities": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.01,
+          "3": 0.99
+        },
+        "score": 2.98,
+        "type": "score"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 594,
+      "output_tokens": 52
+    }
+  },
+  "status": 200
+}

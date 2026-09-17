@@ -1,0 +1,26 @@
+{
+  "probe": "bounding-box-empty",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "region": {
+        "type": "bounding_box"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": {
+      "error_type": "api_usage_error",
+      "message": "Bounding-box questions are not enabled for your organization."
+    }
+  },
+  "status": 400
+}

@@ -1,0 +1,59 @@
+{
+  "probe": "score-eleven",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "count": {
+        "criteria": [
+          {
+            "pending_messages": 0
+          },
+          {
+            "pending_messages": 1
+          },
+          {
+            "pending_messages": 2
+          },
+          {
+            "pending_messages": 3
+          },
+          {
+            "pending_messages": 4
+          },
+          {
+            "pending_messages": 5
+          },
+          {
+            "pending_messages": 6
+          },
+          {
+            "pending_messages": 7
+          },
+          {
+            "pending_messages": 8
+          },
+          {
+            "pending_messages": 9
+          },
+          {
+            "pending_messages": 10
+          }
+        ],
+        "instructions": "How many messages are pending in `context.pending`?",
+        "type": "score"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": "Too many score levels. Must have at most 10 levels."
+  },
+  "status": 400
+}

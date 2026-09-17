@@ -1,0 +1,43 @@
+{
+  "probe": "choice-empty-string-description",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "route": {
+        "criteria": {
+          "owner": "",
+          "reviewer": "Reviews completed work"
+        },
+        "instructions": "Who owns configuration?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "route": {
+        "choice": "owner",
+        "confidence": 0.98,
+        "probabilities": {
+          "owner": 0.99,
+          "reviewer": 0.01
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 348,
+      "output_tokens": 33
+    }
+  },
+  "status": 200
+}

@@ -1,0 +1,65 @@
+{
+  "probe": "shoal-route",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "recipient": {
+        "criteria": {
+          "actor_a": {
+            "assignment": "Review editor navigation correctness",
+            "current_work": "Checking whether bookmarks retain offsets after document edits",
+            "paths": [
+              "editor/bookmarks.rs"
+            ]
+          },
+          "actor_b": {
+            "assignment": "Implement invoice PDF typography",
+            "current_work": "Fonts and page margins only",
+            "excludes": [
+              "tax logic",
+              "invoice export"
+            ]
+          },
+          "actor_c": {
+            "assignment": "Measure index lookup speed",
+            "current_work": "Benchmark fresh lookups; no offsets retained"
+          },
+          "unassigned": {
+            "means": "None of these assignments owns the affected behavior"
+          }
+        },
+        "instructions": {
+          "fallback": "Use unassigned if no assignment fits.",
+          "question": "Which candidate's current assignment is directly affected by `update`?"
+        },
+        "type": "choice"
+      }
+    },
+    "state": {
+      "context": "Choose an existing responsible worker; do not broaden their assignments.",
+      "revision": "synthetic-r17",
+      "update": "Lookup behavior is unchanged, but callers retaining byte offsets across edits must switch to stable IDs before accepting this patch."
+    }
+  },
+  "response": {
+    "answers": {
+      "recipient": {
+        "choice": "actor_a",
+        "confidence": 0.94,
+        "probabilities": {
+          "actor_a": 0.96,
+          "actor_b": 0.0,
+          "actor_c": 0.0,
+          "unassigned": 0.04
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 541,
+      "output_tokens": 51
+    }
+  },
+  "status": 200
+}

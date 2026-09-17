@@ -1,0 +1,65 @@
+{
+  "probe": "shoal-repair",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "next": {
+        "criteria": {
+          "inspect_setup": {
+            "kind": "DiagnosticGroup",
+            "task": "Inspect test infrastructure setup"
+          },
+          "owner": {
+            "kind": "DesignQuestion",
+            "task": "Ask coordinator to assign a repair worker; include the observed failure and contract"
+          },
+          "repair": {
+            "kind": "RepairTask",
+            "target": "retained-implementer",
+            "task": "Replace offset retention with stable IDs at the observed caller"
+          },
+          "rerun": {
+            "cost_seconds": 20,
+            "kind": "CommandPlan",
+            "plan": "Repeat the exact same test at the same revision"
+          }
+        },
+        "instructions": "Which available next action most directly advances resolution of the observed failure?",
+        "type": "choice"
+      }
+    },
+    "state": {
+      "actions": "All listed actions are eligible; choose the most useful one.",
+      "check": {
+        "observed": "bookmark points to wrong character after inserting text before it",
+        "repeat": "Same failure reproduced twice",
+        "revision": "synthetic-r17",
+        "setup": "passed",
+        "status": "failed"
+      },
+      "contract": "Bookmarks must retain logical identity after edits. Caller still stores byte offsets.",
+      "worker": "Retained implementer is available and owns this caller"
+    }
+  },
+  "response": {
+    "answers": {
+      "next": {
+        "choice": "repair",
+        "confidence": 0.9,
+        "probabilities": {
+          "inspect_setup": 0.0,
+          "owner": 0.07,
+          "repair": 0.93,
+          "rerun": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 585,
+      "output_tokens": 47
+    }
+  },
+  "status": 200
+}

@@ -1,0 +1,111 @@
+{
+  "probe": "structured",
+  "request": {
+    "model": "jev-latest",
+    "questions": {
+      "route": {
+        "criteria": {
+          "configuration_owner": {
+            "handles": {
+              "configuration": [
+                "missing values",
+                "invalid values"
+              ]
+            }
+          },
+          "neither": null,
+          "reviewer": {
+            "handles": [
+              "completed work"
+            ]
+          }
+        },
+        "instructions": {
+          "focus": [
+            "Current blocker"
+          ],
+          "question": "Who can resolve the missing configuration?"
+        },
+        "type": "choice"
+      },
+      "urgency": {
+        "criteria": [
+          {
+            "means": "Useful information, work can continue"
+          },
+          {
+            "means": "Work cannot continue until someone responds"
+          }
+        ],
+        "instructions": "How urgently does this message need attention?",
+        "type": "score"
+      },
+      "wake": {
+        "criteria": {
+          "false": {
+            "means": "Work can proceed without this message"
+          },
+          "true": {
+            "examples": [
+              "Missing required input"
+            ],
+            "means": "Current work cannot proceed"
+          }
+        },
+        "instructions": {
+          "question": "Does `message` describe a blocker for current work?"
+        },
+        "type": "noul"
+      }
+    },
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "answers": {
+      "route": {
+        "choice": "configuration_owner",
+        "confidence": 0.97,
+        "probabilities": {
+          "configuration_owner": 0.98,
+          "neither": 0.02,
+          "reviewer": 0.0
+        },
+        "type": "choice"
+      },
+      "urgency": {
+        "confidence": 1.0,
+        "legend": {
+          "0": {
+            "means": "Useful information, work can continue"
+          },
+          "1": {
+            "means": "Work cannot continue until someone responds"
+          }
+        },
+        "probabilities": {
+          "0": 0.0,
+          "1": 1.0
+        },
+        "score": 1.0,
+        "type": "score"
+      },
+      "wake": {
+        "noul": 0.97,
+        "type": "noul"
+      }
+    },
+    "model": "jev-1.13.0",
+    "usage": {
+      "input_tokens": 534,
+      "output_tokens": 74
+    }
+  },
+  "status": 200
+}

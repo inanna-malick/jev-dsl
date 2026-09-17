@@ -1,0 +1,34 @@
+{
+  "probe": "empty-questions",
+  "request": {
+    "model": "jev-latest",
+    "questions": {},
+    "state": {
+      "context": {
+        "active": true,
+        "pending": 2,
+        "previous": null
+      },
+      "message": "The worker cannot proceed until the missing configuration is supplied."
+    }
+  },
+  "response": {
+    "detail": [
+      {
+        "ctx": {
+          "actual_length": 0,
+          "field_type": "Dictionary",
+          "min_length": 1
+        },
+        "input": {},
+        "loc": [
+          "body",
+          "questions"
+        ],
+        "msg": "Dictionary should have at least 1 item after validation, not 0",
+        "type": "too_short"
+      }
+    ]
+  },
+  "status": 422
+}
