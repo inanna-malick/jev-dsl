@@ -36,7 +36,7 @@ module Jev.Core.Schema
     Questions, Answers, type (:-)
     -- * Packets
   , type (::=), Label (..), Cell (..), CellKind, CellJson, ToQ, Packet (..)
-  , Unique, Get, Lookup
+  , Unique, Get
     -- * Endpoints
   , Noul, Choice, Score, Each, Group
   , Q (..), A (..)
@@ -55,7 +55,7 @@ module Jev.Core.Schema
   , request, decode, Response (..), JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
   , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
-  , previewAnswer, checkLegend, checkExpectation, prepareWire
+  , previewAnswer, checkLegend, checkExpectation
   ) where
 
 import Data.Kind (Constraint, Type)
@@ -750,10 +750,6 @@ type family Absent (k :: Symbol) (fs :: [Type]) :: Constraint where
   Absent k '[] = ()
   Absent k (k ::= e ': fs) = TypeError ('Text "Jev: duplicate packet label #" ':<>: 'Text k)
   Absent k (j ::= e ': fs) = Absent k fs
-
-type family Lookup (k :: Symbol) (fs :: [Type]) :: Type where
-  Lookup k (k ::= e ': fs) = e
-  Lookup k (j ::= e ': fs) = Lookup k fs
 
 -- | Field access on an answers packet, carrying the full label list for
 -- the error message.

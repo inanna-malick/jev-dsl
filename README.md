@@ -75,8 +75,13 @@ inspection edges =
                     .| many (.edgeKey) (String . (.edgeText)) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
   :& #children := each [ (e.edgeKey, #useful := noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?") :& Nil) | e <- edges ]
+  :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
   :& Nil
 ```
+
+A cell holds a question or a nested packet. Nesting flattens to dotted wire
+keys and reads back through the labels, so `a.evidence.gap` is the answer to
+the question written above.
 
 `each` is the per-item battery: one sub-packet per item, keyed at runtime,
 in the same call. Per-item questions catch what a single summary question
@@ -132,7 +137,8 @@ type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edg
 type Inspection = Packet
   '[ "next" ::= Choice Routes
    , "enough" ::= Noul
-   , "children" ::= Each (Packet '[ "useful" ::= Noul ]) ]
+   , "children" ::= Each (Packet '[ "useful" ::= Noul ])
+   , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
 ```
 
 ## The gate at Greyhaven

@@ -12,10 +12,6 @@ module Jev.Core.Contract
   , Instructions (..)
   , question
   , Criteria (..)
-  , noCriteria
-  , yesOnly
-  , noOnly
-  , bothSides
   , State (..)
   , state
   , checkState
@@ -72,18 +68,6 @@ data Criteria v = Criteria
   { yesWhen :: Presence v
   , noWhen :: Presence v
   }
-
-noCriteria :: Presence (Maybe (Criteria v))
-noCriteria = Omitted
-
-yesOnly :: v -> Presence (Maybe (Criteria v))
-yesOnly y = Present (Just (Criteria (Present y) Omitted))
-
-noOnly :: v -> Presence (Maybe (Criteria v))
-noOnly n = Present (Just (Criteria Omitted (Present n)))
-
-bothSides :: v -> v -> Presence (Maybe (Criteria v))
-bothSides y n = Present (Just (Criteria (Present y) (Present n)))
 
 -- | The shared input to every question, sent as given.
 newtype State v = State { stateValue :: v }
@@ -208,20 +192,16 @@ data DecodeError
 -- Wire answers
 -- ---------------------------------------------------------------------------
 
-newtype NoulAnswer = NoulAnswer { noulYes :: Double } deriving (Eq, Show)
+-- Positional: the schema layer matches these apart the moment it parses
+-- them, so named fields would only be selectors nothing calls.
+newtype NoulAnswer = NoulAnswer Double deriving (Eq, Show)
 
-data ChoiceAnswer = ChoiceAnswer
-  { choiceSelected :: Text
-  , choiceMasses :: [(Text, Double)]
-  , choiceConfidence :: Double
-  } deriving (Eq, Show)
+-- | The selection, the distribution, and the provider's confidence.
+data ChoiceAnswer = ChoiceAnswer Text [(Text, Double)] Double deriving (Eq, Show)
 
-data ScoreAnswer v = ScoreAnswer
-  { wireExpectation :: Double
-  , wireLegend :: [(Text, v)]
-  , wireMasses :: [(Text, Double)]
-  , wireConfidence :: Double
-  }
+-- | The expectation, the legend as sent back, the distribution by index,
+-- and the provider's confidence.
+data ScoreAnswer v = ScoreAnswer Double [(Text, v)] [(Text, Double)] Double
 
 field :: JsonValue v => Text -> Text -> v -> Either DecodeError v
 field key name v = maybe (Left (Malformed key ("missing " <> name))) Right (lookupKey name v)

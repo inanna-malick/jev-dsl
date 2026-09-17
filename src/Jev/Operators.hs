@@ -64,7 +64,7 @@ module Jev.Operators
     -- * Recording and replay: the same operation split
   , request, decode
     -- * Types, for signatures only
-  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric, Levels
+  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
   , Noul, Choice, Score, Each, Group, Selected
   , Q, Questions, Answers, type (:-), State, state, Model, Response
   , Schema, Alternatives
@@ -94,11 +94,10 @@ type Offers alts = Core.Alts (Core.Offer Value) alts
 -- | Handlers for a disjunction, in declaration order, each taking its
 -- alternative's payload: @#k (\p -> …) .| onMany (\key p -> …)@.
 type Handlers r alts = Core.Alts (Core.Handler Value r) alts
--- | Levels of a rubric, in order: @level #low "…" .| level #high "…"@.
-type Rubric levels = Core.Alts (Core.Level Value) levels
--- | One result per level, in level order, for 'grade'. The same 'level'
--- builds it.
-type Levels r levels = Core.Alts (Core.Level r) levels
+-- | A rubric's levels in order, each carrying something: the wording a
+-- score sends (@Rubric Value@), or the result 'grade' returns for that
+-- level. The same 'level' builds both.
+type Rubric v levels = Core.Alts (Core.Level v) levels
 type Schema s = Core.Schema Value s
 
 (.|) :: Core.Single x => Core.Alts f x -> Core.Alts f rest -> Core.Alts f (x :|: rest)
@@ -118,7 +117,7 @@ onMany = Core.onMany
 
 -- | One level: its label, and either its wording when asking or its result
 -- when grading an answer. Which one is fixed by where it is written.
-level :: KnownSymbol l => Label l -> r -> Levels r l
+level :: KnownSymbol l => Label l -> v -> Rubric v l
 level = Core.level
 
 -- Questions
@@ -128,7 +127,7 @@ noul = Core.noul
 choice :: Core.AltsOk alts => Text -> Offers alts -> Q Value (Choice alts)
 choice = Core.choice
 
-score :: Core.RubricOk levels => Text -> Rubric levels -> Q Value (Score levels)
+score :: Core.RubricOk levels => Text -> Rubric Value levels -> Q Value (Score levels)
 score = Core.score
 
 -- | A sub-packet per item, keyed at runtime: the per-item battery.
@@ -155,7 +154,7 @@ judge = Core.judge
 -- level is a compile error naming it, so a rubric is never dispatched on by
 -- its label strings.
 grade :: (Core.Rubric hs, Core.MatchLevels hs levels)
-      => Double -> A Value (Score levels) -> Levels r hs -> r
+      => Double -> A Value (Score levels) -> Rubric r hs -> r
 grade = Core.grade
 
 -- | One line saying why the policy settled or doubted the answer, with the
