@@ -90,12 +90,15 @@ when nothing competes. A margin at or near 1.0 means no other option was
 in play — usually a sign the alternatives were not really rivals.
 
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
-unqualified brings eight short names into your module: `key`, `mass`,
-`margin`, `confidence`, `masses`, `chosen`, `yes`, `nearest` (plus
-`expectation` and `ranked`). Under `-Wall -Werror` a local binding with one of
-those names is a shadowing error; name your own fields `tag`, `weight`, and
-so on, or import qualified. Reach the winner as `a.chosen` (the field), not
-`chosen a`; `handle a.chosen handlers` is the one idiom the docs use.
+unqualified takes some short names for itself. The fields: `key`, `mass`,
+`margin`, `confidence`, `masses`, `chosen`, `yes`, `nearest`, `expectation`,
+`ranked`. The verbs: `ask`, `ask1`, `alt`, `many`, `level`, `pool`, `each`,
+`state`, `given`, `about`, `handle`, `accept`, `explain`. Under
+`-Wall -Werror` a local binding with any of these names is a shadowing
+error, and a local `ask` or `key` is the usual way to hit it; name your own
+`tag`, `weight`, `askLine`, or import qualified. Reach the winner as
+`a.chosen` (the field), not `chosen a`; `handle a.chosen handlers` is the one
+idiom the docs use.
 
 `accept policy answer` weighs those fields and returns either the selection
 or a `Doubt`: `NearTie`, `Underweight`, or `Unconfident`. Three named
@@ -173,13 +176,11 @@ handle a.next.chosen
   .| onMany (\key e -> ...) )
 ```
 
-A handler list is an ordinary value: bind it once and use it on the winner
-and on every contender. A label out of order, a handler missing or extra, a
-label where `Many` stands, or parentheses inside a chain each produce a
-compile error that says which label was expected.
-
-Elimination through handlers is for the payload. Everything else about an
-answer is read as a field; see "Reading answers" below.
+A label out of order, a handler missing or extra, a label where `Many`
+stands, or parentheses inside a chain each produce a compile error that
+says which label was expected. Elimination through handlers is for the
+payload; everything else about an answer is a field, as in "Reading
+answers" above.
 
 ## Rubrics
 
@@ -196,6 +197,11 @@ Its type is `"background" :|: "checkpoint" :|: "blocked" :|: "invalidating"`.
 Duplicate labels are a compile error; one to ten levels is checked when the
 request is built. The answer gives `expectation`, `nearest`, `confidence`,
 and `masses` by label, plus `massAtOrAbove #blocked`.
+
+`nearest` is the level nearest the expectation, which is the right reading
+of an ordinal scale with a threshold. It is not the likeliest level: masses
+of 12%, 26%, 62% have their expectation at the middle level. To act on the
+likeliest, take the maximum of `masses`.
 
 ## Pools
 
@@ -264,6 +270,37 @@ replay module renders them so recorded exchanges still round-trip.
   or instruction.
 
 Each returns when a program in `test/Corpus.hs` needs it.
+
+## Patterns
+
+Each of these is used in `examples/Guard.hs`, a dialogue tree folded by a
+catamorphism whose algebra is Jev.
+
+- **The continuation is the payload.** When the program's next step depends
+  on the branch, offer the branches with their continuations as payloads
+  and let the handler run the winner: `many [(label, wording, next) | …]`
+  then `handle a.chosen (onMany (\_ next -> next))`. No dispatch table.
+- **Rules in Haskell, judgments in Jev.** Decide eligibility before the
+  call and offer only what is legal now; do not ask a Noul whether an
+  alternative should be on offer. What the state cannot decide, a question
+  does.
+- **Two questions, one call, reconciled in code.** A branch choice and a
+  Noul such as "does this reply admit to something the rules forbid" go in
+  the same packet; the program takes the Noul's route when `yes` clears a
+  floor and the chosen branch otherwise. Give the Noul a route only where
+  there is somewhere to send the case; a tripwire with nowhere to go steals
+  branches that mean something.
+- **Frequency is a rule, not a wording.** "Which of these fits this moment,
+  or none" with the same events fired never under "most moments, nothing
+  does" and every time under neutral wording. Gate how often a question is
+  asked in code; keep the wording about the judgment.
+- **Carry the conversation.** Every call's state holds the whole exchange
+  so far and whatever changed the world in between. A reply judged with
+  its history is judged better than the same reply alone; the cost is a few
+  thousand input tokens per call.
+- **Retry at the transport.** The provider returns 529 under load. A
+  transport that retries 5xx and 529 with backoff and passes every other
+  body back lets the library decode real rejections.
 
 ## Habits that pay
 
