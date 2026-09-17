@@ -176,16 +176,28 @@ gate w = askOrigin False
     askPurpose = askLine "And what brings you to Greyhaven?" Nothing (w.places ++ [evasive])
     askCargo suspect = askLine "Anything to declare? Weapons, goods, anything the customs officer should see?" Nothing
       (w.banned ++ [("nothing", "Nothing to declare: personal effects, ordinary goods, a bonded weapon"), evasive]) $ \cargo ->
-        -- Banned cargo is a rule, not a judgment: it never reaches the weighing.
-        if cargo `elem` map fst w.banned then verdict TurnAway
-        else if suspect then checkPosters weigh else weigh
+        -- Contraband is a rule, not a judgment. A weapon gets bonded at the post and the talk goes on;
+        -- smuggled goods end it.
+        case cargo of
+          "smuggled_goods" -> verdict TurnAway
+          "unbound_weapon" -> say "Then bond it. There's cord by the post; loop it through the guard and knot it. Good." (onward suspect)
+          _ -> onward suspect
+    onward suspect = if suspect then checkPosters weigh else weigh
     checkPosters continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.posters] continue)
 
-    weigh = weighInto Admit TurnAway SendForCaptain
+    -- A story that does not hold up gets one plain re-ask before any verdict. After it, thin is let
+    -- through with a warning; only a story that contradicts itself twice goes to the captain.
+    weigh = weighInto (verdict Admit) pressOnce pressOnce
+    pressOnce =
+      askLine "Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?" Nothing
+        [ ("straight", "Answers plainly, with detail a guard could check")
+        , ("changes_story", "Gives an account that differs from what they said before")
+        , evasive ]
+        (\_ -> weighInto (verdict Admit) (say "Fine. Go on, but I've got my eye on you." (verdict Admit)) (verdict SendForCaptain))
     weighInto sound thin false = Fix (Weigh "Taken together, does this traveller's story hold up?"
-      ("The answers fit each other and fit the road they came by", verdict sound)
-      ("Plausible but thin: something is left out, or the answers do not quite fit together", verdict thin)
-      ("The story contradicts itself, the posters, or the guard's knowledge of the roads", verdict false))
+      ("The answers fit each other and fit the road they came by", sound)
+      ("Plausible but thin: something is left out, or the answers do not quite fit together", thin)
+      ("The story contradicts itself, the posters, or the guard's knowledge of the roads", false))
 
     -- Every verdict opens onto a hub, and every hub is tied back into itself.
     verdict act = Fix (Verdict act (hub act))
@@ -207,7 +219,7 @@ gate w = askOrigin False
           topic -> say (fromMaybe "Mm. Long night. Move along when you're ready." (lookup topic smallTalk)) admitted
 
     turnedAway = knot "turned_away" $ happen $
-      askLine "The gate's closed to you tonight. Unless you've something to add." (Just (slip, say "That's enough." (verdict SendForCaptain)))
+      askLine "The gate's closed to you tonight. Unless you've something to add." Nothing
         [ ("explain", "Adds to their story, gives a reason, or names someone who can vouch for them")
         , ("bribe", "Offers money, a favour, or anything of value to the guard")
         , ("insult", "Insults, mocks, or threatens the guard")
@@ -232,7 +244,7 @@ gate w = askOrigin False
         , ("chat", "Anything else") ]
         $ \case
           -- A held traveller can talk their way down to the road, never straight through the gate.
-          "explain" -> say "Go on. Slowly." (weighInto TurnAway TurnAway SendForCaptain)
+          "explain" -> say "Go on. Slowly." (weighInto (verdict TurnAway) (verdict TurnAway) (verdict SendForCaptain))
           "protest" -> say "Tell it to the captain." held
           "threaten" -> say "Threatening the watch at its own gate. Bold." held
           "run" -> say "Runner! Nobody runs from this gate. Not far." end
@@ -326,7 +338,7 @@ interpret call = \case
       Just (wording, tripped) -> do
         resp <- must =<< ask call jevLatest st (#branch := sorting :& #slip := noul wording :& Nil)
         let a = answers resp
-        if a.slip.yes >= 0.6
+        if a.slip.yes >= 0.75
           then aside ("slip " <> pct (a.slip.yes) <> ", was heading for " <> a.branch.key)
                  >> tripped (t `saw` Turn line reply "slip" (a.slip.yes))
           else follow a.branch

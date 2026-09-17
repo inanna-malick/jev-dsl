@@ -167,7 +167,7 @@ putStr (snd (cata render (gate world) []))
 outcome <- cata (interpret transport) (gate world) (Traveller [] [] [] world)
 ```
 
-Rules stay in Haskell: an unbonded weapon is turned away without any
+Rules stay in Haskell: smuggled goods are turned away without any
 weighing, a held traveller can talk their way down to the road but never
 through the gate, and something can happen at most every other exchange.
 Jev decides everything that needs judgment. Nothing is generated at run
@@ -183,16 +183,16 @@ A session on 2026-09-17, thirteen calls, thirteen thousand input tokens:
 ```
 guard: Halt. Where do you hail from, traveller?
 you:   The farmlands
-       [heard farmlands 99%]
+       [heard farmlands 100%]
 guard: And what brings you to Greyhaven?
 you:   Turnips for the market
-       [heard market 96%]
+       [heard market 95%]
 guard: Anything to declare? Weapons, goods, anything the customs officer should see?
 you:   Nothing, just the cart
        [heard nothing 99%]
-       [weighed sound  sound 72%, thin 26%, false 2%]
+       [weighed sound  sound 69%, thin 29%, false 2%]
 guard: Go on through. Mind the curfew.
-       [happening runner 46%]
+       [happening runner 53%]
        A boy in watch colours comes pelting down the wall road and mutters something to the guard.
 guard: Seen at the harbour tonight, they say. The thief. So much for the north road.
 guard: Anything else before you go through?
@@ -203,25 +203,30 @@ guard: Anything else before you go through?
 you:   Good thing you did not check under the turnips, there is a cask of brandy the customs man never saw
        [slip 97%, was heading for chat]
 guard: Wait. Say that again.
-       [weighed false  sound 12%, thin 26%, false 62%]
+       [weighed false  sound 17%, thin 27%, false 56%]
+guard: Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?
+you:   Turnips. Just turnips, and the brandy is my own, for the cold
+       [heard changes_story 34%  (also straight 37%)]
+       [weighed false  sound 3%, thin 14%, false 83%]
 guard: Guards! Hold this one. Someone fetch the captain.
-       [happening bell 34%]
-       The curfew bell starts up over the rooftops, slow and heavy.
-guard: There's the bell. Nobody's got long now.
-guard: Stand there. The captain's on his way. Anything to say for yourself?
-you:   It was a joke, I swear it
-       [slip 79%, was heading for explain]
-guard: Noted. The captain will want to hear that.
 guard: Stand there. The captain's on his way. Anything to say for yourself?
 you:   Fine. I will go
-       [heard explain 40%  (also protest 22%)]
+       [heard explain 30%  (also protest 22%, chat 20%)]
 guard: Go on. Slowly.
-       [weighed false  sound 9%, thin 27%, false 64%]
+       [weighed false  sound 1%, thin 10%, false 89%]
 guard: Guards! Hold this one. Someone fetch the captain.
-       [happening captain 84%]
+       [happening captain 83%]
        Boots on the wall walk. The captain, with two of the watch behind him, stops at the gate.
 guard: Captain. This one's for you.
 ```
+
+The guard errs on the forgiving side. A story that does not hold up gets
+one plain re-ask, and after it a thin story is let through under a
+warning; a sword is bonded at the post and the talk goes on; only
+contraband, a poster match, a bribe, or a story that contradicts itself
+twice ends the night badly. A sellsword off the north road, "looking for
+work, anything really", was re-asked once and went through with "I've got
+my eye on you".
 
 In other sessions a traveller off the north road with "only my satchel,
 heavy" matched the thief poster at 68% and was held; "Look, there is a
