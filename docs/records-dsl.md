@@ -96,9 +96,10 @@ Everything below the record layer: endpoints, `Instructions`, `Criteria`,
 `given`, `State`, pools, `prepare`, `decodeResponse`, `roundTrip`, errors,
 policies, `Doubt`. A record front adds only `Generic` traversals that turn
 the record into the core's compiled questions and back, and an `Alts`
-interpretation for sums (the core's `Sum t` seam already renders and
-decodes an ordinary sum by constructor name, so the record front's `is`
-and `keyed` reduce to `sumOfferKeyed`).
+interpretation for sums. The core no longer carries a sums-as-alternatives
+seam; that interpretation belongs to this front alone, as a fourth shape of
+the shared `Alts` chain that renders and decodes a constructor by its
+snake-cased name.
 
 ## Why records are the human form and not the model form
 
@@ -112,7 +113,7 @@ sum reads naturally. Hence two labelled fronts rather than one compromise.
 ## Implementation sequence, when wanted
 
 1. `Schema` via `Generic` over `mode :- e` fields, reusing `Endpoint`.
-2. `is`/`keyed` on top of `sumOfferKeyed`; `ConName` for default keys.
+2. `is`/`keyed` as offers of a `Sum t` alternative shape added to the core's chain; a `ConName` class (Generic default) for default keys.
 3. Enum rubrics as an `Alts`-free `Rubric` instance built from `Enum` and
    `Bounded` with the description function.
 4. `HasField` access for `Answers`, transparent `Group`/`Each`.
