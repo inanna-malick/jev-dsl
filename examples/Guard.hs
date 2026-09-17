@@ -180,22 +180,43 @@ gate w = askOrigin
           _ -> onward suspect
     onward suspect = if suspect then checkPosters weigh else weigh
 
-    -- Every question on the approach takes nonsense in its stride: someone playing a part, mocking the
-    -- guard, or giving orders is called out and asked once more, then treated as evasive. Where
-    -- pressEvasive is set, a first evasive answer is asked again too.
-    askPatient line pressEvasive branches k = go False
+    -- Every question on the approach takes a sidetrack in its stride. Someone playing a part, asking
+    -- the questions back, flattering, name-dropping, drunk, pleading, or lost for words gets a retort
+    -- and the question again, twice at most, then counts as evasive. A threat closes the gate; a bribe
+    -- fetches the captain. Where pressEvasive is set, a first evasive answer is asked again too.
+    askPatient line pressEvasive branches k = go (0 :: Int)
       where
-        go again = askLine line Nothing (branches ++ [evasive, nonsense]) $ \answer ->
-          if not again && (answer == "nonsense" || (pressEvasive && answer == "evasive"))
-            then say (callOut line answer) (go True)
-            else k (if answer == "nonsense" then "evasive" else answer)
-    callOut line answer
-      | answer == "evasive" = "I'll ask once more, and I'd think about the answer this time."
-      | otherwise = callOuts !! (T.length line `mod` length callOuts)
+        go n = askLine line Nothing (branches ++ [evasive] ++ [(l, m) | (l, m, _) <- sidetracks line] ++ [threat, bribe]) $ \answer ->
+          case lookup answer [(l, r) | (l, _, r) <- sidetracks line] of
+            Just retort | n < 2 -> say retort (go (n + 1))
+            Just _ -> k "evasive"
+            Nothing
+              | answer == "threat" -> say "Threaten the watch at its own gate and you can spend the night on the wrong side of it." (verdict TurnAway)
+              | answer == "bribe" -> say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain)
+              | answer == "evasive" && pressEvasive && n == 0 -> say "I'll ask once more, and I'd think about the answer this time." (go 1)
+              | otherwise -> k answer
+    sidetracks :: Text -> [(Text, Text, Text)]
+    sidetracks line =
+      [ ("nonsense", nonsenseMeaning, callOuts !! (T.length line `mod` length callOuts))
+      , ("question_back", "Asks the guard a question instead of answering: who is asking, why the questions, what the curfew is about"
+        , "I'm the one asking tonight. The curfew's the council's doing, not mine. Now:")
+      , ("flattery", "Flatters, sweet-talks, or compliments the guard"
+        , "Save it. It's late and I've heard better. Now:")
+      , ("name_drop", "Claims to know the captain, the council, or someone important, or demands special treatment"
+        , "Everyone knows the captain tonight. It doesn't change the question.")
+      , ("drunk", "Slurs, rambles, or is plainly drunk"
+        , "Take a breath. Say it slowly, and say it once.")
+      , ("sob_story", "Pleads, tells a hard-luck story, or begs before being asked anything"
+        , "Nobody asked for your life story. Just the question.")
+      , ("lost", "Does not seem to understand the question, or answers in another tongue"
+        , "Slowly, then. Simple words.") ]
+    threat = ("threat", "Threatens the guard or the watch")
+    bribe = ("bribe", "Offers coin, a favour, or anything of value to be let through")
     callOuts =
       [ "Are you having me on right now? Once more."
       , "Is this a game to you? Try that again, plainly."
       , "I've had drunks make more sense at this gate. Again." ]
+
     checkPosters continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.posters] continue)
 
     -- A story that does not hold up gets one plain re-ask before any verdict. Dodging that closes the
@@ -228,11 +249,15 @@ gate w = askOrigin
           , ("captain", "Asks about the captain or the watch")
           , ("rumour", "Asks about the robbery, or for news and gossip")
           , ("chat", "Small talk, a remark about the night, or anything else")
+          , ("flattery", "Flatters, sweet-talks, or compliments the guard")
+          , threat
           , nonsense
           , ("leave", "Says goodbye, moves on, or has nothing more to ask") ] )
         $ \case
           "leave" -> say "Then go on. And mind the curfew." end
           "nonsense" -> say "Very funny. Anything else, or are we done?" admitted
+          "flattery" -> say "Save it. Through you go, before I change my mind." admitted
+          "threat" -> say "Threaten the watch and you'll not be going through after all." (verdict TurnAway)
           topic -> say (fromMaybe "Mm. Long night. Move along when you're ready." (lookup topic smallTalk)) admitted
 
     turnedAway = knot "turned_away" $ happen $
@@ -284,7 +309,8 @@ gate w = askOrigin
 
     slip = "Does this reply admit to something the edict forbids, contradict what the traveller said earlier, or give the guard fresh reason for suspicion?"
     evasive = ("evasive", "Does not say, changes the subject, or answers a different question")
-    nonsense = ("nonsense", "Nonsense, gibberish, or play-acting: mocks the guard, claims to be the guard, gives the guard orders, or talks as if to a machine")
+    nonsense = ("nonsense", nonsenseMeaning)
+    nonsenseMeaning = "Nonsense, gibberish, or play-acting: mocks the guard, claims to be the guard, gives the guard orders, or talks as if to a machine"
 
     askLine line trip branches k = Fix (Ask line trip [(l, meaning, k l) | (l, meaning) <- branches])
     say line next = Fix (Say line next)

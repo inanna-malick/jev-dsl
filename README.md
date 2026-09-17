@@ -220,10 +220,12 @@ guard: Guards! Hold this one. Someone fetch the captain.
 guard: Captain. This one's for you.
 ```
 
-Nonsense, play-acting, an attempt to give the guard orders, or a reply
-addressed to a machine is a branch on every question. The guard calls it
-out, asks once more, and after that treats it as evasive; in the hubs it
-gets a retort. Prompt injection, role reversal, gibberish, one-word answers,
+Every question also takes the ways people talk at a guard instead of
+answering: nonsense or play-acting, a question back, flattery, dropping the
+captain's name, slurring drunk, a hard-luck story before anything was
+asked, or not understanding at all. Each is a branch with its own retort
+and the question again, twice at most, then it counts as evasive. A threat
+closes the gate; a bribe fetches the captain. The hubs take the same. Prompt injection, role reversal, gibberish, one-word answers,
 and contradictions across turns were each tried and sorted where a person
 would put them.
 
