@@ -7,12 +7,12 @@
 -- | A guard at a city gate, as a catamorphism with Jev for its algebra.
 --
 -- The script is a tree written by hand: what the guard asks, which kinds
--- of answer it distinguishes, when it checks the notices, and how it weighs
+-- of answer it distinguishes, when it checks the wanted posters, and how it weighs
 -- the whole account at the end. It is a fixed point of 'GuardF', and its
 -- three branching constructors line up with Jev's three question kinds:
 --
 --   * 'Ask'   — a free-form reply is sorted into one branch: a choice
---   * 'Check' — the account is held against each notice in a pool: one Noul per notice
+--   * 'Check' — the account is held against each wanted poster in a pool: one Noul per poster
 --   * 'Weigh' — the account so far is graded on a rubric: a score
 --
 -- Two folds run over the same tree. 'render' is a pure algebra that prints
@@ -55,29 +55,30 @@ data World = World
   , neighbours :: [(Text, Text)]     -- key, what the guard knows of the place
   , places :: [(Text, Text)]         -- key, what people go there for
   , banned :: [(Text, Text)]         -- key, what is not allowed through
-  , notices :: [(Text, Text)]        -- key, the notice as posted at the gate
+  , posters :: [(Text, Text)]        -- key, the wanted poster as nailed up at the gate
   }
 
 world :: World
 world = World
-  { city = "Harrow"
+  { city = "Greyhaven"
   , edict = T.unwords
-      [ "The council has closed the glassworks quarter to anyone not on the guild's roll"
-      , "until a missing furnace notebook is recovered. Ordinary trade through the gate continues." ]
+      [ "The city is under curfew after the robbery at the counting house. The watch is to question"
+      , "everyone at the gates, turn back anyone who cannot account for themselves, and hold anyone who matches a poster." ]
   , neighbours =
-      [ ("hill_farms", "The farms in the hills to the east; carts of produce most mornings")
-      , ("redwater", "The town downriver with its own glassworks; the guilds are not on good terms")
-      , ("coast", "The fishing villages on the coast; salt, fish, and sailors between ships") ]
+      [ ("north_road", "The north road, through the forest; merchants, pilgrims, and the occasional deserter")
+      , ("harbour", "The harbour town at the river mouth; sailors, smugglers, and anyone off a ship")
+      , ("farmlands", "The farms and villages to the south; carts of produce every morning") ]
   , places =
-      [ ("market", "The market square inside the gate")
-      , ("glassworks", "The glassworks quarter, closed to outsiders under the edict")
-      , ("cathedral", "The cathedral and the hospice beside it") ]
+      [ ("market", "The market square")
+      , ("temple", "The temple of the dawn and its infirmary")
+      , ("tavern", "The Broken Wheel and the other taverns by the wall")
+      , ("barracks", "The watch barracks; recruits, and messages for the captain") ]
   , banned =
-      [ ("unsealed_glass", "Worked glass without the guild's seal")
-      , ("foreign_lenses", "Lenses ground outside the city") ]
-  , notices =
-      [ ("apprentice", "Wanted: a glassworks apprentice, about seventeen, who left with a furnace notebook. May be travelling under another name and trade.")
-      , ("debt_buyer", "Watch for: an agent from Redwater buying up the debts of lens-grinders. Well dressed, asks after names.") ]
+      [ ("unbound_weapon", "A blade or bow not peace-bonded at the gate")
+      , ("smuggled_goods", "Untaxed spirits, spices, or anything hidden from the customs officer") ]
+  , posters =
+      [ ("thief", "WANTED: the thief of the counting house. Slight, quick, seen leaving by the north road with a heavy satchel. Reward.")
+      , ("deserter", "WANTED: a deserter from the city watch, tall, scar across the left hand. Do not approach alone.") ]
   }
 
 -- ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ data Action = Admit | TurnAway | SendForCaptain deriving (Show, Eq)
 
 data GuardF r
   = Ask Text [(Text, Text, r)]           -- the guard's line; branch label, what the label means, child
-  | Check [(Text, r)] r                  -- child per notice matched, and the child when none does
+  | Check [(Text, r)] r                  -- child per poster matched, and the child when none does
   | Weigh Text (Text, r) (Text, r) (Text, r)  -- a question, and the sound / thin / false levels
   | Verdict Action
 
@@ -109,26 +110,29 @@ cata alg (Fix node) = alg (fmap (cata alg) node)
 
 gate :: World -> Fix GuardF
 gate w = askOrigin $ \origin -> case origin of
-  "evasive" -> askCargo cargoRule
+  "evasive" -> askCargo (cargoRule False)
   _ -> askPurpose $ \purpose ->
-    -- The notices concern Redwater and the glassworks; anyone else is not held against them.
-    if origin == "redwater" || purpose == "glassworks" then checkNotices (askCargo cargoRule) else askCargo cargoRule
+    -- The posters concern the north road and the taverns; nobody else is held against them.
+    askCargo (cargoRule (origin == "north_road" || purpose == "tavern"))
   where
     -- Banned cargo is a rule, not a judgment: it never reaches the weighing.
-    cargoRule cargo = if cargo `elem` map fst w.banned then verdict TurnAway else weigh
+    cargoRule suspect cargo
+      | cargo `elem` map fst w.banned = verdict TurnAway
+      | suspect = checkPosters weigh
+      | otherwise = weigh
 
     ask line branches k = Fix (Ask line [(key, meaning, k key) | (key, meaning) <- branches])
     evasive = ("evasive", "Does not say, changes the subject, or answers a different question")
 
-    askOrigin = ask "Evening. Where have you come from today?" (w.neighbours ++ [evasive])
-    askPurpose = ask "And your business in the city?" (w.places ++ [evasive])
-    askCargo = ask "What are you carrying?"
-      (w.banned ++ [("nothing", "Nothing of note: personal effects, ordinary goods, an empty cart"), evasive])
+    askOrigin = ask "Halt. Where do you hail from, traveller?" (w.neighbours ++ [evasive])
+    askPurpose = ask "And what brings you to Greyhaven?" (w.places ++ [evasive])
+    askCargo = ask "Anything to declare? Weapons, goods, anything the customs officer should see?"
+      (w.banned ++ [("nothing", "Nothing to declare: personal effects, ordinary goods, a bonded weapon"), evasive])
 
-    -- Any notice that fits sends for the captain; the rest of the script continues otherwise.
-    checkNotices continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.notices] continue)
+    -- Any poster that matches sends for the captain; otherwise the script continues.
+    checkPosters continue = Fix (Check [(k, verdict SendForCaptain) | (k, _) <- w.posters] continue)
 
-    weigh = Fix (Weigh "Taken together, how sound is this traveller's account?"
+    weigh = Fix (Weigh "Taken together, does this traveller's story hold up?"
       ("The answers fit each other and fit the road they came by", verdict Admit)
       ("Plausible but thin: something is left out, or the answers do not quite fit together", verdict TurnAway)
       ("The account contradicts itself or the guard's knowledge of the roads", verdict SendForCaptain))
@@ -141,7 +145,7 @@ gate w = askOrigin $ \origin -> case origin of
 
 render :: GuardF Text -> Text
 render (Ask line bs) = T.unlines (("ask  " <> quote line) : concat [branch (k <> "  (" <> m <> ")") r | (k, m, r) <- bs])
-render (Check ms none) = T.unlines ("check the notices" : concat [branch ("fits " <> k) r | (k, r) <- ms] ++ branch "no notice fits" none)
+render (Check ms none) = T.unlines ("check the posters" : concat [branch ("matches " <> k) r | (k, r) <- ms] ++ branch "no poster matches" none)
 render (Weigh q (a, x) (b, y) (c, z)) =
   T.unlines (("weigh  " <> quote q) : concat [branch (l <> "  (" <> m <> ")") r | (l, m, r) <- [("sound", a, x), ("thin", b, y), ("false", c, z)]])
 render (Verdict v) = T.pack (show v) <> "\n"
@@ -181,13 +185,13 @@ interpret w call = \case
     -- k is the branch label Jev chose; play is that branch's continuation.
 
   Check matches none -> \t -> do
-    let posted = pool #notices [(k, String text, ()) | (k, text) <- w.notices]
+    let posted = pool #posters [(k, String text, ()) | (k, text) <- w.posters]
     resp <- must =<< roundTrip call jevLatest (situation w t [])
-      ( #notices := posted
-      :& #fits := eachIn posted (\notice -> #this := askAbout notice "Does the traveller's account so far fit this notice?" :& Nil)
+      ( #posters := posted
+      :& #fits := eachIn posted (\poster -> #this := askAbout poster "Does the traveller's account so far match this wanted poster?" :& Nil)
       :& Nil )
     let scored = sortOn (Down . fst) [(yes sub.this, k) | (k, sub) <- (answers resp).fits]
-    aside ("notices " <> T.intercalate ", " [k <> " " <> pct p | (p, k) <- scored])
+    aside ("posters " <> T.intercalate ", " [k <> " " <> pct p | (p, k) <- scored])
     case scored of
       (p, k) : _ | p >= 0.6, Just play <- lookup k matches -> play t
       _ -> none t
@@ -230,11 +234,17 @@ main = getArgs >>= \case
     let play = cata (interpret world (counted calls curl)) (gate world)
     Outcome action turnsTaken <- play (Traveller [])
     TIO.putStrLn ""
+    TIO.putStrLn ("guard: " <> spoken action)
     TIO.putStrLn ("verdict: " <> T.pack (show action))
     mapM_ (\u -> TIO.putStrLn ("  " <> quote u.replied <> " -> " <> u.taken <> " " <> pct u.sureness)) turnsTaken
     (n, i, o) <- readIORef calls
     TIO.putStrLn ("  " <> T.pack (show n) <> " calls, " <> T.pack (show i) <> " in / " <> T.pack (show o) <> " out tokens")
   _ -> hPutStrLn stderr "usage: jev-dsl-guard [--script]" >> exitFailure
+
+spoken :: Action -> Text
+spoken Admit = "Go on through. Mind the curfew."
+spoken TurnAway = "Not tonight. Move along, and don't let me see you at this gate again."
+spoken SendForCaptain = "Guards! Hold this one. Someone fetch the captain."
 
 guard :: Text -> IO ()
 guard line = TIO.putStrLn ("guard: " <> line)

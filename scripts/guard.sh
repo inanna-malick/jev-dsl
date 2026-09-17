@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The gate at Harrow: a hand-written script that Jev traverses.
+# The gate at Greyhaven: a hand-written guard script that Jev traverses.
 #   scripts/guard.sh --script     print the script, no network
 #   scripts/guard.sh              play it; needs TYPESAFE_API_KEY in the environment
 set -euo pipefail

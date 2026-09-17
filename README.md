@@ -182,18 +182,18 @@ them:
 TYPESAFE_API_KEY=... ./scripts/example.sh
 ```
 
-## The gate at Harrow
+## The gate at Greyhaven
 
-`jev-dsl-guard` is a guard at a city gate, written as a catamorphism with
-Jev for its algebra. The script is a tree written by hand in
+`jev-dsl-guard` is a city guard at the gate, written as a catamorphism with
+Jev for its algebra. The script is a dialogue tree written by hand in
 `examples/Guard.hs`: what the guard asks, which kinds of reply it tells
-apart, when it holds the account against the posted notices, and how it
-weighs the whole account at the end. Its three branching constructors are
+apart, when it holds the traveller's story against the wanted posters, and
+how it weighs the story at the end. Its three branching constructors are
 Jev's three question kinds. A free-form reply is sorted into a branch by a
-choice; the account is held against each notice by a Noul per notice over
-a pool; the account is graded by a score on a three-level rubric. The
-branches themselves come from a small world value, so changing the roads
-into the city changes what the guard asks.
+choice; the story is held against each poster by a Noul per poster over a
+pool; the story is graded by a score on a three-level rubric. The branches
+come from a small world value, so changing the roads into the city changes
+what the guard asks.
 
 Two folds run over the same tree. One is pure and prints the script. The
 other builds a program: each node becomes a `Play` that says its line,
@@ -207,39 +207,42 @@ outcome <- cata (interpret world transport) (gate world) (Traveller [])
 ```
 
 Nothing is generated at run time. The author wrote every line and every
-branch; Jev only decides which branch a reply takes, which notice fits, and
-how sound the account is. Rules stay in Haskell: banned cargo turns a
-traveller away without any weighing.
+branch; Jev only decides which branch a reply takes, which poster matches,
+and whether the story holds up. Rules stay in Haskell: an unbonded weapon
+turns a traveller away without any weighing, and only travellers from the
+north road or bound for the taverns are checked against the posters.
 
 ```sh
 scripts/guard.sh --script                 # print the tree, no network
 TYPESAFE_API_KEY=... scripts/guard.sh     # play it, one call per node visited
 ```
 
-A conversation on 2026-09-17, three calls and about two thousand input
+A conversation on 2026-09-17, four calls and about three thousand input
 tokens:
 
 ```
-guard: Evening. Where have you come from today?
-you:   The coast road, though I was in the hills before that
-       [heard coast 99%]
-guard: And your business in the city?
-you:   Lighting a candle for my brother, then the market if there is time
-       [heard cathedral 64%  (also market 26%)]
-guard: What are you carrying?
-you:   Some fish, and a box of glass beads my brother made
-       [heard unsealed_glass 83%]
+guard: Halt. Where do you hail from, traveller?
+you:   The north road
+       [heard north_road 100%]
+guard: And what brings you to Greyhaven?
+you:   Looking for a room at the Broken Wheel, then I move on at first light
+       [heard tavern 99%]
+guard: Anything to declare? Weapons, goods, anything the customs officer should see?
+you:   Only my satchel. Personal things. Heavy, I know, I have been walking a long way
+       [heard nothing 96%]
+       [posters thief 68%, deserter 20%]
 
-verdict: TurnAway
+guard: Guards! Hold this one. Someone fetch the captain.
 ```
 
-A traveller from Redwater with "business with a few of the lens-grinders,
-about money they owe" fit the debt-buyer notice at 93% and was sent for the
-captain. One claiming work at the glassworks, "trained under a furnace
-master, seventeen", fit the apprentice notice at 63%. "Does it matter where
-I have come from?" was heard as evasive at 100%, and the weighing then
-called the account thin. The transport is `scripts/transport.sh`, a curl
-call that keeps the key out of every Haskell process.
+A pilgrim on the same road, "bound for the temple, my daughter is in the
+infirmary there", matched the thief poster at 14% and was weighed sound at
+73%. "Work. I heard the watch is hiring since the robbery" was heard as
+barracks at 99%. "My sword. I am not handing it over to anyone" was heard
+as an unbonded weapon and turned away by rule. "That is my own affair" was
+heard as evasive at 100%, and the weighing then called the story thin. The
+transport is `scripts/transport.sh`, a curl call that keeps the key out of
+every Haskell process.
 
 ## Building
 
