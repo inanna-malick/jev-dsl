@@ -193,13 +193,16 @@ directly it answers, a choice over its lines, a choice over the
 declarations it references drawn from a pool, a Noul per reference, and a
 premise-prefixed choice for where the behavior lives if not here. Two
 starting points stay alive when a choice is torn, a policy turns near ties
-into doubt, and a closing packet judges between two witnesses.
+into doubt, and a closing packet judges between two witnesses. When no
+declaration clears the bar, the same closing packet judges between the two
+best partial answers seen, so the program answers with what it has rather
+than nothing.
 
 ```sh
 TYPESAFE_API_KEY=... scripts/navigate.sh "where is a premise rendered onto the wire?"
 ```
 
-Three live runs on 2026-09-16, each two to three calls:
+Four live runs on 2026-09-16, two to six calls each:
 
 ```
 where does a choice that draws on a pool get the pool name added to its instructions?
@@ -211,6 +214,9 @@ where is a premise rendered onto the wire?
 which check rejects a rubric with more than ten levels?
   src/Jev/Core/Schema.hs:585  if null entries || length entries > 10 then Left (BadLevelCount key (length entries)) else Right ()
   tokens: 9522 in, 3055 out
+Where does the library add an assumption like 'if the behavior is implemented elsewhere' to a Jev question?
+  src/Jev/Core/Schema.hs:408  given p = reword (Premised p)     (judged between two partial answers, 0.43 and 0.36)
+  tokens: 14872 in, 5786 out
 ```
 
 The program is `examples/Navigate.hs`. Its transport is `scripts/transport.sh`,

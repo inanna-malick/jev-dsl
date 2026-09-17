@@ -103,6 +103,13 @@ data Outcome
   | NeedsJudgment [Step]                -- Jev said the source cannot settle it
   | Exhausted [Step]
 
+-- Every declaration read, with how directly it answered: the fallback when
+-- no single declaration clears the bar.
+data Seen = Seen Decl Int Text Double [Step]
+
+seenDirect :: Seen -> Double
+seenDirect (Seen _ _ _ x _) = x
+
 data Step = Step { stepDecl :: Decl, stepWhy :: Text }
 
 -- Packet 0: which module, from the names it declares. Cheap.
@@ -170,6 +177,7 @@ policy :: Policy
 policy = Policy { minMass = 0.35, minMargin = 0.1, minConfidence = 0.25 }
 
 investigate transport tokens inquiry decls maxHops = do
+  seen <- newIORef []
   r0 <- pickModule transport inquiry decls
   case r0 of
     Left e -> pure (Left e)
@@ -186,19 +194,32 @@ investigate transport tokens inquiry decls maxHops = do
             let starts = take 2 (sortOn (negate . fst) [ (m, d) | picked <- pickeds, (m, s) <- contenders 0.15 picked, Just d <- [handle s (#none (\() -> Nothing) .| onMany (\_ d -> Just d))] ])
             say ("start: " <> T.intercalate ", " [ declKey d <> " " <> pct m | (m, d) <- starts ])
             if null starts then pure (Right (NeedsJudgment [])) else do
-              outcomes <- forM starts $ \(m, d) -> walk [] [Step d ("starting point, " <> pct m)] d maxHops
-              case outcomes of
-                [Right o] -> pure (Right o)
-                [Right (Witness d1 n1 l1 t1), Right (Witness d2 n2 l2 t2)] | (d1, n1) /= (d2, n2) -> do
+              outcomes <- forM starts $ \(m, d) -> walk seen [] [Step d ("starting point, " <> pct m)] d maxHops
+              let witnesses = [ w | Right w@(Witness {}) <- outcomes ]
+              case (witnesses, [ e | Left e <- outcomes ]) of
+                (_, e : _) -> pure (Left e)
+                ([w], _) -> pure (Right w)
+                ([Witness d1 n1 l1 t1, Witness d2 n2 l2 t2], _) | (d1, n1) /= (d2, n2) -> do
                   say "two witnesses; asking which answers"
-                  c <- close transport inquiry [(d1, n1, l1), (d2, n2, l2)]
-                  pure $ fmap (\ans -> handle (chosen ans)
-                    (  #both (\() -> Witness d1 n1 l1 (t1 ++ t2))
-                    .| onMany (\_ (d, n, l) -> Witness d n l (if d == d1 then t1 else t2)) )) c
-                o : _ -> pure o
-                [] -> pure (Right (Exhausted []))
+                  judge [(d1, n1, l1, t1), (d2, n2, l2, t2)]
+                (w : _, _) -> pure (Right w)
+                ([], _) -> do
+                  -- nothing cleared the bar: let Jev judge between the two best partial answers
+                  best <- take 2 . sortOn (negate . seenDirect) <$> readIORef seen
+                  case best of
+                    [] -> pure (Right (Exhausted []))
+                    [Seen d n l _ t] -> pure (Right (Witness d n l t))
+                    Seen d1 n1 l1 x1 t1 : Seen d2 n2 l2 x2 t2 : _ -> do
+                      say ("no declaration answered directly; asking which of the two best partial answers (" <> pct x1 <> ", " <> pct x2 <> ") answers")
+                      judge [(d1, n1, l1, t1), (d2, n2, l2, t2)]
   where
-    walk visited trail d hops
+    judge [(d1, n1, l1, t1), (d2, n2, l2, t2)] = do
+      c <- close transport inquiry [(d1, n1, l1), (d2, n2, l2)]
+      pure $ fmap (\ans -> handle (chosen ans)
+        (  #both (\() -> Witness d1 n1 l1 (t1 ++ t2))
+        .| onMany (\_ (d, n, l) -> Witness d n l (if d == d1 then t1 else t2)) )) c
+    judge _ = pure (Right (Exhausted []))
+    walk seen visited trail d hops
       | hops <= (0 :: Int) = pure (Right (Exhausted trail))
       | otherwise = do
           r <- hop transport inquiry decls trail d
@@ -213,12 +234,23 @@ investigate transport tokens inquiry decls maxHops = do
               say ("read " <> declKey d <> ": " <> levelOf a.answers <> " (directly " <> pct direct <> "), line "
                 <> maybe "-" (T.pack . show) lineOf <> ", next " <> selectedKey (chosen a.next) <> " " <> pct (confidence a.next)
                 <> (if null bearing then "" else ", bearing: " <> T.intercalate ", " (take 3 bearing) <> (if length bearing > 3 then ", …" else "")))
-              let witness = Witness d (maybe d.declStart id lineOf) (maybe (T.strip (T.unwords (take 1 d.declLines))) (\n -> T.strip (d.declLines !! (n - d.declStart))) lineOf) trail
-                  followed = handle (chosen a.if_elsewhere) (onMany (\_ e -> Just e) .| #unclear (\() -> Nothing))
+              let lineNo = maybe d.declStart id lineOf
+                  lineText = maybe (T.strip (T.unwords (take 1 d.declLines))) (\n -> T.strip (d.declLines !! (n - d.declStart))) lineOf
+                  witness = Witness d lineNo lineText trail
+                  premised = handle (chosen a.if_elsewhere) (onMany (\_ e -> Just e) .| #unclear (\() -> Nothing))
+                  -- the best referenced declaration by the evidence already in hand
+                  bestRef = case [ e | (_, s) <- contenders 0.1 a.next, Just e <- [handle s (#stop_here (\() -> Nothing) .| #ask_model (\() -> Nothing) .| onMany (\_ e -> Just e))] ] of
+                    e : _ -> Just e
+                    [] -> Nothing
+                  followed = case premised of
+                    Just e -> Just e
+                    Nothing -> bestRef
+              modifyIORef' seen (Seen d lineNo lineText direct trail :)
               if direct >= 0.6 then pure (Right witness) else
                 case accept policy a.next of
                   Left doubt -> do
-                    say ("  doubt: " <> T.pack (show doubt) <> "; the premised choice says " <> maybe "unclear" declKey followed)
+                    say ("  doubt: " <> T.pack (show doubt) <> "; the premised choice says " <> maybe "unclear" declKey premised
+                      <> (case (premised, bestRef) of (Nothing, Just e) -> ", so following the best reference " <> declKey e; _ -> ""))
                     follow followed
                   Right s -> handle s
                     (  #stop_here (\() -> pure (Right witness))
@@ -228,7 +260,7 @@ investigate transport tokens inquiry decls maxHops = do
         follow Nothing = pure (Right (Exhausted trail))
         follow (Just e)
           | e `elem` visited = pure (Right (Exhausted trail))
-          | otherwise = walk (d : visited) (trail ++ [Step e ("referenced from " <> declKey d)]) e (hops - 1)
+          | otherwise = walk seen (d : visited) (trail ++ [Step e ("referenced from " <> declKey d)]) e (hops - 1)
 
 -- ---------------------------------------------------------------------------
 -- Plumbing
