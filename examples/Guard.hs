@@ -223,7 +223,8 @@ gate w = askOrigin False
           _ -> say "The gate's still closed." turnedAway
 
     held = knot "held" $ happen $
-      askLine "Stand there. The captain's on his way. Anything to say for yourself?" (Just (slip, say "Noted. The captain will want to hear that." held))
+      -- No tripwire here: there is nothing left to escalate to, and it would only steal the branches below.
+      askLine "Stand there. The captain's on his way. Anything to say for yourself?" Nothing
         [ ("explain", "Tries to explain, gives an account, or names someone who can vouch for them")
         , ("protest", "Protests innocence, objects, or demands to be released")
         , ("threaten", "Threatens the guard or the watch")
