@@ -1,38 +1,40 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -Werror=missing-fields #-}
 
 -- | One worked example, both ends of the wire and nothing in between.
 --
 -- @jev-dsl-example request ...flags@ prints the request JSON for a failing-
 -- check triage. @jev-dsl-example decode ...same flags@ reads the response
--- JSON on stdin, decodes it against the same record, and prints what the
+-- JSON on stdin, decodes it against the same packet, and prints what the
 -- typed answers say. A transport goes between them; see scripts/example.sh.
+--
+-- The packet exercises one of everything: a pool of checks declared once
+-- and referenced by two questions, a runtime group with an awkward key, a
+-- static disjunction with descriptions in the type and a handback, a typed
+-- rubric, a per-entry Noul, and a premise-prefixed speculative question.
 module Main (main) where
 
 import qualified Data.Aeson as Aeson
 import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString.Lazy as BL
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TLE
-import GHC.Generics (Generic)
-import Jev
-import qualified Data.Aeson.Key as Key
+import Jev.Operators
 import Options.Applicative (Parser, ReadM, command, eitherReader, execParser, fullDesc, help, helper, info, long, metavar, progDesc, showDefault, some, strOption, subparser, (<**>))
 import qualified Options.Applicative as Opt
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
 -- ---------------------------------------------------------------------------
--- The record: a failing check, triaged in one packet
+-- The packet: a failing check, triaged in one call
 -- ---------------------------------------------------------------------------
 
 -- Local payloads. None of these are serialized; the model sees descriptions.
@@ -40,26 +42,24 @@ data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
 newtype Check = Check Text
 newtype Handoff = Handoff Text
 
-data Next mode = Next
-  { rerunFocusedCheck :: mode :- Option Check
-  , readImplicatedSource :: mode :- Option Text
-  , askModel :: mode :- Option Handoff      -- the handback is an ordinary alternative
-  } deriving (Generic)
+type Next = "rerun" ::> Check :? "Rerun the single most relevant check to confirm the failure is stable"
+        :|: "read_source" ::> Text :? "Read the source at the location the explaining diagnostic names"
+        :|: "ask_model" ::> Handoff :? "Deciding needs judgment beyond the supplied diagnostics and checks"
 
-data Breadth mode = Breadth
-  { localized :: mode :- Level
-  , adjacentCallers :: mode :- Level
-  , crossesContract :: mode :- Level
-  } deriving (Generic)
+type Breadth = '[ "localized" :? "Localized to the failing check"
+                , "adjacent" :? "May affect adjacent callers of the same code"
+                , "contract" :? "Crosses a contract other components rely on" ]
 
-data Triage mode = Triage
-  { explains :: mode :- Choose Diagnostic
-  , next :: mode :- Choice Next
-  , verify :: mode :- Choose Check
-  , sufficient :: mode :- Noul
-  , breadth :: mode :- Score Breadth
-  } deriving (Generic)
-instance Schema Triage
+type Triage = Packet
+  '[ "checks" ::= PoolDecl "checks" Check
+   , "explains" ::= Choice ("no_match" ::> () :? "No listed diagnostic explains the failure" :|: Many Diagnostic)
+   , "next" ::= Choice Next
+   , "verify" ::= Choice (Many Check :|: "defer" ::> () :? "No listed check is a direct verification; choosing needs a design preference")
+   , "relevant" ::= Each (Packet '[ "applies" ::= Noul ])
+   , "sufficient" ::= Noul
+   , "breadth" ::= Score Breadth
+   , "if_flaky" ::= Choice (Many Check)
+   ]
 
 data Inputs = Inputs
   { failure :: Text
@@ -68,33 +68,28 @@ data Inputs = Inputs
   , model :: Text
   }
 
-triage :: Inputs -> (State, Triage Questions)
-triage inputs = (world, questions)
+triage :: Inputs -> (State 'Pooled, Triage Questions)
+triage inputs = (pooled world, questions)
   where
     world = stateObject
       [ ("failure", String inputs.failure)
       , ("diagnostics", object [Key.fromText k .= t | (k, t) <- inputs.diagnosticLines])
-      , ("available_checks", object [Key.fromText k .= t | (k, t) <- inputs.checks])
       ]
-    questions = Triage
-      { explains = choose "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"
-          (candidates [(k, String t, Diagnostic k t) | (k, t) <- inputs.diagnosticLines])
-          [noMatch "No listed diagnostic explains the failure"]
-      , next = choice "What is the most useful next step given only the supplied evidence?" Next
-          { rerunFocusedCheck = option "Rerun the single most relevant check to confirm the failure is stable" (Check "rerun")
-          , readImplicatedSource = option "Read the source at the location the explaining diagnostic names" "read"
-          , askModel = option "Deciding needs judgment beyond the supplied diagnostics and checks" (Handoff "needs judgment")
-          }
-      , verify = choose "Which available check most directly verifies a fix for the explaining diagnostic?"
-          (candidates [(k, String t, Check k) | (k, t) <- inputs.checks])
-          [deferToModel "No listed check is a direct verification; choosing needs a design preference"]
-      , sufficient = noul "Do `diagnostics` alone establish the mechanism of `failure`?"
-      , breadth = score "How broadly would fixing the explaining diagnostic alter established behavior?" Breadth
-          { localized = level "Localized to the failing check"
-          , adjacentCallers = level "May affect adjacent callers of the same code"
-          , crossesContract = level "Crosses a contract other components rely on"
-          }
-      }
+    available = pool #checks [(k, String t, Check k) | (k, t) <- inputs.checks]
+    questions =
+         #checks := available
+      :& #explains := choice "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"
+                        (#no_match () .| many [(k, String t, Diagnostic k t) | (k, t) <- inputs.diagnosticLines])
+      :& #next := choice "What is the most useful next step given only the supplied evidence?"
+                    (#rerun (Check "rerun") .| #read_source "read" .| #ask_model (Handoff "needs judgment"))
+      :& #verify := choice "Which available check most directly verifies a fix for the explaining diagnostic?"
+                      (manyFrom available .| #defer ())
+      :& #relevant := eachIn available (\r -> #applies := askAbout r "Does this check exercise the code path the failure names?" :& Nil)
+      :& #sufficient := noul "Do `diagnostics` alone establish the mechanism of `failure`?"
+      :& #breadth := score "How broadly would fixing the explaining diagnostic alter established behavior?"
+      :& #if_flaky := given "the failure is intermittent rather than deterministic"
+                        (choice "Which check would best expose the intermittency?" (manyFrom available))
+      :& Nil
 
 -- ---------------------------------------------------------------------------
 -- Command line
@@ -122,7 +117,7 @@ modeP = subparser
 main :: IO ()
 main = do
   (mode, inputs) <- execParser $ info (((,) <$> modeP <*> inputsP) <**> helper)
-    (fullDesc <> progDesc "jev-dsl worked example: triage a failing check through one typed record")
+    (fullDesc <> progDesc "jev-dsl worked example: triage a failing check through one typed packet")
   let (world, questions) = triage inputs
   prepared <- case prepare (Model inputs.model) world questions of
     Left e -> die ("prepare: " ++ show e)
@@ -147,23 +142,23 @@ report resp = do
   let a = answers resp
   TIO.putStrLn ("model: " <> resolvedModel resp)
   TIO.putStrLn ("usage: " <> render (usage resp))
-  case picked a.explains of
-    PickedCandidate c -> TIO.putStrLn ("explains: " <> (candidatePayload c).diagnosticKey <> "  \"" <> (candidatePayload c).diagnosticText <> "\"")
-    PickedExit e -> TIO.putStrLn ("explains: <" <> exitKey e <> ">")
-  TIO.putStrLn ("  ranked: " <> T.intercalate ", " [k <> "=" <> showT p | (k, p) <- ranked a.explains])
-  TIO.putStrLn ("next: " <> match a.next Next
-    { rerunFocusedCheck = \(Check c) -> "rerun check " <> c
-    , readImplicatedSource = \what -> what <> " the implicated source"
-    , askModel = \(Handoff why) -> "hand back to the model (" <> why <> ")"
-    } <> "  confidence " <> showT (confidence a.next))
-  case picked a.verify of
-    PickedCandidate c -> let Check k = candidatePayload c in TIO.putStrLn ("verify: " <> k)
-    PickedExit e -> TIO.putStrLn ("verify: <" <> exitKey e <> ">")
+  TIO.putStrLn ("explains: " <> caseOf a.explains
+    (  #no_match (\() -> "<no listed diagnostic>")
+    .| onMany (\e -> (elementPayload e).diagnosticKey <> "  \"" <> (elementPayload e).diagnosticText <> "\"") ))
+  TIO.putStrLn ("  ranked: " <> T.intercalate ", " [selectedKey s <> "=" <> showT p | (p, s) <- ranked a.explains])
+  TIO.putStrLn ("next: " <> caseOf a.next
+    (  #rerun (\(Check c) -> "rerun check " <> c)
+    .| #read_source (\what -> what <> " the implicated source")
+    .| #ask_model (\(Handoff why) -> "hand back to the model (" <> why <> ")") )
+    <> "  confidence " <> showT (confidence a.next))
+  TIO.putStrLn ("verify: " <> caseOf a.verify (onMany (\e -> let Check k = elementPayload e in k) .| #defer (\() -> "<defer to the model>")))
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> showT (probabilityYes sub.applies) | (k, sub) <- a.relevant])
   TIO.putStrLn ("sufficient: " <> showT (probabilityYes a.sufficient)
     <> (if yesAbove 0.7 a.sufficient then "  (yes)" else if noBelow 0.3 a.sufficient then "  (no)" else "  (unsure)"))
-  let m = levelMasses a.breadth
-  TIO.putStrLn ("breadth: " <> showT (expectation a.breadth)
-    <> "  localized " <> showT m.localized <> ", adjacent " <> showT m.adjacentCallers <> ", contract " <> showT m.crossesContract)
+  TIO.putStrLn ("breadth: " <> showT (expectation a.breadth) <> "  nearest " <> levelOf a.breadth
+    <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent a.breadth))
+  TIO.putStrLn ("if flaky: " <> caseOf a.if_flaky (onMany (\e -> let Check k = elementPayload e in k)))
+  TIO.putStrLn ("pool: " <> T.intercalate ", " [k | (k, _, _) <- poolEntries a.checks])
   mapM_ (TIO.putStrLn . ("diagnostic: " <>)) (diagnostics resp)
   where
     showT :: Show x => x -> Text

@@ -13,6 +13,7 @@ args=(
   --diagnostic "d2=bookmark identity assertion failed after prefix insertion; observed old numerical offset"
   --diagnostic "d3=test suite aborted because bookmark regression failed"
   --check "prefix_insert=Compares saved bookmark offset with the logical character after a prefix insert"
+  --check "bookmark.fuzz/quick=Randomised bookmark edits with a small budget"
   --check "lookup_benchmark=Measures lookup time only"
   --check "path_normalization=Checks path normalization"
 )

@@ -1,14 +1,15 @@
 cabal-version:      3.0
 name:               jev-dsl
 version:            0.1.0.0
-synopsis:           Typed record DSL for TypeSafe's Jev: one record renders the request and decodes the response
+synopsis:           Typed packet DSL for TypeSafe's Jev: one packet renders the request and decodes the response
 description:
-  Author a question record once. Under the Questions mode it holds wording,
-  structured criteria, and local payloads; prepared, it becomes the exact
-  request JSON. Under the Answers mode the same record holds typed selections
-  with their retained payloads, full distributions, and confidence, decoded
-  from the response against the alternatives this request sent. No network:
-  any transport carries the JSON.
+  Author a packet of labelled questions once. Under the Questions mode it
+  holds wording, structured criteria, and local payloads; prepared, it
+  becomes the exact request JSON. Under the Answers mode the same packet
+  holds typed selections with their retained payloads, full distributions,
+  and confidence, decoded from the response against the alternatives this
+  request sent. Alternatives, descriptions, and rubrics live in the type.
+  No network: any transport carries the JSON.
 license:            MIT
 license-file:       LICENSE
 author:             Inanna Malick
@@ -25,7 +26,7 @@ library
   hs-source-dirs:   src
   -- Jev.Core.* import boot packages only (base, containers, text) so they can
   -- be copied verbatim into an environment without aeson and given another
-  -- JsonValue instance. Only Jev and Jev.Aeson depend on aeson.
+  -- JsonValue instance. Only Jev, Jev.Operators, and Jev.Aeson depend on aeson.
   exposed-modules:
     Jev
     Jev.Aeson
