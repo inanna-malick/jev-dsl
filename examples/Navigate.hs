@@ -19,7 +19,7 @@
 --   scripts/navigate.sh "where is a premise rendered onto the wire?"
 module Main (main) where
 
-import Control.Monad (forM)
+import Control.Monad (forM, forM_)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key as Key
@@ -83,13 +83,51 @@ outline path = do
               bare = fst (T.breakOn " :: " inside)
           in before <> (if " :: " `T.isInfixOf` inside then bare else "(" <> inside <> ")") <> stripKinds (T.drop 1 after)
 
--- Names this declaration mentions that are declarations elsewhere.
-references :: [Decl] -> Decl -> [Decl]
-references everything d = nub [ e | e <- everything, e /= d, simpleName e `elem` tokens, simpleName e `notElem` ["", "where", "case", "of"] ]
+-- The symbols a declaration defines: the function or type it names, its
+-- constructors, its record fields, its class methods. Type variables are
+-- never symbols.
+symbols :: Decl -> [Text]
+symbols d = nub (filter (not . T.null) (own ++ inner))
   where
-    tokens = nub (concatMap (T.split (not . isIdent)) d.declLines)
+    firstLine = T.strip (T.unwords (take 1 d.declLines))
+    ws = T.words firstLine
+    own = case ws of
+      "instance" : _ -> []
+      w : rest | w `elem` ["data", "newtype", "type", "class"] -> take 1 (dropWhile (`elem` ["family", "instance"]) rest)
+      w : _ -> [bare w]
+      [] -> []
+    -- constructors, fields, methods: identifiers that begin a line's payload
+    inner = concat
+      [ case T.words (T.dropWhile (`elem` ("=|{}," :: String)) (T.strip l)) of
+          w : "::" : _ -> [bare w]                         -- field, method, or GADT constructor
+          w : _ | isCon w && startsPayload l -> [bare w]   -- constructor after = or |
+          _ -> []
+      | l <- d.declLines ]
+    startsPayload l = any (`T.isPrefixOf` T.strip l) ["=", "|"] || "= " `T.isInfixOf` l && isDataLike
+    isDataLike = take 1 ws `elem` [["data"], ["newtype"]]
+    isCon w = not (T.null w) && T.head w `elem` ['A' .. 'Z']
+    bare w = T.filter (`notElem` ("()" :: String)) (fst (T.breakOn " " w))
+
+data Relation = Uses | UsedBy | Both deriving (Eq, Show)
+
+-- Declarations this one uses (their symbols appear in its body) and the
+-- declarations that use it; both directions, because an inquiry about a
+-- constructor is often answered where it is matched.
+neighbours :: [Decl] -> Decl -> [(Relation, Decl)]
+neighbours everything d = [ (rel, e) | e <- everything, e /= d, Just rel <- [relation e] ]
+  where
+    mine = symbols d
+    tokensOf e = nub (concatMap (T.split (not . isIdent)) e.declLines)
     isIdent c = isAlphaNum c || c `elem` ("_'" :: String)
-    simpleName e = last (T.words e.declName)
+    myTokens = tokensOf d
+    relation e =
+      let uses = any (`elem` myTokens) (symbols e)
+          usedBy = any (`elem` tokensOf e) mine
+      in case (uses, usedBy) of
+           (True, True) -> Just Both
+           (True, False) -> Just Uses
+           (False, True) -> Just UsedBy
+           (False, False) -> Nothing
 
 numbered :: Decl -> [(Int, Text)]
 numbered d = zip [d.declStart ..] d.declLines
@@ -137,7 +175,8 @@ pickDecl transport inquiry decls m = do
 
 -- One hop: read a declaration, judge it, and choose what to read next.
 hop transport inquiry everything trail d = do
-  let refs = pool #refs [ (declKey e, String (T.strip (T.unwords (take 1 e.declLines))), e) | e <- references everything d ]
+  let refs = pool #refs [ (declKey e, object ["relation" .= relText rel, "head" .= T.strip (T.unwords (take 1 e.declLines))], e) | (rel, e) <- take 24 (neighbours everything d) ]
+      relText r = case r of { Uses -> "this declaration uses it" :: Text; UsedBy -> "it uses this declaration"; Both -> "each uses the other" }
       lines' = numbered d
   roundTrip transport jevLatest
     (state (object
@@ -158,9 +197,9 @@ hop transport inquiry everything trail d = do
                   (  alt #stop_here "This declaration settles the inquiry; nothing more to read" ()
                   .| alt #ask_model "Settling the inquiry needs judgment or context the source does not supply" ()
                   .| manyFrom refs )
-    :& #bears := eachIn refs (\r -> #on_inquiry := askAbout r "Does this referenced declaration bear on the inquiry?" :& Nil)
-    :& #if_elsewhere := given "the behavior the inquiry asks about is implemented in a referenced declaration"
-                          (choice "Which referenced declaration implements it?" (manyFrom refs .| alt #unclear "Cannot tell from this declaration" ()))
+    :& #bears := eachIn refs (\r -> #on_inquiry := askAbout r "Does this neighbouring declaration bear on the inquiry?" :& Nil)
+    :& #if_elsewhere := given "the behavior the inquiry asks about is implemented in a neighbouring declaration, one this uses or one that uses it"
+                          (choice "Which neighbouring declaration implements it?" (manyFrom refs .| alt #unclear "Cannot tell from this declaration" ()))
     :& Nil )
 
 -- Closing packet: two witnesses, one answer.
@@ -184,7 +223,7 @@ investigate transport tokens inquiry decls maxHops = do
     Right resp -> do
       count tokens resp
       let a = answers resp
-          modules = take 2 [ m | (_, s) <- contenders 0.3 a.which, Just m <- [handle s (#none (\() -> Nothing) .| onMany (\_ m -> Just m))] ]
+          modules = take 2 [ m | (_, s) <- contenders 0.15 a.which, Just m <- [handle s (#none (\() -> Nothing) .| onMany (\_ m -> Just m))] ]
       say ("module: " <> T.intercalate ", " [ k <> " " <> pct (yes sub.holds) | (k, sub) <- a.each ] <> "; reading " <> T.intercalate " and " (map (T.pack . takeFileName) modules))
       if null modules then pure (Right (NeedsJudgment [])) else do
         picks <- forM modules (pickDecl transport inquiry decls)
@@ -196,6 +235,8 @@ investigate transport tokens inquiry decls maxHops = do
             if null starts then pure (Right (NeedsJudgment [])) else do
               outcomes <- forM starts $ \(m, d) -> walk seen [] [Step d ("starting point, " <> pct m)] d maxHops
               let witnesses = [ w | Right w@(Witness {}) <- outcomes ]
+                  judgments = [ o | Right o@(NeedsJudgment _) <- outcomes ]
+                  exhausted = sortOn (\o -> case o of Exhausted t -> negate (length t); _ -> 0) [ o | Right o@(Exhausted _) <- outcomes ]
               case (witnesses, [ e | Left e <- outcomes ]) of
                 (_, e : _) -> pure (Left e)
                 ([w], _) -> pure (Right w)
@@ -203,6 +244,7 @@ investigate transport tokens inquiry decls maxHops = do
                   say "two witnesses; asking which answers"
                   judge [(d1, n1, l1, t1), (d2, n2, l2, t2)]
                 (w : _, _) -> pure (Right w)
+                ([], _) | j : _ <- judgments, null exhausted -> pure (Right j)
                 ([], _) -> do
                   -- nothing cleared the bar: let Jev judge between the two best partial answers
                   best <- take 2 . sortOn (negate . seenDirect) <$> readIORef seen
@@ -238,9 +280,11 @@ investigate transport tokens inquiry decls maxHops = do
                   lineText = maybe (T.strip (T.unwords (take 1 d.declLines))) (\n -> T.strip (d.declLines !! (n - d.declStart))) lineOf
                   witness = Witness d lineNo lineText trail
                   premised = handle (chosen a.if_elsewhere) (onMany (\_ e -> Just e) .| #unclear (\() -> Nothing))
-                  -- the best referenced declaration by the evidence already in hand
-                  bestRef = case [ e | (_, s) <- contenders 0.1 a.next, Just e <- [handle s (#stop_here (\() -> Nothing) .| #ask_model (\() -> Nothing) .| onMany (\_ e -> Just e))] ] of
-                    e : _ -> Just e
+                  -- the best neighbour by the evidence already in hand: the per-neighbour
+                  -- Nouls first, the next-choice masses to break ties
+                  ranked = [ (yes sub.on_inquiry + m, e) | (m, s) <- contenders 0 a.next, Just e <- [handle s (#stop_here (\() -> Nothing) .| #ask_model (\() -> Nothing) .| onMany (\_ e -> Just e))], Just sub <- [lookup (declKey e) a.bears] ]
+                  bestRef = case sortOn (negate . fst) ranked of
+                    (_, e) : _ -> Just e
                     [] -> Nothing
                   followed = case premised of
                     Just e -> Just e
@@ -269,11 +313,17 @@ investigate transport tokens inquiry decls maxHops = do
 main :: IO ()
 main = do
   args <- getArgs
-  inquiry <- case args of
-    [q] -> pure (T.pack q)
-    _ -> hPutStrLn stderr "usage: jev-dsl-navigate \"question about this library's source\"" >> exitFailure
   files <- filter ((== ".hs") . takeExtension) <$> listDirectory "src/Jev/Core"
   decls <- concat <$> forM (sortOn id files) (\f -> outline ("src/Jev/Core" </> f))
+  inquiry <- case args of
+    [q] -> pure (T.pack q)
+    ["--graph", name] -> do
+      -- the deterministic side alone: what a declaration defines and touches
+      forM_ [ d | d <- decls, T.pack name `T.isInfixOf` declKey d ] $ \d -> do
+        TIO.putStrLn (declKey d <> "  defines " <> T.intercalate ", " (symbols d))
+        forM_ (neighbours decls d) $ \(rel, e) -> TIO.putStrLn ("  " <> T.pack (show rel) <> " " <> declKey e)
+      exitFailure
+    _ -> hPutStrLn stderr "usage: jev-dsl-navigate \"question about this library's source\"" >> exitFailure
   say ("outline: " <> T.pack (show (length decls)) <> " declarations in " <> T.pack (show (length files)) <> " modules")
   tokens <- newIORef (0 :: Int, 0 :: Int)
   result <- investigate curl tokens inquiry decls 5
