@@ -332,9 +332,9 @@ interpret call = \case
                     (many [(k, String meaning, play) | (k, meaning, play) <- branches]))
         follow a = do
           let runnersUp = [k <> " " <> pct m | (m, s) <- contenders 0.2 a, let k = selectedKey s, k /= a.key]
-          aside ("heard " <> a.key <> " " <> pct a.confidence
+          aside ("heard " <> a.key <> " " <> pct a.mass
             <> if null runnersUp then "" else "  (also " <> T.intercalate ", " runnersUp <> ")")
-          handle (chosen a) (onMany (\k play -> play (t `saw` Turn line reply k a.confidence)))
+          handle (chosen a) (onMany (\k play -> play (t `saw` Turn line reply k a.mass)))
     case trip of
       Nothing -> ask1 call jevLatest st sorting >>= must >>= follow
       Just (wording, tripped) -> do
@@ -382,7 +382,7 @@ interpret call = \case
       handle (chosen a)
         (  #nothing (\() -> next t)
         .| onMany (\_ h -> do
-             aside ("happening " <> h.tag <> " " <> pct a.confidence)
+             aside ("happening " <> h.tag <> " " <> pct a.mass)
              narrate h.seen
              guard (h.said (headMay t.standing))
              let t' = t { happened = h.tag : t.happened, here = h.apply t.here }
