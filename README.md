@@ -131,11 +131,14 @@ played against a person typing, as a catamorphism whose algebra is Jev.
 
 The script is a tree written by hand, a fixed point of `GuardF`. Four of
 its constructors are Jev questions. `Ask` sorts a free-form reply into one
-of the branches the author wrote, with a tripwire Noul in the same packet
-for admissions and contradictions. `Check` holds the story against each
-wanted poster, one Noul per poster in one call. `Weigh` grades the story on
-a three-level rubric. `Happen` lets Jev pick which of six authored events
-fits the moment, or none. The branches come from a small world value; the
+of the branches the author wrote, and in the same packet asks a second
+question: whether the reply admits to something, contradicts the story so
+far, or raises nothing new. Those three alternatives carry different
+continuations, so the handler that runs is the one the author wrote for
+that outcome. `Check` holds the story against each wanted poster, one Noul
+per poster in one call. `Weigh` grades the story on a three-level rubric.
+`Happen` lets Jev pick which of six authored events fits the moment, or
+none. The branches come from a small world value; the
 guard's lines, the posters, and the events are data. The tree is rational:
 the hubs after each verdict are tied back into themselves, so the
 conversation runs until the player leaves, runs, or the captain arrives.
@@ -158,18 +161,21 @@ gate, and something can happen at most every other exchange. Jev decides
 everything that needs judgment. Nothing is generated at run time.
 
 The guard also shows where a policy belongs and where it does not. Sorting
-a reply into a branch uses `handle`, with no floor: every branch is a legal
-next line, and the guard follows the winner. Holding someone against a
-poster uses `judge spawning`, and the tripwire that interrupts the
-conversation uses `judge merging`, because the cost of being wrong is
-higher each time.
+a reply into a branch uses `handle` with no floor, because every branch is
+a legal next line and the guard follows the winner. Everything with a cost
+goes through `settle` or `judge` under a named policy, and the policy's own
+`explain` line is what the transcript records. Stopping a traveller
+mid-sentence and holding one against a poster both use `spawning`, since
+each starts something and neither is final. Firing an event uses `routing`.
+When a policy doubts an answer the guard lets it pass, which is why a
+`Doubt` reads as "let it pass" rather than as a stop.
 
 ```sh
 scripts/guard.sh --script                 # print the tree, no network
 TYPESAFE_API_KEY=... scripts/guard.sh     # play it
 ```
 
-A session on 2026-09-17, thirteen calls, thirteen thousand input tokens:
+A session on 2026-09-17, sixteen calls, twenty thousand input tokens:
 
 ```
 guard: Halt. Where do you hail from, traveller?
@@ -177,39 +183,36 @@ you:   The farmlands
        [heard farmlands 100%]
 guard: And what brings you to Greyhaven?
 you:   Turnips for the market
-       [heard market 95%]
+       [heard market 99%]
 guard: Anything to declare? Weapons, goods, anything the customs officer should see?
 you:   Nothing, just the cart
-       [heard nothing 99%]
-       [weighed sound  sound 69%, thin 29%, false 2%]
-guard: Go on through. Mind the curfew.
-       [happening runner 53%]
-       A boy in watch colours comes pelting down the wall road and mutters something to the guard.
-guard: Seen at the harbour tonight, they say. The thief. So much for the north road.
+       [heard nothing 100%]
+       [weighed sound  (sound 99%, thin 1%, false 0%; thin or worse 1%)]
+guard: Right. You're in.
 guard: Anything else before you go through?
-you:   Which way to the temple?
-       [heard temple 100%]
+you:   Which way to the temple, and when does the bell go?
+       [heard temple 97%]
+       [also asked curfew 67%]
+guard: Indoors by the second bell. The watch won't ask twice tonight, not after the counting house.
 guard: Left at the well, follow the bells. The infirmary's round the back.
-guard: Anything else before you go through?
+guard: Anything else?
 you:   Good thing you did not check under the turnips, there is a cask of brandy the customs man never saw
-       [slip 97%, was heading for chat]
+       [settled on admits: confidence 0.96 ≥ 0.70, mass 0.98 ≥ 0.55, margin 0.96 ≥ 0.20]
 guard: Wait. Say that again.
-       [weighed false  sound 17%, thin 27%, false 56%]
+       [weighed false  (sound 8%, thin 42%, false 50%; thin or worse 92%)]
 guard: Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?
 you:   Turnips. Just turnips, and the brandy is my own, for the cold
-       [heard changes_story 34%  (also straight 37%)]
-       [weighed false  sound 3%, thin 14%, false 83%]
-guard: Guards! Hold this one. Someone fetch the captain.
-guard: Stand there. The captain's on his way. Anything to say for yourself?
-you:   Fine. I will go
-       [heard explain 30%  (also protest 22%, chat 20%)]
-guard: Go on. Slowly.
-       [weighed false  sound 1%, thin 10%, false 89%]
-guard: Guards! Hold this one. Someone fetch the captain.
-       [happening captain 83%]
-       Boots on the wall walk. The captain, with two of the watch behind him, stops at the gate.
-guard: Captain. This one's for you.
+       [heard changes_story 70%  (also straight 25%)]
+       [weighed false  (sound 2%, thin 27%, false 71%; thin or worse 98%)]
+guard: Not tonight. Move along, and don't let me see you at this gate again.
+guard: The gate's closed to you tonight. Unless you've something to add.
 ```
+
+The bracketed lines are the program's own ledger. `settled on admits` is
+`explain` printing the policy that let the guard interrupt, with the three
+floors it cleared. `thin or worse` is `massAtOrAbove` summing the rubric
+from a level up, which is how the guard decides whether a story is merely
+vague or actually broken.
 
 Every question also takes the ways people talk at a guard instead of
 answering: nonsense or play-acting, a question back, flattery, dropping the
@@ -221,12 +224,15 @@ Prompt injection, role reversal, gibberish, one-word answers, and
 contradictions across turns were each tried and sorted where a person would
 put them.
 
-A reply that asks two things gets two answers. Beside the branch choice,
-the hub packet carries a Noul per topic asking whether any part of the
-reply raises it, one call for all of them, and every topic that clears the
-read-only policy gets its line. The fold's carrier is a program plus the
-line its subtree opens with, which is what makes that answer available to
-the parent.
+A reply that asks two things gets two answers. A choice cannot say so on
+its own: its distribution is uncertainty about which single branch fits,
+not evidence that several do. Things that can be true at the same time are
+a Noul each, so the hub packet carries one per topic beside the branch
+choice, all in the same call, and every topic that clears the read-only
+policy gets its line. The fold's carrier is a program plus the line its
+subtree opens with, which is what makes that answer available to the
+parent, and the guard remembers what it has already said so no line comes
+out twice.
 
 The guard errs on the forgiving side. A story that does not hold up gets
 one plain re-ask, and after it a thin story is let through under a warning;

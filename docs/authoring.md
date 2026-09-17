@@ -265,6 +265,12 @@ catamorphism whose algebra is Jev.
 - **The continuation is the payload.** When the program's next step depends
   on the branch, offer the branches with their continuations as payloads
   and let the handler run the winner. No dispatch table.
+- **A choice picks one; a Noul each says how many.** A choice's
+  distribution is uncertainty about which single alternative fits, not
+  evidence that several apply. When things can be true at the same time,
+  ask a Noul per thing with `each`, in the same packet, and judge each one.
+  Reading a choice's runner-up mass as "this also applies" conflates
+  doubt with multiplicity.
 - **Rules in Haskell, judgments in Jev.** Decide eligibility before the
   call and offer only what is legal now; do not ask a Noul whether an
   alternative should be on offer. What the state cannot decide, a question
@@ -275,6 +281,13 @@ catamorphism whose algebra is Jev.
   says yes and the chosen branch otherwise. Give the Noul a route only
   where there is somewhere to send the case; a tripwire with nowhere to go
   steals branches that mean something.
+- **Wording moves the numbers more than anything else.** Rewriting one
+  alternative in `examples/Guard.hs` from "cannot be squared with what the
+  traveller said earlier" to a sentence naming the state field and the
+  three concrete ways it could conflict moved that answer from mass 0.56 at
+  0.34 confidence to mass 0.81 at 0.72, which was the difference between
+  the program acting and the program doubting. Nothing about the types
+  changed.
 - **Ambiguity and absent evidence are different failures.** A `Doubt` means
   the provider was not clear. It does not mean the evidence was missing: a
   model can be confident and wrong because the state never carried what it
