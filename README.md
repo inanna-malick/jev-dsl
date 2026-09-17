@@ -182,52 +182,63 @@ them:
 TYPESAFE_API_KEY=... ./scripts/example.sh
 ```
 
-## Ask the source
+## The gate at Harrow
 
-`jev-dsl-navigate` answers a question about this library's own code with a
-line number, and no frontier model in the loop. Haskell parses the modules
-into declarations, with their section banners, their comments, the symbols
-each defines, and which declarations use which. Every call carries a map
-of the codebase: modules, their purpose, their sections, and the names
-under each. One packet picks the module; one packet, with the whole
-module's source in the state, picks the declaration to read; each hop
-reads one declaration with its comment and asks a packet about it: a
-rubric for how directly it answers, a choice over its lines, a choice over
-its neighbours drawn from a pool that says how each is related and where
-it is mentioned, a Noul per neighbour, and a premise-prefixed choice for
-where the behavior lives if not here. Two starting points stay alive when
-a choice is torn, a near tie between neighbours reads both, a policy turns
-other doubt into an evidence-ranked fallback, and a closing packet judges
-between two witnesses, or between the two best partial answers when
-nothing clears the bar.
+`jev-dsl-guard` is a guard at a city gate, written as a catamorphism with
+Jev for its algebra. The script is a tree written by hand in
+`examples/Guard.hs`: what the guard asks, which kinds of reply it tells
+apart, when it holds the account against the posted notices, and how it
+weighs the whole account at the end. Its three branching constructors are
+Jev's three question kinds. A free-form reply is sorted into a branch by a
+choice; the account is held against each notice by a Noul per notice over
+a pool; the account is graded by a score on a three-level rubric. The
+branches themselves come from a small world value, so changing the roads
+into the city changes what the guard asks.
+
+Two folds run over the same tree. One is pure and prints the script. The
+other builds a program: each node becomes a `Play` that says its line,
+reads a reply, makes one Jev call, and continues into whichever child Jev
+chose. The child's continuation rides inside the Jev alternative as its
+payload, so there is no routing code:
+
+```haskell
+putStr (cata render (gate world))
+outcome <- cata (interpret world transport) (gate world) (Traveller [])
+```
+
+Nothing is generated at run time. The author wrote every line and every
+branch; Jev only decides which branch a reply takes, which notice fits, and
+how sound the account is. Rules stay in Haskell: banned cargo turns a
+traveller away without any weighing.
 
 ```sh
-TYPESAFE_API_KEY=... scripts/navigate.sh "where is a premise rendered onto the wire?"
-scripts/navigate.sh --graph renderInstructions   # the deterministic side alone
+scripts/guard.sh --script                 # print the tree, no network
+TYPESAFE_API_KEY=... scripts/guard.sh     # play it, one call per node visited
 ```
 
-Live runs on 2026-09-16, one to six calls each:
+A conversation on 2026-09-17, three calls and about two thousand input
+tokens:
 
 ```
-where does a choice that draws on a pool get the pool name added to its instructions?
-  src/Jev/Core/Schema.hs:551  [(n, _)] -> Right (extras [("pool", jString n)] i0)
-where is a premise rendered onto the wire?
-  src/Jev/Core/Contract.hs:138  Premised p inner -> [("instructions", jObject (("premise", jString p) : renderInstructions inner))]
-which check rejects a rubric with more than ten levels?
-  src/Jev/Core/Schema.hs:585  if null entries || length entries > 10 then Left (BadLevelCount key (length entries)) else Right ()
-Where does the library add an assumption like 'if the behavior is implemented elsewhere' to a Jev question?
-  src/Jev/Core/Schema.hs:408  given p = reword (Premised p)
-where is the state wrapped with context and pools when a packet declares pools?
-  src/Jev/Core/Schema.hs:798  , ("state", if null decl then stateValue st else jObject [("context", stateValue st), ("pools", jObject decl)])
-where does a near tie between the winner and the runner-up become a Doubt?
-  src/Jev/Core/Schema.hs:457  (k2, p2) : _ | mass - p2 < minMargin policy -> Left (NearTie (winner, mass) (k2, p2))
+guard: Evening. Where have you come from today?
+you:   The coast road, though I was in the hills before that
+       [heard coast 99%]
+guard: And your business in the city?
+you:   Lighting a candle for my brother, then the market if there is time
+       [heard cathedral 64%  (also market 26%)]
+guard: What are you carrying?
+you:   Some fish, and a box of glass beads my brother made
+       [heard unsealed_glass 83%]
+
+verdict: TurnAway
 ```
 
-Clean cases cost about eight thousand input tokens; a wandering one about
-twice that. What Jev sees decides what it judges well: the same question
-about `given` scored 0.4 when the declaration was shown bare and 0.9 once
-its comment and section travelled with it. The program is
-`examples/Navigate.hs`; its transport is `scripts/transport.sh`, a curl
+A traveller from Redwater with "business with a few of the lens-grinders,
+about money they owe" fit the debt-buyer notice at 93% and was sent for the
+captain. One claiming work at the glassworks, "trained under a furnace
+master, seventeen", fit the apprentice notice at 63%. "Does it matter where
+I have come from?" was heard as evasive at 100%, and the weighing then
+called the account thin. The transport is `scripts/transport.sh`, a curl
 call that keeps the key out of every Haskell process.
 
 ## Building
