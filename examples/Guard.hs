@@ -43,9 +43,9 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
-import Data.List (sortOn)
+import Data.List (mapAccumL, maximumBy, sortOn)
 import Data.Maybe (fromMaybe)
-import Data.Ord (Down (..))
+import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -73,7 +73,7 @@ data Happening = Happening
   { tag :: Text
   , blurb :: Text                    -- what Jev is shown
   , seen :: Text                     -- what the player sees
-  , said :: Text                     -- what the guard says about it
+  , said :: Maybe Action -> Text     -- what the guard says about it, given where the traveller stands
   , apply :: World -> World          -- the world afterwards
   }
 
@@ -101,27 +101,27 @@ world = World
   , happenings =
       [ Happening "bell" "The curfew bell rings out over the city"
           "The curfew bell starts up over the rooftops, slow and heavy."
-          "There's the bell. Nobody's got long now."
+          (const "There's the bell. Nobody's got long now.")
           (\w -> w { bellGone = True, edict = w.edict <> " The curfew bell has gone; anyone still outside is to be moved along." })
       , Happening "runner" "A runner from the barracks arrives with news about the thief"
           "A boy in watch colours comes pelting down the wall road and mutters something to the guard."
-          "Seen at the harbour tonight, they say. The thief. So much for the north road."
+          (const "Seen at the harbour tonight, they say. The thief. So much for the north road.")
           (\w -> w { posters = [(k, if k == "thief" then p <> " Fresh word: seen at the harbour tonight." else p) | (k, p) <- w.posters] })
       , Happening "rain" "It starts to rain"
           "The first drops hit the flagstones. Then the rest of them."
-          "Perfect. Of course it is."
+          (const "Perfect. Of course it is.")
           id
       , Happening "cart" "A cart pulls up behind the traveller and waits"
           "Behind you a cart creaks to a halt, and a carter sits looking at the back of your head."
-          "You're holding up the line. Make it quick."
+          (const "You're holding up the line. Make it quick.")
           id
       , Happening "drunk" "A drunk is thrown out of the Broken Wheel, within earshot of the gate"
           "Somewhere behind the wall a door bangs and somebody lands in the street, singing."
-          "Every night. Every single night."
+          (const "Every night. Every single night.")
           id
       , Happening "captain" "The captain passes the gate on his rounds"
           "Boots on the wall walk. The captain, with two of the watch behind him, stops at the gate."
-          "Captain. This one's for you."
+          (\case Just SendForCaptain -> "Captain. This one's for you."; _ -> "Evening, Captain. Nothing to report.")
           id
       ]
   }
@@ -261,19 +261,31 @@ gate w = askOrigin False
 -- Fold one: print the script, each knot once
 -- ---------------------------------------------------------------------------
 
-render :: GuardF ([Text] -> Text) -> [Text] -> Text
+-- The carrier threads the knots already printed through the children in
+-- order, so a hub reached from many places is printed once and named after.
+render :: GuardF ([Text] -> ([Text], Text)) -> [Text] -> ([Text], Text)
 render node tied = case node of
-  Ask line trip bs -> T.unlines (("ask  " <> quote line) : maybe [] (\(q, r) -> branch ("if slips  (" <> q <> ")") (r tied)) trip
-                                 ++ concat [branch (k <> "  (" <> m <> ")") (r tied) | (k, m, r) <- bs])
-  Say line next -> "say  " <> quote line <> "\n" <> next tied
-  Check ms none -> T.unlines ("check the posters" : concat [branch ("matches " <> k) (r tied) | (k, r) <- ms] ++ branch "no poster matches" (none tied))
+  Ask line trip bs ->
+    let (tied1, tripLines) = case trip of
+          Nothing -> (tied, [])
+          Just (q, r) -> let (tied', out) = r tied in (tied', branch ("if slips  (" <> q <> ")") out)
+        (tied2, rest) = mapAccumL (\acc (k, m, r) -> let (acc', out) = r acc in (acc', branch (k <> "  (" <> m <> ")") out)) tied1 bs
+    in (tied2, T.unlines (("ask  " <> quote line) : tripLines ++ concat rest))
+  Say line next -> let (tied', out) = next tied in (tied', "say  " <> quote line <> "\n" <> out)
+  Check ms none ->
+    let (tied1, matched) = mapAccumL (\acc (k, r) -> let (acc', out) = r acc in (acc', branch ("matches " <> k) out)) tied ms
+        (tied2, rest) = none tied1
+    in (tied2, T.unlines ("check the posters" : concat matched ++ branch "no poster matches" rest))
   Weigh q (a, x) (b, y) (c, z) ->
-    T.unlines (("weigh  " <> quote q) : concat [branch (l <> "  (" <> m <> ")") (r tied) | (l, m, r) <- [("sound", a, x), ("thin", b, y), ("false", c, z)]])
-  Happen next -> "something may happen\n" <> next tied
-  Knot name body | name `elem` tied -> "back to " <> name <> "\n"
-                 | otherwise -> name <> ":\n" <> body (name : tied)
-  Verdict v next -> "verdict " <> T.pack (show v) <> "\n" <> next tied
-  End -> "end\n"
+    let (tied', ls) = mapAccumL (\acc (l, m, r) -> let (acc', out) = r acc in (acc', branch (l <> "  (" <> m <> ")") out)) tied
+                        [("sound", a, x), ("thin", b, y), ("false", c, z)]
+    in (tied', T.unlines (("weigh  " <> quote q) : concat ls))
+  Happen next -> let (tied', out) = next tied in (tied', "something may happen\n" <> out)
+  Knot name body
+    | name `elem` tied -> (tied, "back to " <> name <> "\n")
+    | otherwise -> let (tied', out) = body (name : tied) in (tied', name <> ":\n" <> out)
+  Verdict v next -> let (tied', out) = next tied in (tied', "verdict " <> T.pack (show v) <> "\n" <> out)
+  End -> (tied, "end\n")
 
 -- A leaf is shown on the branch's own line; a subtree is indented under it.
 branch :: Text -> Text -> [Text]
@@ -335,24 +347,26 @@ interpret call = \case
   Weigh q (sound, x) (thin, y) (false, z) -> \t -> do
     a <- must =<< ask1 call jevLatest (situation t [])
       (given t.here.edict (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false))))
-    aside ("weighed " <> a.nearest <> "  " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses])
-    case a.nearest of
+    let likeliest = fst (maximumBy (comparing snd) a.masses)
+    aside ("weighed " <> likeliest <> "  " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses])
+    case likeliest of
       "sound" -> x t
       "thin" -> y t
       _ -> z t
 
   Happen next -> \t -> do
+    -- The night moves at its own pace: something can happen at most every other exchange.
     let unused = [h | h <- t.here.happenings, h.tag `notElem` t.happened]
-    if null unused then next t else do
+    if null unused || even (length t.turns) then next t else do
       a <- must =<< ask1 call jevLatest (situation t [])
-        (given t.here.edict (choice "Which of these, if any, happens now? Most moments, nothing does."
+        (given t.here.edict (choice "Which of these fits this moment at the gate, given what has happened so far?"
           (alt #nothing "The night goes on; nothing in particular happens" () .| many [(h.tag, String h.blurb, h) | h <- unused])))
       handle (chosen a)
         (  #nothing (\() -> next t)
         .| onMany (\_ h -> do
              aside ("happening " <> h.tag <> " " <> pct a.confidence)
              narrate h.seen
-             guard h.said
+             guard (h.said (headMay t.standing))
              let t' = t { happened = h.tag : t.happened, here = h.apply t.here }
              -- The captain's rounds end a held traveller's night; everyone else watches him pass.
              if h.tag == "captain" && take 1 t.standing == [SendForCaptain]
@@ -397,7 +411,7 @@ situation t extra = state $ object $
 
 main :: IO ()
 main = getArgs >>= \case
-  ["--script"] -> TIO.putStr (cata render (gate world) [])
+  ["--script"] -> TIO.putStr (snd (cata render (gate world) []))
   [] -> do
     hSetBuffering stdout NoBuffering
     calls <- newIORef (0 :: Int, 0 :: Int, 0 :: Int)

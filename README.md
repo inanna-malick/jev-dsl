@@ -1,36 +1,23 @@
 # jev-dsl
 
-A Haskell DSL for models working in a stateful session. A packet is an
-expression: a few labelled questions written once, whose type is inferred
-from the questions themselves. Sent, it becomes the exact request JSON for
-[TypeSafe's Jev](https://docs.typesafe.ai). Answered, it comes back under
-the same labels as plain records you read by field — `a.next.key`,
-`a.next.margin`, `a.enough.yes` — with every selection still carrying the
-local payload it was offered with. Declarations are a liability in a
-session, so there are none to write: no schema type, no instance, no
-codec. The library does no networking; any transport that posts JSON and
-hands the body back will do.
+A Haskell DSL for agents that would rather have a question judged than
+guessed. A packet of labelled questions is written once as an expression;
+its type is inferred, it renders to the exact request JSON for
+[TypeSafe's Jev](https://docs.typesafe.ai), and the answers come back under
+the same labels as records read by field, each selection still carrying the
+payload it was offered with. No schema, no instance, no codec, no network.
 
-Written for an agent that has a Haskell session and a question it would
-rather have judged than guessed, and for the person reviewing what that
-agent wrote. The library covers what a program wants to express with Jev,
-not every request the provider accepts. It is an early alpha, shaped by
-having other models write with it and say what got in the way.
-
-| Module | Audience | Status |
-|---|---|---|
-| `Jev.Operators` | Agent use and review: anonymous packets, inferred alternatives and rubrics, handler lists | implemented |
-| `Jev.Records` | Human use and review: declared records, ordinary sums and enums, `case` | [designed](docs/records-dsl.md) |
-
-`Jev.Transport` holds `request` and `decode` for a program that carries the
-JSON itself; `Jev.Core` is the shared core, polymorphic over the JSON type.
 The guide written for a model is [docs/authoring.md](docs/authoring.md).
-Every example below is compiled by `test/Readme.hs`; the acceptance suite is
-the five microprograms in `test/Corpus.hs`.
+Every example below is compiled by `test/Readme.hs`. `Jev.Operators` is the
+surface; `Jev.Transport` has `request` and `decode` for a program that
+carries the JSON itself; `Jev.Core` is the same library polymorphic over
+the JSON type. A declared-records front for human authors is
+[designed](docs/records-dsl.md), not built.
 
-## The tiny use
+## Locate
 
-One question, one answer, and either a retained payload or a handback.
+One question, one call, and either a payload the program offered or a
+handback. Nothing is declared.
 
 ```haskell
 locate :: Transport -> Text -> [(Int, Text)] -> IO (Maybe Int)
@@ -46,26 +33,20 @@ locate transport source numbered = do
 type Transport = Value -> IO (Either Text Value)
 ```
 
-Everything is inferred from the offer. The payload is a line number, never
-a string the model produced.
-
-The answer is a record, and it displays:
+The payload is a line number the program supplied, never a string the
+model produced. The answer is a record and displays as one:
 
 ```
 > a
 Choice {key = "142", mass = 0.78, margin = 0.61, confidence = 0.80, masses = ["142" 0.78, "137" 0.17, "not_here" 0.05]}
-> a.key
-"142"
 > accept merging a
 Left (Unconfident 0.8)
 ```
 
-`key`, `mass`, `margin`, `confidence` and `masses` are fields, not
-accessors to look up. `accept` weighs them against a policy and gives back
-the selection or a named doubt; `handle` is for the branch that must run
-the payload.
+## Route
 
-## A packet
+Several questions about one situation go in one packet and one call. The
+packet's type is inferred from the questions.
 
 ```haskell
 inspection edges =
@@ -82,19 +63,7 @@ inspection edges =
   :& Nil
 ```
 
-The packet's type is inferred. Signatures are optional; one shows what was
-inferred:
-
-```haskell
-type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge
-type Inspection = Packet
-  '[ "next" ::= Choice Routes
-   , "urgency" ::= Score ("background" :|: "checkpoint" :|: "blocked")
-   , "children" ::= Each (Packet '[ "useful" ::= Noul ])
-   , "evidence" ::= Group (Packet '[ "enough" ::= Noul ]) ]
-```
-
-Answers come back under the same labels, as records:
+Answers come back under the same labels:
 
 ```haskell
 report :: Inspection Answers -> Text
@@ -107,11 +76,10 @@ report a =
 
 A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`;
 a Noul with `yes`; a score with `nearest`, `expectation`, `confidence` and
-`masses`. `toJSON` on any of them, or on a whole answers packet, is a
-ledger row.
-
-Handlers are for the other path: when the branch must run the payload the
-alternative carried.
+`masses`. When the branch must run the payload it was offered with,
+handlers eliminate the selection. They follow declaration order, and the
+compiler rejects a misordered, missing, extra, or mislabelled handler with
+a message naming the label it expected.
 
 ```haskell
 act :: Inspection Answers -> Text
@@ -123,10 +91,10 @@ act a =
   <> (if massAtOrAbove #blocked a.urgency > 0.5 then " now" else " later")
 ```
 
-Handlers follow declaration order. The compiler rejects a misordered,
-missing, extra, or mislabelled handler, and its message names the label it
-expected. A handler list is a value, so the same list eliminates the winner
-and every contender above a floor, or the winner under a policy:
+A handler list is a value. The same list eliminates every contender above
+a floor, or the winner under a named policy: `routing` for a read-only
+choice, `spawning` for starting work, `merging` for anything with a
+receipt.
 
 ```haskell
 routes :: Handlers Text Routes
@@ -139,14 +107,23 @@ decide :: Inspection Answers -> Either Doubt Text
 decide a = fmap (`handle` routes) (accept spawning a.next)
 ```
 
-Three named policies cover the usual cases: `routing` for a read-only
-choice, `spawning` for starting work, `merging` for anything with a
-receipt.
+Signatures are optional. This one is what the compiler inferred for
+`inspection`:
 
-## Pools and premises
+```haskell
+type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge
+type Inspection = Packet
+  '[ "next" ::= Choice Routes
+   , "urgency" ::= Score ("background" :|: "checkpoint" :|: "blocked")
+   , "children" ::= Each (Packet '[ "useful" ::= Noul ])
+   , "evidence" ::= Group (Packet '[ "enough" ::= Noul ]) ]
+```
+
+## Pool
 
 When several questions range over the same alternatives, declare them once
-under the pool's own name:
+under the pool's name and draw on it from a choice, a per-member Noul, and
+a question under a premise.
 
 ```haskell
 probing probes =
@@ -159,10 +136,103 @@ probing probes =
 retryProbes = pool #probes [("run_retry", "Retries m42 and counts callbacks", Command "just test-target actor retry")]
 ```
 
-The wire carries the wording once, under `state.pools.probes`, with null
-wording at each use and the pool named beside each question that draws on
-it. Two pools may reuse keys; a choice draws on one pool. `given` prefixes a
-runtime premise.
+The wire carries each member's wording once, under `state.pools.probes`,
+and names the pool beside every question that draws on it.
+
+## The gate at Greyhaven
+
+`examples/Guard.hs` is what the library can carry: a city guard at a gate,
+played against a person typing, as a catamorphism whose algebra is Jev.
+
+The script is a tree written by hand, a fixed point of `GuardF`. Four of
+its constructors are Jev questions. `Ask` sorts a free-form reply into one
+of the branches the author wrote, with a tripwire Noul in the same packet
+for admissions and contradictions. `Check` holds the story against each
+wanted poster, one Noul per poster over a pool. `Weigh` grades the story on
+a three-level rubric. `Happen` lets Jev pick which of six authored events
+fits the moment, or none. The branches come from a small world value; the
+guard's lines, the posters, and the events are data. The tree is rational:
+the hubs after each verdict are tied back into themselves, so the
+conversation runs until the player leaves, runs, or the captain arrives.
+
+Two folds run over the same tree. `render` prints it, naming each hub once.
+`interpret` builds a program: every node becomes a `Play` that says its
+line, makes one call, and continues into the child Jev chose. The child's
+continuation rides inside the Jev alternative as its payload, so there is
+no routing code, and the fold is productive over the infinite tree because
+no child is forced until the player takes that branch.
+
+```haskell
+putStr (snd (cata render (gate world) []))
+outcome <- cata (interpret transport) (gate world) (Traveller [] [] [] world)
+```
+
+Rules stay in Haskell: an unbonded weapon is turned away without any
+weighing, a held traveller can talk their way down to the road but never
+through the gate, and something can happen at most every other exchange.
+Jev decides everything that needs judgment. Nothing is generated at run
+time.
+
+```sh
+scripts/guard.sh --script                 # print the tree, no network
+TYPESAFE_API_KEY=... scripts/guard.sh     # play it
+```
+
+A session on 2026-09-17, thirteen calls, thirteen thousand input tokens:
+
+```
+guard: Halt. Where do you hail from, traveller?
+you:   The farmlands
+       [heard farmlands 99%]
+guard: And what brings you to Greyhaven?
+you:   Turnips for the market
+       [heard market 96%]
+guard: Anything to declare? Weapons, goods, anything the customs officer should see?
+you:   Nothing, just the cart
+       [heard nothing 99%]
+       [weighed sound  sound 72%, thin 26%, false 2%]
+guard: Go on through. Mind the curfew.
+       [happening runner 46%]
+       A boy in watch colours comes pelting down the wall road and mutters something to the guard.
+guard: Seen at the harbour tonight, they say. The thief. So much for the north road.
+guard: Anything else before you go through?
+you:   Which way to the temple?
+       [heard temple 100%]
+guard: Left at the well, follow the bells. The infirmary's round the back.
+guard: Anything else before you go through?
+you:   Good thing you did not check under the turnips, there is a cask of brandy the customs man never saw
+       [slip 97%, was heading for chat]
+guard: Wait. Say that again.
+       [weighed false  sound 12%, thin 26%, false 62%]
+guard: Guards! Hold this one. Someone fetch the captain.
+       [happening bell 34%]
+       The curfew bell starts up over the rooftops, slow and heavy.
+guard: There's the bell. Nobody's got long now.
+guard: Stand there. The captain's on his way. Anything to say for yourself?
+you:   It was a joke, I swear it
+       [slip 79%, was heading for explain]
+guard: Noted. The captain will want to hear that.
+guard: Stand there. The captain's on his way. Anything to say for yourself?
+you:   Fine. I will go
+       [heard explain 40%  (also protest 22%)]
+guard: Go on. Slowly.
+       [weighed false  sound 9%, thin 27%, false 64%]
+guard: Guards! Hold this one. Someone fetch the captain.
+       [happening captain 84%]
+       Boots on the wall walk. The captain, with two of the watch behind him, stops at the gate.
+guard: Captain. This one's for you.
+```
+
+In other sessions a traveller off the north road with "only my satchel,
+heavy" matched the thief poster at 68% and was held; "Look, there is a
+silver piece in it for you" tripped the wire at 81% from the turned-away
+hub; "Work. I heard the watch is hiring" was heard as the barracks at 99%;
+and a traveller who answered the first question with "Why do you need to
+know" was asked once more, then moved on with the story marked. An
+ordinary chatty visit runs about eight exchanges, fourteen calls, and
+fifteen thousand input tokens. The transport is `scripts/transport.sh`, a
+curl call that keeps the key out of every Haskell process and retries
+overloads.
 
 ## What is checked, and where
 
@@ -208,68 +278,6 @@ them:
 ```sh
 TYPESAFE_API_KEY=... ./scripts/example.sh
 ```
-
-## The gate at Greyhaven
-
-`jev-dsl-guard` is a city guard at the gate, written as a catamorphism with
-Jev for its algebra. The script is a dialogue tree written by hand in
-`examples/Guard.hs`: what the guard asks, which kinds of reply it tells
-apart, when it holds the traveller's story against the wanted posters, and
-how it weighs the story at the end. Its three branching constructors are
-Jev's three question kinds. A free-form reply is sorted into a branch by a
-choice; the story is held against each poster by a Noul per poster over a
-pool; the story is graded by a score on a three-level rubric. The branches
-come from a small world value, so changing the roads into the city changes
-what the guard asks.
-
-Two folds run over the same tree. One is pure and prints the script. The
-other builds a program: each node becomes a `Play` that says its line,
-reads a reply, makes one Jev call, and continues into whichever child Jev
-chose. The child's continuation rides inside the Jev alternative as its
-payload, so there is no routing code:
-
-```haskell
-putStr (cata render (gate world))
-outcome <- cata (interpret world transport) (gate world) (Traveller [])
-```
-
-Nothing is generated at run time. The author wrote every line and every
-branch; Jev only decides which branch a reply takes, which poster matches,
-and whether the story holds up. Rules stay in Haskell: an unbonded weapon
-turns a traveller away without any weighing, and only travellers from the
-north road or bound for the taverns are checked against the posters.
-
-```sh
-scripts/guard.sh --script                 # print the tree, no network
-TYPESAFE_API_KEY=... scripts/guard.sh     # play it, one call per node visited
-```
-
-A conversation on 2026-09-17, four calls and about three thousand input
-tokens:
-
-```
-guard: Halt. Where do you hail from, traveller?
-you:   The north road
-       [heard north_road 100%]
-guard: And what brings you to Greyhaven?
-you:   Looking for a room at the Broken Wheel, then I move on at first light
-       [heard tavern 99%]
-guard: Anything to declare? Weapons, goods, anything the customs officer should see?
-you:   Only my satchel. Personal things. Heavy, I know, I have been walking a long way
-       [heard nothing 96%]
-       [posters thief 68%, deserter 20%]
-
-guard: Guards! Hold this one. Someone fetch the captain.
-```
-
-A pilgrim on the same road, "bound for the temple, my daughter is in the
-infirmary there", matched the thief poster at 14% and was weighed sound at
-73%. "Work. I heard the watch is hiring since the robbery" was heard as
-barracks at 99%. "My sword. I am not handing it over to anyone" was heard
-as an unbonded weapon and turned away by rule. "That is my own affair" was
-heard as evasive at 100%, and the weighing then called the story thin. The
-transport is `scripts/transport.sh`, a curl call that keeps the key out of
-every Haskell process.
 
 ## Building
 
