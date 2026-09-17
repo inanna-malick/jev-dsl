@@ -48,14 +48,23 @@ data Decl = Decl
   , declName :: Text
   , declStart :: Int          -- 1-based line of the first line
   , declLines :: [Text]
+  , declSection :: Text       -- the nearest section banner above it
+  , declDoc :: [Text]         -- the comment block right above it
   } deriving (Show, Eq)
 
 declKey :: Decl -> Text
 declKey d = T.pack (takeFileName d.declModule) <> "/" <> d.declName
 
+data Module = Module { modulePath :: FilePath, moduleDoc :: [Text], moduleSections :: [(Text, [Decl])] }
+
+moduleName :: Module -> Text
+moduleName = T.pack . takeFileName . modulePath
+
 -- Top-level declarations: runs of lines starting at a column-0 line, merged
--- while the leading token stays the same (signature plus equations).
-outline :: FilePath -> IO [Decl]
+-- while the leading token stays the same (signature plus equations). A
+-- comment block belongs to the declaration below it; a banner names the
+-- section every declaration below it lives in.
+outline :: FilePath -> IO Module
 outline path = do
   ls <- T.lines <$> TIO.readFile path
   let indexed = zip [1 :: Int ..] ls
@@ -65,9 +74,21 @@ outline path = do
         (_, name') : rest | name == name' -> (n, name) : rest
         _ -> (n, name) : acc
       bounds = zip merged (map fst (drop 1 merged) ++ [length ls + 1])
-  pure [ Decl path name n (map snd (takeWhile ((< end) . fst) (dropWhile ((< n) . fst) indexed)))
-       | ((n, name), end) <- bounds, name `notElem` ["import", "module", "infix", "infixl", "infixr"] ]
+      bannerAt n = case [ t | (m, t) <- banners, m < n ] of
+        [] -> "top"
+        ts -> last ts
+      banners = [ (n, T.strip (T.drop 2 l)) | (n, l) <- indexed, "-- " `T.isPrefixOf` l, n > 1
+                , Just prev <- [lookup (n - 1) indexed], "-- ---" `T.isPrefixOf` prev ]
+      docAbove n = reverse (takeWhile (\l -> "--" `T.isPrefixOf` l) (reverse [ l | (m, l) <- indexed, m < n, m >= n - 12 ]))
+      body n end = takeWhile (not . isTrailingComment) (map snd (takeWhile ((< end) . fst) (dropWhile ((< n) . fst) indexed)))
+      isTrailingComment l = "-- " `T.isPrefixOf` l || "-- -" `T.isPrefixOf` l
+      decls = [ Decl path name n (trimBlank (body n end)) (bannerAt n) (docAbove n)
+              | ((n, name), end) <- bounds, name `notElem` ["import", "module", "infix", "infixl", "infixr"] ]
+      header = takeWhile ("--" `T.isPrefixOf`) (dropWhile (not . ("-- |" `T.isPrefixOf`)) ls)
+      sections = [ (sec, [ d | d <- decls, d.declSection == sec ]) | sec <- nub (map declSection decls) ]
+  pure (Module path header sections)
   where
+    trimBlank = reverse . dropWhile T.null . reverse
     isStart l = not (T.null l) && not (isSpace (T.head l)) && not ("--" `T.isPrefixOf` l) && not ("{-" `T.isPrefixOf` l) && not ("#" `T.isPrefixOf` l)
     nameOf l = case T.words (stripKinds l) of
       "instance" : rest -> T.unwords ("instance" : take 4 (takeWhile (/= "where") (afterContext rest)))
@@ -82,6 +103,19 @@ outline path = do
           let (inside, after) = T.breakOn ")" (T.drop 1 rest)
               bare = fst (T.breakOn " :: " inside)
           in before <> (if " :: " `T.isInfixOf` inside then bare else "(" <> inside <> ")") <> stripKinds (T.drop 1 after)
+
+allDecls :: [Module] -> [Decl]
+allDecls = concatMap (concatMap snd . moduleSections)
+
+-- What Jev sees of the whole codebase on every call: modules, their
+-- purpose, their sections, and the names under each.
+codebaseMap :: [Module] -> Value
+codebaseMap mods = object
+  [ Key.fromText (moduleName m) .= object
+      [ "purpose" .= T.unwords (map (T.strip . T.dropWhile (== '|') . T.drop 2) (moduleDoc m))
+      , "sections" .= object [ Key.fromText sec .= [ d.declName | d <- ds ] | (sec, ds) <- moduleSections m ]
+      ]
+  | m <- mods ]
 
 -- The symbols a declaration defines: the function or type it names, its
 -- constructors, its record fields, its class methods. Type variables are
@@ -150,45 +184,58 @@ seenDirect (Seen _ _ _ x _) = x
 
 data Step = Step { stepDecl :: Decl, stepWhy :: Text }
 
--- Packet 0: which module, from the names it declares. Cheap.
-pickModule transport inquiry decls = do
-  let byModule = nub (map declModule decls)
-      names m = [ d.declName | d <- decls, d.declModule == m ]
+-- Packet 0: which module, from the codebase map. Cheap.
+pickModule transport inquiry mods = do
   roundTrip transport jevLatest
-    (state (object [ "inquiry" .= inquiry, "modules" .= object [ Key.fromString (takeFileName m) .= names m | m <- byModule ] ]))
-    (  #which := choice "Which module holds what the inquiry asks about?"
-                    (alt #none "None of these modules" () .| many [ (T.pack (takeFileName m), String (T.pack (show (length (names m))) <> " declarations"), m) | m <- byModule ])
-    :& #each := each [ (T.pack (takeFileName m), #holds := noul ("Does " <> T.pack (takeFileName m) <> " contain the code the inquiry asks about?") :& Nil) | m <- byModule ]
+    (state (object [ "inquiry" .= inquiry, "directory" .= [ modulePath m | m <- mods ], "codebase" .= codebaseMap mods ]))
+    (  #which := choice "Which module holds the code that does what the inquiry asks about?"
+                    (alt #none "None of these modules" () .| many [ (moduleName m, object ["purpose" .= take 1 (moduleDoc m)], m) | m <- mods ])
+    :& #each := each [ (moduleName m, #holds := noul ("Does " <> moduleName m <> " contain the code the inquiry asks about?") :& Nil) | m <- mods ]
     :& Nil )
 
 -- Packet 1: which declaration, with the whole module's source in the
 -- state so the judgment is over bodies, not names.
-pickDecl transport inquiry decls m = do
-  src <- TIO.readFile m
-  let here = [ d | d <- decls, d.declModule == m ]
+pickDecl transport inquiry mods m = do
+  src <- TIO.readFile (modulePath m)
+  let here = concatMap snd (moduleSections m)
       entry d = (declKey d, object ["lines" .= (T.pack (show d.declStart) <> "-" <> T.pack (show (d.declStart + length d.declLines - 1)))
-                                  , "head" .= T.strip (T.unwords (take 1 d.declLines))], d)
+                                  , "section" .= d.declSection, "head" .= T.strip (T.unwords (take 1 d.declLines))], d)
   jev1 transport jevLatest
-    (state (object [ "inquiry" .= inquiry, "module" .= takeFileName m, "source" .= [ T.pack (show n) <> "| " <> l | (n, l) <- zip [1 :: Int ..] (T.lines src) ] ]))
+    (state (object [ "inquiry" .= inquiry, "module" .= moduleName m, "codebase" .= codebaseMap mods
+                   , "source" .= [ T.pack (show n) <> "| " <> l | (n, l) <- zip [1 :: Int ..] (T.lines src) ] ]))
     (choice "Which declaration contains the code that does what the inquiry asks about? Judge by the source, not the name."
        (alt #none "The inquiry is not answered in this module" () .| many (map entry here)))
 
 -- One hop: read a declaration, judge it, and choose what to read next.
-hop transport inquiry everything trail d = do
-  let refs = pool #refs [ (declKey e, object ["relation" .= relText rel, "head" .= T.strip (T.unwords (take 1 e.declLines))], e) | (rel, e) <- take 24 (neighbours everything d) ]
-      relText r = case r of { Uses -> "this declaration uses it" :: Text; UsedBy -> "it uses this declaration"; Both -> "each uses the other" }
+-- Jev sees the declaration with its comment and section, every neighbour
+-- with its relation, its own comment, and the lines here that mention it,
+-- and what the earlier hops concluded.
+hop transport inquiry mods trail d = do
+  let everything = allDecls mods
       lines' = numbered d
+      mentions e = [ n | (n, l) <- lines', any (\sym -> sym `elem` T.split (not . isIdent) l) (symbols e) ]
+      isIdent c = isAlphaNum c || c `elem` ("_'" :: String)
+      neighbourWording rel e = object
+        [ "relation" .= relText rel
+        , "section" .= (T.pack (takeFileName e.declModule) <> " / " <> e.declSection)
+        , "head" .= T.strip (T.unwords (take 1 e.declLines))
+        , "comment" .= T.unwords (map (T.strip . T.dropWhile (== '|') . T.drop 2) e.declDoc)
+        , "mentioned_at_lines" .= mentions e
+        ]
+      refs = pool #refs [ (declKey e, neighbourWording rel e, e) | (rel, e) <- take 24 (neighbours everything d) ]
+      relText r = case r of { Uses -> "this declaration uses it" :: Text; UsedBy -> "it uses this declaration"; Both -> "each uses the other" }
   roundTrip transport jevLatest
     (state (object
       [ "inquiry" .= inquiry
-      , "reading" .= object ["module" .= takeFileName d.declModule, "declaration" .= d.declName]
+      , "reading" .= object ["module" .= takeFileName d.declModule, "section" .= d.declSection, "declaration" .= d.declName, "comment" .= d.declDoc]
       , "source" .= [ T.pack (show n) <> "| " <> l | (n, l) <- lines' ]
-      , "trail" .= [ object ["declaration" .= declKey s.stepDecl, "why" .= s.stepWhy] | s <- trail ]
+      , "so_far" .= [ object ["declaration" .= declKey s.stepDecl, "found" .= s.stepWhy] | s <- trail ]
+      , "codebase" .= codebaseMap mods
       ]))
     (  #refs := refs
     :& #answers := score "Do the lines shown contain the code that does what the inquiry asks about?"
                      (  level #not_here "No; this declaration does not concern the inquiry"
-                     .| level #related "No; it is involved, but the code that does it is in something it references"
+                     .| level #related "No; it is involved, but the code that does it is in a neighbouring declaration"
                      .| level #partly "Partly; some of what the inquiry asks about is done here"
                      .| level #directly "Yes; the code that does it is in these lines" )
     :& #line := choice "Which line most precisely answers the inquiry?"
@@ -215,18 +262,18 @@ close transport inquiry witnesses =
 policy :: Policy
 policy = Policy { minMass = 0.35, minMargin = 0.1, minConfidence = 0.25 }
 
-investigate transport tokens inquiry decls maxHops = do
+investigate transport tokens inquiry mods maxHops = do
   seen <- newIORef []
-  r0 <- pickModule transport inquiry decls
+  r0 <- pickModule transport inquiry mods
   case r0 of
     Left e -> pure (Left e)
     Right resp -> do
       count tokens resp
       let a = answers resp
           modules = take 2 [ m | (_, s) <- contenders 0.15 a.which, Just m <- [handle s (#none (\() -> Nothing) .| onMany (\_ m -> Just m))] ]
-      say ("module: " <> T.intercalate ", " [ k <> " " <> pct (yes sub.holds) | (k, sub) <- a.each ] <> "; reading " <> T.intercalate " and " (map (T.pack . takeFileName) modules))
+      say ("module: " <> T.intercalate ", " [ k <> " " <> pct (yes sub.holds) | (k, sub) <- a.each ] <> "; reading " <> T.intercalate " and " (map moduleName modules))
       if null modules then pure (Right (NeedsJudgment [])) else do
-        picks <- forM modules (pickDecl transport inquiry decls)
+        picks <- forM modules (pickDecl transport inquiry mods)
         case sequence picks of
           Left e -> pure (Left e)
           Right pickeds -> do
@@ -264,7 +311,7 @@ investigate transport tokens inquiry decls maxHops = do
     walk seen visited trail d hops
       | hops <= (0 :: Int) = pure (Right (Exhausted trail))
       | otherwise = do
-          r <- hop transport inquiry decls trail d
+          r <- hop transport inquiry mods trail d
           case r of
             Left e -> pure (Left e)
             Right resp -> do
@@ -289,22 +336,37 @@ investigate transport tokens inquiry decls maxHops = do
                   followed = case premised of
                     Just e -> Just e
                     Nothing -> bestRef
+                  neighbourByKey k = case [ e | (_, s) <- contenders 0 a.next, Just e <- [handle s (#stop_here (\() -> Nothing) .| #ask_model (\() -> Nothing) .| onMany (\key e -> if key == k then Just e else Nothing))] ] of
+                    e : _ -> Just e
+                    [] -> Nothing
+                  better x y = case (x, y) of
+                    (Right w@(Witness {}), _) -> Right w
+                    (_, Right w@(Witness {})) -> Right w
+                    (Right j@(NeedsJudgment _), _) -> Right j
+                    _ -> x
+              let finding = levelOf a.answers <> " (" <> pct direct <> ")" <> maybe "" (\n -> ", line " <> T.pack (show n)) lineOf
               modifyIORef' seen (Seen d lineNo lineText direct trail :)
               if direct >= 0.6 then pure (Right witness) else
                 case accept policy a.next of
+                  Left doubt@(NearTie (k1, _) (k2, _)) | Just e1 <- neighbourByKey k1, Just e2 <- neighbourByKey k2 -> do
+                    -- two neighbours nearly tied: read both, keep the better outcome
+                    say ("  doubt: " <> T.pack (show doubt) <> "; reading both")
+                    o1 <- follow finding (Just e1)
+                    o2 <- follow finding (Just e2)
+                    pure (better o1 o2)
                   Left doubt -> do
                     say ("  doubt: " <> T.pack (show doubt) <> "; the premised choice says " <> maybe "unclear" declKey premised
                       <> (case (premised, bestRef) of (Nothing, Just e) -> ", so following the best reference " <> declKey e; _ -> ""))
-                    follow followed
+                    follow finding followed
                   Right s -> handle s
                     (  #stop_here (\() -> pure (Right witness))
                     .| #ask_model (\() -> pure (Right (NeedsJudgment trail)))
-                    .| onMany (\_ e -> follow (Just e)) )
+                    .| onMany (\_ e -> follow finding (Just e)) )
       where
-        follow Nothing = pure (Right (Exhausted trail))
-        follow (Just e)
+        follow _ Nothing = pure (Right (Exhausted trail))
+        follow finding (Just e)
           | e `elem` visited = pure (Right (Exhausted trail))
-          | otherwise = walk seen (d : visited) (trail ++ [Step e ("referenced from " <> declKey d)]) e (hops - 1)
+          | otherwise = walk seen (d : visited) (trail ++ [Step e ("neighbour of " <> declKey d <> ", which " <> finding)]) e (hops - 1)
 
 -- ---------------------------------------------------------------------------
 -- Plumbing
@@ -314,7 +376,8 @@ main :: IO ()
 main = do
   args <- getArgs
   files <- filter ((== ".hs") . takeExtension) <$> listDirectory "src/Jev/Core"
-  decls <- concat <$> forM (sortOn id files) (\f -> outline ("src/Jev/Core" </> f))
+  mods <- forM (sortOn id files) (\f -> outline ("src/Jev/Core" </> f))
+  let decls = allDecls mods
   inquiry <- case args of
     [q] -> pure (T.pack q)
     ["--graph", name] -> do
@@ -324,9 +387,9 @@ main = do
         forM_ (neighbours decls d) $ \(rel, e) -> TIO.putStrLn ("  " <> T.pack (show rel) <> " " <> declKey e)
       exitFailure
     _ -> hPutStrLn stderr "usage: jev-dsl-navigate \"question about this library's source\"" >> exitFailure
-  say ("outline: " <> T.pack (show (length decls)) <> " declarations in " <> T.pack (show (length files)) <> " modules")
+  say ("outline: " <> T.pack (show (length decls)) <> " declarations in " <> T.pack (show (length files)) <> " modules, " <> T.pack (show (sum [ length (moduleSections m) | m <- mods ])) <> " sections")
   tokens <- newIORef (0 :: Int, 0 :: Int)
-  result <- investigate curl tokens inquiry decls 5
+  result <- investigate curl tokens inquiry mods 5
   (i, o) <- readIORef tokens
   case result of
     Left e -> hPutStrLn stderr ("jev: " ++ show e) >> exitFailure

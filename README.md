@@ -186,41 +186,49 @@ TYPESAFE_API_KEY=... ./scripts/example.sh
 
 `jev-dsl-navigate` answers a question about this library's own code with a
 line number, and no frontier model in the loop. Haskell parses the modules
-into declarations; one packet picks the module; one packet, with the whole
+into declarations, with their section banners, their comments, the symbols
+each defines, and which declarations use which. Every call carries a map
+of the codebase: modules, their purpose, their sections, and the names
+under each. One packet picks the module; one packet, with the whole
 module's source in the state, picks the declaration to read; each hop
-reads one declaration and asks a packet about it: a rubric for how
-directly it answers, a choice over its lines, a choice over the
-declarations it references drawn from a pool, a Noul per reference, and a
-premise-prefixed choice for where the behavior lives if not here. Two
-starting points stay alive when a choice is torn, a policy turns near ties
-into doubt, and a closing packet judges between two witnesses. When no
-declaration clears the bar, the same closing packet judges between the two
-best partial answers seen, so the program answers with what it has rather
-than nothing.
+reads one declaration with its comment and asks a packet about it: a
+rubric for how directly it answers, a choice over its lines, a choice over
+its neighbours drawn from a pool that says how each is related and where
+it is mentioned, a Noul per neighbour, and a premise-prefixed choice for
+where the behavior lives if not here. Two starting points stay alive when
+a choice is torn, a near tie between neighbours reads both, a policy turns
+other doubt into an evidence-ranked fallback, and a closing packet judges
+between two witnesses, or between the two best partial answers when
+nothing clears the bar.
 
 ```sh
 TYPESAFE_API_KEY=... scripts/navigate.sh "where is a premise rendered onto the wire?"
+scripts/navigate.sh --graph renderInstructions   # the deterministic side alone
 ```
 
-Four live runs on 2026-09-16, two to six calls each:
+Live runs on 2026-09-16, one to six calls each:
 
 ```
 where does a choice that draws on a pool get the pool name added to its instructions?
   src/Jev/Core/Schema.hs:551  [(n, _)] -> Right (extras [("pool", jString n)] i0)
-  tokens: 8275 in, 2807 out
 where is a premise rendered onto the wire?
   src/Jev/Core/Contract.hs:138  Premised p inner -> [("instructions", jObject (("premise", jString p) : renderInstructions inner))]
-  tokens: 7803 in, 2736 out
 which check rejects a rubric with more than ten levels?
   src/Jev/Core/Schema.hs:585  if null entries || length entries > 10 then Left (BadLevelCount key (length entries)) else Right ()
-  tokens: 9522 in, 3055 out
 Where does the library add an assumption like 'if the behavior is implemented elsewhere' to a Jev question?
-  src/Jev/Core/Schema.hs:408  given p = reword (Premised p)     (judged between two partial answers, 0.43 and 0.36)
-  tokens: 14872 in, 5786 out
+  src/Jev/Core/Schema.hs:408  given p = reword (Premised p)
+where is the state wrapped with context and pools when a packet declares pools?
+  src/Jev/Core/Schema.hs:798  , ("state", if null decl then stateValue st else jObject [("context", stateValue st), ("pools", jObject decl)])
+where does a near tie between the winner and the runner-up become a Doubt?
+  src/Jev/Core/Schema.hs:457  (k2, p2) : _ | mass - p2 < minMargin policy -> Left (NearTie (winner, mass) (k2, p2))
 ```
 
-The program is `examples/Navigate.hs`. Its transport is `scripts/transport.sh`,
-a curl call that keeps the key out of every Haskell process.
+Clean cases cost about eight thousand input tokens; a wandering one about
+twice that. What Jev sees decides what it judges well: the same question
+about `given` scored 0.4 when the declaration was shown bare and 0.9 once
+its comment and section travelled with it. The program is
+`examples/Navigate.hs`; its transport is `scripts/transport.sh`, a curl
+call that keeps the key out of every Haskell process.
 
 ## Building
 
