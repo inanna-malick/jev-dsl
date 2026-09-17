@@ -7,9 +7,15 @@ cabal build all --enable-tests
 cabal test --test-show-details=direct
 out=dist-newstyle/reject
 mkdir -p "$out"
+# Every example and the documentation's code must compile under the same policy.
+for f in examples/*.hs test/Readme.hs; do
+  [ -f "$f" ] || continue
+  cabal exec -v0 -- ghc -Wall -Werror -fno-code -package jev-dsl -outputdir "$out" "$f" > "$out/$(basename "$f" .hs).log" 2>&1 || { cat "$out/$(basename "$f" .hs).log" >&2; exit 1; }
+  echo "Compiles: $f"
+done
 for f in test/reject/Reject*.hs; do
   fixture=$(basename "$f" .hs)
-  if cabal exec -v0 -- ghc -Wall -Werror -Werror=missing-fields -fno-code -package jev-dsl -outputdir "$out" "$f" > "$out/$fixture.log" 2>&1; then
+  if cabal exec -v0 -- ghc -Wall -Werror -fno-code -package jev-dsl -outputdir "$out" "$f" > "$out/$fixture.log" 2>&1; then
     echo "UNEXPECTED COMPILE SUCCESS: $fixture" >&2
     exit 1
   fi

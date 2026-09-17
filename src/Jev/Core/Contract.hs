@@ -1,30 +1,39 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The provider's observed request and response contract as position-
 -- specific types over an abstract JSON value. Boot packages only. Nothing
--- here knows about records or modes; it is the wire vocabulary the schema
+-- here knows about packets or modes; it is the wire vocabulary the schema
 -- layer targets.
---
--- Positions take the author's JSON value directly. Where the provider
--- restricts the outer shape (state, instructions, descriptions, levels) the
--- restriction is checked at preparation and reported with the question key.
 module Jev.Core.Contract
   ( -- * Positions
     Presence (..)
-  , Instructions
-  , Description
-  , NoulCriteria (..)
-  , State
+  , Instructions (..)
+  , question
+  , structured
+  , about
+  , Criteria (..)
+  , noCriteria
+  , yesOnly
+  , noOnly
+  , bothSides
+  , PoolMode (..)
+  , State (..)
   , stateOf
   , stateText
   , stateObject
   , stateArray
+  , pooled
   , stateValue
+  , isPooled
   , checkState
   , checkInstructions
   , checkDescription
   , checkLevel
+  , renderInstructions
     -- * Wire questions
   , WireQuestion (..)
   , questionValue
@@ -57,51 +66,92 @@ import Jev.Core.Json
 -- ---------------------------------------------------------------------------
 
 -- | Omission is not representable in JSON, and the provider distinguishes an
--- omitted instruction or criteria block from an explicit null.
+-- omitted criteria block or side from an explicit null.
 data Presence a = Omitted | Present a deriving (Eq, Show)
 
--- | Instructions: omitted, or a value that is null, a string, an object, or
--- an array at the outer level.
-type Instructions v = Presence v
+-- | Instructions. 'Structured' keeps its pairs until 'prepare' so a
+-- duplicate key is an error, never a silent merge.
+data Instructions v
+  = NoInstructions
+  | Instructions v                 -- ^ any value the provider admits: string, object, array, or null
+  | Structured [(Text, v)]         -- ^ an object, checked for duplicate keys at preparation
 
--- | A Choice alternative, exit, or Noul side description: null, string,
--- object, or array at the outer level.
-type Description v = v
+question :: JsonValue v => Text -> Instructions v
+question = Instructions . jString
 
-data NoulCriteria v = NoulCriteria
-  { yes :: Presence (Description v)
-  , no :: Presence (Description v)
-  } deriving (Eq, Show)
+structured :: [(Text, v)] -> Instructions v
+structured = Structured
 
--- | The shared input to every question. String, object, or array; never
--- null, a bare boolean, or a bare number.
-newtype State v = State v
+-- | @about q extras@ is @{"question": q, ...extras}@; an extras @question@
+-- key is a preparation error.
+about :: JsonValue v => Text -> [(Text, v)] -> Instructions v
+about q extras = Structured (("question", jString q) : extras)
 
--- | Total; the outer shape is checked at preparation.
-stateOf :: v -> State v
-stateOf = State
+-- | Noul criteria: each side independently omitted, null, or content.
+data Criteria v = Criteria
+  { yesWhen :: Presence v
+  , noWhen :: Presence v
+  }
 
-checkState :: JsonValue v => State v -> Either PrepError ()
-checkState (State v) = case jView v of
+noCriteria :: Presence (Maybe (Criteria v))
+noCriteria = Omitted
+
+yesOnly :: v -> Presence (Maybe (Criteria v))
+yesOnly y = Present (Just (Criteria (Present y) Omitted))
+
+noOnly :: v -> Presence (Maybe (Criteria v))
+noOnly n = Present (Just (Criteria Omitted (Present n)))
+
+bothSides :: v -> v -> Presence (Maybe (Criteria v))
+bothSides y n = Present (Just (Criteria (Present y) (Present n)))
+
+-- | Whether a state is the plain author value or the explicit envelope
+-- @{"context": ..., "pools": ...}@ that pool-bearing packets require.
+data PoolMode = Plain | Pooled
+
+-- | The shared input to every question. Plain states render as given;
+-- pooled states render under @context@ beside the declared pools.
+data State (p :: PoolMode) v where
+  PlainState :: v -> State 'Plain v
+  PooledState :: v -> State 'Pooled v
+
+-- | Total; the outer shape (string, object, or array) is checked at
+-- preparation.
+stateOf :: v -> State 'Plain v
+stateOf = PlainState
+
+stateText :: JsonValue v => Text -> State 'Plain v
+stateText = PlainState . jString
+
+stateObject :: JsonValue v => [(Text, v)] -> State 'Plain v
+stateObject = PlainState . jObject
+
+stateArray :: JsonValue v => [v] -> State 'Plain v
+stateArray = PlainState . jArray
+
+-- | Opt into the envelope. Address your own fields under @context@.
+pooled :: State 'Plain v -> State 'Pooled v
+pooled (PlainState v) = PooledState v
+
+stateValue :: State p v -> v
+stateValue = \case
+  PlainState v -> v
+  PooledState v -> v
+
+isPooled :: State p v -> Bool
+isPooled = \case
+  PlainState _ -> False
+  PooledState _ -> True
+
+checkState :: JsonValue v => State p v -> Either PrepError ()
+checkState st = case jView (stateValue st) of
   VString _ -> Right ()
   VObject _ -> Right ()
   VArray _ -> Right ()
   _ -> Left BadStateShape
 
-stateText :: JsonValue v => Text -> State v
-stateText = State . jString
-
-stateObject :: JsonValue v => [(Text, v)] -> State v
-stateObject = State . jObject
-
-stateArray :: JsonValue v => [v] -> State v
-stateArray = State . jArray
-
-stateValue :: State v -> v
-stateValue (State v) = v
-
-structured :: JsonValue v => v -> Bool
-structured v = case jView v of
+admissible :: JsonValue v => v -> Bool
+admissible v = case jView v of
   VNull -> True
   VString _ -> True
   VObject _ -> True
@@ -110,11 +160,20 @@ structured v = case jView v of
 
 checkInstructions :: JsonValue v => Text -> Instructions v -> Either PrepError ()
 checkInstructions key = \case
-  Omitted -> Right ()
-  Present v -> if structured v then Right () else Left (BadInstructions key)
+  NoInstructions -> Right ()
+  Instructions v -> if admissible v then Right () else Left (BadInstructions key)
+  Structured kv -> case [k | (k, _) <- kv, length (filter ((== k) . fst) kv) > 1] of
+    k : _ -> Left (DuplicateInstructionKey key k)
+    [] -> Right ()
 
-checkDescription :: JsonValue v => Text -> Text -> Description v -> Either PrepError ()
-checkDescription key alt v = if structured v then Right () else Left (BadDescription key alt)
+renderInstructions :: JsonValue v => Instructions v -> [(Text, v)]
+renderInstructions = \case
+  NoInstructions -> []
+  Instructions v -> [("instructions", v)]
+  Structured kv -> [("instructions", jObject kv)]
+
+checkDescription :: JsonValue v => Text -> Text -> v -> Either PrepError ()
+checkDescription key alt v = if admissible v then Right () else Left (BadDescription key alt)
 
 checkLevel :: JsonValue v => Text -> Int -> v -> Either PrepError ()
 checkLevel key ix v = case jView v of
@@ -128,27 +187,22 @@ checkLevel key ix v = case jView v of
 -- ---------------------------------------------------------------------------
 
 data WireQuestion v
-  = WNoul (Instructions v) (Presence (Maybe (NoulCriteria v)))
-  | WChoice (Instructions v) [(Text, Description v)]
+  = WNoul (Instructions v) (Presence (Maybe (Criteria v)))
+  | WChoice (Instructions v) [(Text, v)]
   | WScore (Instructions v) [v]
   | WRaw v
 
-instructionsField :: Instructions v -> [(Text, v)]
-instructionsField = \case
-  Omitted -> []
-  Present v -> [("instructions", v)]
-
 questionValue :: JsonValue v => WireQuestion v -> v
 questionValue = \case
-  WNoul i c -> jObject ([("type", jString "noul")] ++ instructionsField i ++ criteria c)
-  WChoice i alts -> jObject ([("type", jString "choice")] ++ instructionsField i ++ [("criteria", jObject alts)])
-  WScore i ls -> jObject ([("type", jString "score")] ++ instructionsField i ++ [("criteria", jArray ls)])
+  WNoul i c -> jObject ([("type", jString "noul")] ++ renderInstructions i ++ criteria c)
+  WChoice i alts -> jObject ([("type", jString "choice")] ++ renderInstructions i ++ [("criteria", jObject alts)])
+  WScore i ls -> jObject ([("type", jString "score")] ++ renderInstructions i ++ [("criteria", jArray ls)])
   WRaw v -> v
   where
     criteria = \case
       Omitted -> []
       Present Nothing -> [("criteria", jNull)]
-      Present (Just (NoulCriteria y n)) -> [("criteria", jObject (side "true" y ++ side "false" n))]
+      Present (Just (Criteria y n)) -> [("criteria", jObject (side "true" y ++ side "false" n))]
     side k = \case
       Omitted -> []
       Present d -> [(k, d)]
@@ -157,29 +211,35 @@ questionValue = \case
 -- Errors
 -- ---------------------------------------------------------------------------
 
--- | Preparation failures. Every question-level error names the flattened
--- question key.
+-- | Preparation failures. Question-level errors name the flattened
+-- question id.
 data PrepError
-  = EmptyCandidates Text
+  = EmptyOffer Text
   | DuplicateKeys Text [Text]
-  | ExitCollidesWithCandidate Text Text
+  | KeyCollidesWithLabel Text Text
   | TooManyAlternatives Text Int
   | BadLevelCount Text Int
-  | DuplicateWireKey Text Text
+  | RubricMismatch Text
   | DuplicateQuestionPath Text
   | EmptyQuestionMap
   | EmptyQuestionKey Text
   | BadStateShape
   | BadInstructions Text
+  | DuplicateInstructionKey Text Text
   | BadDescription Text Text
   | BadLevel Text Int
+  | UndeclaredPool Text
+  | ConflictingPool Text
+  | DuplicatePool Text
+  | PoolDeclaredInNested Text
+  | PoolsRequirePooledState
   deriving (Show, Eq)
 
 -- | A provider rejection, parsed from the observed 400 and 422 bodies.
 data Rejection
-  = RejectionMessage Text                          -- {"detail": "..."}
-  | RejectionError Text (Maybe Text)               -- {"detail": {"error_type", "message"}}
-  | RejectionValidation [ValidationIssue]           -- {"detail": [{loc, msg, type}]}
+  = RejectionMessage Text
+  | RejectionError Text (Maybe Text)
+  | RejectionValidation [ValidationIssue]
   | RejectionOther
   deriving (Show, Eq)
 
@@ -267,7 +327,6 @@ parseScore key v = do
 -- Response envelope
 -- ---------------------------------------------------------------------------
 
--- | A successful evaluation, or a provider rejection carried whole.
 data Envelope v
   = Evaluated { envelopeModel :: Text, envelopeUsage :: v, envelopeAnswers :: [(Text, v)] }
   | Rejected Rejection
@@ -288,15 +347,12 @@ parseEnvelope v = case lookupKey "answers" v of
       VString m -> RejectionMessage m
       VObject _ | Just t <- lookupKey "error_type" d >>= viewText ->
         RejectionError t (lookupKey "message" d >>= viewText)
-      VArray issues -> RejectionValidation [ ValidationIssue (locOf i) (textOr "msg" i) (textOr "type" i) | i <- issues ]
+      VArray issues -> RejectionValidation [ValidationIssue (locOf i) (textOr "msg" i) (textOr "type" i) | i <- issues]
       _ -> RejectionOther
     textOr k i = maybe "" id (lookupKey k i >>= viewText)
-    locOf i = case lookupKey "loc" i >>= viewObjectOrArray of
-      Just parts -> [ segment x | x <- parts ]
-      Nothing -> []
-    viewObjectOrArray x = case jView x of
-      VArray xs -> Just xs
-      _ -> Nothing
+    locOf i = case lookupKey "loc" i of
+      Just x | VArray parts <- jView x -> map segment parts
+      _ -> []
     segment x = case jView x of
       VString t -> t
       VNumber n -> T.pack (show (round n :: Integer))
@@ -312,7 +368,7 @@ unit key what x
   | otherwise = Right ()
 
 -- | Probability keys must equal the submitted key set exactly; every value
--- and the confidence in [0,1]. Sum drift is a diagnostic, not a rejection.
+-- and the confidence in [0,1]. Sum drift is a diagnostic elsewhere.
 distribution :: Text -> [Text] -> [(Text, Double)] -> Double -> Either DecodeError ()
 distribution key expected ms conf = do
   unit key "confidence" conf
@@ -320,7 +376,6 @@ distribution key expected ms conf = do
   mapM_ (\(k, x) -> if k `elem` expected then unit key k x else Left (ExtraMass key k)) ms
   if length (nub (map fst ms)) /= length ms then Left (ExtraMass key "duplicate") else Right ()
 
--- | The sum of a raw answer's probabilities, when it has any.
 driftOf :: JsonValue v => v -> Maybe Double
 driftOf v = do
   ps <- lookupKey "probabilities" v >>= viewObject

@@ -5,8 +5,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
--- expect: #rerun stands alone where the disjunction continues; chain alternatives with .|
-module RejectMissingHandler where
+-- expect: use many/manyFrom for offers and onMany for handlers
+module RejectLabelOnMany where
 
 import Data.Aeson (Value (..))
 import Jev.Operators
@@ -14,8 +14,8 @@ import Jev.Operators
 st :: State 'Plain
 st = stateText "s"
 
--- Every alternative needs a handler; a lone handler cannot stand for two.
-type Next = "rerun" ::> () :|: "ask_model" ::> ()
+-- A runtime group has no static label to handle by.
+type Next = "rerun" ::> () :|: Many Int
 
 bad :: A Value (Choice Next) -> String
-bad a = caseOf a (#rerun (\() -> "rerun"))
+bad a = caseOf a (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))
