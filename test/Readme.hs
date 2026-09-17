@@ -71,6 +71,22 @@ report a =
     <> ", relevant: " <> T.intercalate ", " [k | (k, sub) <- a.children, judge routing sub.useful == Right True]
   where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
 
+-- A rubric is graded, not read off: one result per level, checked against
+-- the rubric the question was asked with.
+data Urgency = Background | AtCheckpoint | Now deriving (Show, Eq)
+
+urgency :: Transport -> Text -> IO (Either Text Urgency)
+urgency transport situation = do
+  answer <- ask1 transport jevLatest (state (String situation))
+    (score "What is the consequence of waiting?"
+       (  level #background "No current action depends on this"
+       .| level #checkpoint "Useful at the next ordinary checkpoint"
+       .| level #blocked "A worker cannot take its next action" ))
+  pure $ case answer of
+    Left err -> Left (T.pack (show err))
+    Right a -> Right (grade 0.5 a
+      (level #background Background .| level #checkpoint AtCheckpoint .| level #blocked Now))
+
 -- The same handlers on every contender above a floor.
 routes :: Handlers Text Routes
 routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)

@@ -150,8 +150,12 @@ report resp = do
   -- Nouls are judged under the same policies.
   TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> verdict (judge routing sub.applies) | (k, sub) <- a.relevant])
   line "sufficient" (explain merging a.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging a.sufficient)
-  -- A rubric reads as a distribution over ordered levels.
-  TIO.putStrLn ("breadth: expectation " <> showT a.breadth.expectation
+  -- A rubric is graded, not read off: the level half the weight reaches.
+  TIO.putStrLn ("breadth: " <> grade 0.5 a.breadth
+    (  level #localized "localized to the failing check"
+    .| level #adjacent  "may affect adjacent callers"
+    .| level #contract  "crosses a contract others rely on" )
+    <> "\n  expectation " <> showT a.breadth.expectation
     <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent a.breadth))
   where
     line name why outcome = TIO.putStrLn (name <> ": " <> either (const "doubted") id outcome <> "\n  " <> why)

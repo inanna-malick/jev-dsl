@@ -130,6 +130,10 @@ The rest of an answer is fields, read with record dot:
 | `noul` | `yes` |
 | `score` | `expectation`, `confidence`, `masses` (by level, in order) |
 
+Each kind has one typed consumer: `settle` for a choice, `judge` for a Noul,
+`grade` for a score. Each takes the branches as a value and so cannot hand back
+a result the program did not write a case for.
+
 `key` is for logs and ledgers, never for dispatch: a `case` on it is
 unchecked, and the compiler cannot tell you when the alternatives change.
 `margin` is the winner's mass less the runner-up's, and equals the mass
@@ -140,7 +144,7 @@ Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
 `margin`, `confidence`, `masses`, `chosen`, `yes`, `expectation`. The
 verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `settle`,
-`judge`, `handle`, `explain`. Under `-Wall` a local binding with any of
+`judge`, `grade`, `handle`, `explain`. Under `-Wall` a local binding with any of
 these names shadows; name your own `tag`, `weight`, `askLine`, or import
 qualified.
 
@@ -206,9 +210,31 @@ urgency = level #background "No current action depends on this"
 
 Its type is `"background" :|: "checkpoint" :|: "blocked" :|: "invalidating"`.
 Duplicate labels are a compile error; one to ten levels is checked when the
-request is built. The answer gives `expectation`, `confidence`, and
-`masses` by label, plus `massAtOrAbove #blocked`, which sums the rubric
-from a level up and is the usual way to act on one.
+request is built.
+
+`grade floor answer results` is how you act on one. It takes a result per
+level, written with the same `level` builder, and runs the one for the level
+the score landed on: the highest level whose mass at or above it clears the
+floor, or the lowest when none does. At a floor of `0.5` that is the median.
+
+```haskell
+grade 0.5 a.urgency
+  (  level #background   keepGoing
+  .| level #checkpoint   noteIt
+  .| level #blocked      wakeSomeone
+  .| level #invalidating stopEverything )
+```
+
+A missing, extra, or misordered level is a compile error naming the level it
+expected, exactly as for a choice's handlers. That is the point: a rubric's
+labels are known at compile time, so nothing should ever dispatch on them as
+strings.
+
+There is no `Doubt` here. An ordinal scale has a median even when the
+distribution is flat, so `grade` always answers; read `confidence` yourself if
+you want to gate on it. The answer also gives `expectation` and `masses` by
+label for the ledger, plus `massAtOrAbove #blocked`, which sums the rubric from
+a level up when you want the raw number rather than a branch.
 
 A score is right only for a genuinely ordered, mutually exclusive
 situation. Most judgments are not: reach for a Noul or a choice first.
@@ -231,7 +257,8 @@ question waves through.
 ## What is checked where
 
 At compile time: label uniqueness and presence, handler lists against
-alternatives, rubric label uniqueness, cell contents.
+alternatives, result lists against rubric levels, rubric label uniqueness,
+cell contents.
 
 When the request is built, with a named `PrepError` inside `JevError`:
 empty offers, duplicate or colliding runtime keys, wording and state shapes

@@ -31,6 +31,7 @@
 -- > let a = answers r
 -- > settle spawning a.next (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\k e -> …))
 -- > judge merging a.enough
+-- > grade 0.5 a.breadth (level #localized r1 .| level #adjacent r2 .| level #contract r3)
 -- > explain spawning a.next       -- the line a log or a planner reads
 -- > a.next.key, a.next.margin, a.enough.yes
 --
@@ -55,7 +56,7 @@ module Jev.Operators
     -- @confidence@, @masses@; @expectation@.)
   , A (..)
     -- * Acting on answers
-  , settle, judge, explain, handle, contenders
+  , settle, judge, grade, explain, handle, contenders
   , Policy (..), routing, spawning, merging, Doubt (..), Weighed
     -- * Asking
   , ask, ask1, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics
@@ -63,7 +64,7 @@ module Jev.Operators
     -- * Recording and replay: the same operation split
   , request, decode
     -- * Types, for signatures only
-  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
+  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric, Levels
   , Noul, Choice, Score, Each, Group, Selected
   , Q, Questions, Answers, type (:-), State, state, Model, Response
   , Schema, Alternatives
@@ -95,6 +96,9 @@ type Offers alts = Core.Alts (Core.Offer Value) alts
 type Handlers r alts = Core.Alts (Core.Handler Value r) alts
 -- | Levels of a rubric, in order: @level #low "…" .| level #high "…"@.
 type Rubric levels = Core.Alts (Core.Level Value) levels
+-- | One result per level, in level order, for 'grade'. The same 'level'
+-- builds it.
+type Levels r levels = Core.Alts (Core.Level r) levels
 type Schema s = Core.Schema Value s
 
 (.|) :: Core.Single x => Core.Alts f x -> Core.Alts f rest -> Core.Alts f (x :|: rest)
@@ -112,7 +116,9 @@ many = Core.many
 onMany :: (Text -> p -> r) -> Handlers r (Many p)
 onMany = Core.onMany
 
-level :: KnownSymbol l => Label l -> Value -> Rubric l
+-- | One level: its label, and either its wording when asking or its result
+-- when grading an answer. Which one is fixed by where it is written.
+level :: KnownSymbol l => Label l -> r -> Levels r l
 level = Core.level
 
 -- Questions
@@ -142,6 +148,15 @@ settle = Core.settle
 -- | A proposition under a policy: yes, no, or doubt.
 judge :: Policy -> A Value Noul -> Either Doubt Bool
 judge = Core.judge
+
+-- | The result for the level a score landed on: the highest level whose
+-- mass at or above it clears the floor, or the lowest when none does. At a
+-- floor of 0.5 that is the median level. A missing, extra, or misordered
+-- level is a compile error naming it, so a rubric is never dispatched on by
+-- its label strings.
+grade :: (Core.Rubric hs, Core.MatchLevels hs levels)
+      => Double -> A Value (Score levels) -> Levels r hs -> r
+grade = Core.grade
 
 -- | One line saying why the policy settled or doubted the answer, with the
 -- numbers behind it. Works on a choice or a Noul.

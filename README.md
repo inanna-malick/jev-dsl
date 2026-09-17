@@ -98,9 +98,20 @@ act a =
 
 A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`; a
 Noul with `yes`; a score with `expectation`, `confidence` and `masses`.
-Those are for logs and thresholds. Dispatch goes through handlers, which
-follow declaration order, and the compiler rejects a misordered, missing,
-extra, or mislabelled handler with a message naming the label it expected.
+Those are for logs and thresholds. Dispatch goes through the branches
+instead, one typed consumer per question kind: `settle` for a choice,
+`judge` for a Noul, `grade` for a score. Each takes the branches in
+declaration order, and the compiler rejects a misordered, missing, extra, or
+mislabelled one with a message naming what it expected.
+
+```haskell
+grade 0.5 a.urgency
+  (level #background keepGoing .| level #checkpoint noteIt .| level #blocked wakeSomeone)
+```
+
+`grade` runs the result for the level the score landed on, the highest whose
+mass at or above it clears the floor. A rubric's labels are known at compile
+time, so nothing has to dispatch on them as strings.
 
 A handler list is a value. The same list eliminates the winner or every
 contender above a floor:

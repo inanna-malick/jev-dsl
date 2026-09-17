@@ -528,22 +528,15 @@ interpret call = \case
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
     a <- must =<< ask1 call jevLatest (situation t [])
       (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false)))
-    -- The rubric is ordered, so the mass at or above a level is how much of
-    -- the story's weight sits there or worse. The level is checked against
-    -- this rubric at compile time: #damning would not typecheck.
-    let doubtful = massAtOrAbove #thin a
-        damning = massAtOrAbove #false a
-        -- A story that is merely thin is let through: the guard has better
-        -- things to do than hold every vague traveller on the road.
-        taken | damning >= 0.5 = "false"
-              | doubtful >= 0.6 = "thin"
-              | otherwise = "sound"
+    -- The story is graded on the rubric it was asked with: the highest level
+    -- half the weight reaches, which is the median. The three levels are
+    -- checked against this rubric at compile time, so there is no string to
+    -- dispatch on and no branch that can quietly go missing.
+    let (taken, next) = grade 0.5 a
+          (level #sound ("sound", x) .| level #thin ("thin", y) .| level #false ("false", z))
     aside ("weighed " <> taken <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
-      <> "; thin or worse " <> pct doubtful <> ")")
-    case taken of
-      "sound" -> x.play t
-      "thin" -> y.play t
-      _ -> z.play t
+      <> "; thin or worse " <> pct (massAtOrAbove #thin a) <> ")")
+    next.play t
 
   Happen next -> program $ \t -> do
     -- The night moves at its own pace: something can happen at most every other exchange, and

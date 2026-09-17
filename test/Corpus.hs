@@ -98,10 +98,13 @@ attention transport message = do
        .| level #checkpoint "Useful at the next ordinary checkpoint"
        .| level #blocked "A worker cannot take its next action"
        .| level #invalidating "Continuing would invalidate ongoing work" ))
-  pure $ fmap (\a ->
-    if massAtOrAbove #blocked a >= 0.5 then WakeNow
-    else if massAtOrAbove #checkpoint a >= 0.5 then NextCheckpoint
-    else Background) r
+  -- One result per level, in level order; the compiler checks all four are
+  -- there and in the order the rubric declared them.
+  pure $ fmap (\a -> grade 0.5 a
+    (  level #background   Background
+    .| level #checkpoint   NextCheckpoint
+    .| level #blocked      WakeNow
+    .| level #invalidating WakeNow )) r
 
 -- ---------------------------------------------------------------------------
 

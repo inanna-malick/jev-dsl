@@ -43,13 +43,13 @@ module Jev.Core.Schema
     -- * Alternatives and rubric levels
   , type (::>), type (:|:), Many, Offer, Handler, Level, Interp
   , Alts (..), Single, (.|), alt, many, onMany, level
-  , Alternatives, AltsOk, Match, Rubric, RubricOk, Index, Selected (..), Ranked (..)
+  , Alternatives, AltsOk, Match, Rubric, RubricOk, MatchLevels, Index, Selected (..), Ranked (..)
     -- * Builders
   , noul, choice, score, each
     -- * Results
   , Weighed (..), Weight (..), Doubt (..), Policy (..)
   , settle, judge, explain, contenders, handle
-  , massAtOrAbove
+  , grade, massAtOrAbove
     -- * The operation
   , Schema (..), PacketSchema, Model (..), jevLatest
   , request, decode, Response (..), JevError (..), roundTrip, jev1
@@ -165,8 +165,9 @@ many key wording rows = Grp [(key x, wording x, x) | x <- rows]
 onMany :: (Text -> p -> r) -> Alts (Handler v r) (Many p)
 onMany = Grp
 
--- | One rubric level: its label and its wording.
-level :: KnownSymbol l => Label l -> v -> Alts (Level v) l
+-- | One rubric level: its label, and its wording when asking or its result
+-- when grading an answer.
+level :: KnownSymbol l => Label l -> r -> Alts (Level r) l
 level _ = Lvl
 
 -- Handlers are written with labels; the label and the function fix the
@@ -202,7 +203,7 @@ type family Match (hs :: Type) (alts :: Type) :: Constraint where
   Match (Many p) (k ::> p') = TypeError ('Text "onMany is written where the alternative #" ':<>: 'Text k ':<>: 'Text " stands (handlers follow declaration order)")
   Match (k ::> p) (k' ::> p') = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " is written where the alternative #" ':<>: 'Text k' ':<>: 'Text " stands (handlers follow declaration order)")
   Match (h :|: hs) a = TypeError ('Text "handlers continue past the end of the disjunction: " ':<>: Describe hs ':<>: 'Text " has no alternative")
-  Match h (a :|: as) = TypeError ('Text "handlers stop after " ':<>: Describe h ':<>: 'Text "; " ':<>: Describe a ':<>: 'Text " still needs a handler; chain handlers with .|")
+  Match h (a :|: as) = TypeError ('Text "handlers stop after " ':<>: Describe h ':<>: 'Text "; " ':<>: Describe as ':<>: 'Text " still needs a handler; chain handlers with .|")
 type family Describe (x :: Type) :: ErrorMessage where
   Describe (k ::> p) = 'Text "#" ':<>: 'Text k
   Describe (Many p) = 'Text "the runtime group (Many)"
@@ -283,12 +284,21 @@ label = T.pack (symbolVal (Proxy @k))
 
 class Rubric (levels :: k) where
   rubricEntries :: Alts (Level v) levels -> [(Text, v)]
+  -- | The lowest level, then the rest. A rubric is never empty and a list
+  -- cannot say so, so this is what lets 'grade' fall back to the lowest
+  -- level without a partial function.
+  rubricLevels :: Alts (Level v) levels -> (v, [v])
 
 instance KnownSymbol l => Rubric (l :: Symbol) where
   rubricEntries (Lvl d) = [(label @l, d)]
+  rubricLevels (Lvl d) = (d, [])
 
 instance (Rubric x, Rubric rest) => Rubric ((x :: kx) :|: (rest :: kr)) where
   rubricEntries (x :| rest) = rubricEntries x ++ rubricEntries rest
+  rubricLevels (x :| rest) =
+    let (lowest, above) = rubricLevels x
+        (nextLowest, rest') = rubricLevels rest
+    in (lowest, above ++ nextLowest : rest')
 
 type RubricLabels :: forall k. k -> [Symbol]
 type family RubricLabels levels where
@@ -305,6 +315,27 @@ type family IndexIn (l :: Symbol) (ls :: [Symbol]) :: Nat where
   IndexIn l '[] = TypeError ('Text "Jev: no level #" ':<>: 'Text l ':<>: 'Text " in this rubric")
   IndexIn l (l ': ls) = 0
   IndexIn l (j ': ls) = 1 + IndexIn l ls
+
+-- | A list of results against a rubric's levels, position by position. The
+-- equality on 'grade' is what enforces the match; this fires first so the
+-- message names the level rather than showing a raw mismatch. The sibling
+-- of 'Match', over bare labels rather than alternatives.
+type MatchLevels :: forall kh. forall kl. kh -> kl -> Constraint
+type family MatchLevels hs levels where
+  MatchLevels @Symbol @Symbol l l = ()
+  MatchLevels @Symbol @Symbol l l' =
+    TypeError ('Text "#" ':<>: 'Text l ':<>: 'Text " is written where the level #" ':<>: 'Text l' ':<>: 'Text " stands (results follow level order)")
+  MatchLevels @Type @Type (h :|: hs) (x :|: xs) = (MatchLevels h x, MatchLevels hs xs)
+  MatchLevels @Type @Symbol (h :|: hs) l =
+    TypeError ('Text "results continue past the end of the rubric: " ':<>: NameLevel hs ':<>: 'Text " is not a level of it")
+  MatchLevels @Symbol @Type l (x :|: xs) =
+    TypeError ('Text "results stop after #" ':<>: 'Text l ':<>: 'Text "; " ':<>: NameLevel xs ':<>: 'Text " still needs one; chain them with .|")
+  MatchLevels hs levels = ()
+
+type NameLevel :: forall k. k -> ErrorMessage
+type family NameLevel x where
+  NameLevel @Symbol l = 'Text "#" ':<>: 'Text l
+  NameLevel @Type (h :|: hs) = NameLevel h
 
 -- ---------------------------------------------------------------------------
 -- Leaves
@@ -497,6 +528,25 @@ handle s hs = altHandle hs s
 -- selections the same handlers eliminate.
 contenders :: Double -> A v (Choice alts) -> [(Double, Selected v alts)]
 contenders floor' a = let Ranked rs = ranked a in [(m, s) | (m, s) <- rs, m >= floor']
+
+-- | Run the result for the level the score landed on. Levels run lowest to
+-- highest, so this walks from the highest down and takes the first whose
+-- mass at or above it clears the floor, and the lowest level when none
+-- does. At a floor of 0.5 that is the median level.
+--
+-- There is always an answer: an ordinal scale has a median even when the
+-- distribution is flat, which is why this gives no 'Doubt'. A missing,
+-- extra, or misordered level is a compile error naming the level, so a
+-- rubric is never dispatched on by its label strings.
+grade :: forall levels hs v r. (Rubric hs, MatchLevels hs levels)
+      => Double -> A v (Score levels) -> Alts (Level r) hs -> r
+grade floor' a hs =
+  let (lowest, above) = rubricLevels hs
+      -- Mass at or above each level, aligned with the levels past the lowest.
+      -- It falls as the level rises, so the last one to clear the floor is the
+      -- highest that clears it, and the lowest level stands when none does.
+      atOrAbove = drop 1 (scanr (+) 0 (map snd (scoreMasses a)))
+  in foldl (\taken (r, m) -> if m >= floor' then r else taken) lowest (zip above atOrAbove)
 
 -- | Mass at or beyond a level, by label.
 massAtOrAbove :: forall l levels v. KnownNat (Index l levels) => Label l -> A v (Score levels) -> Double
