@@ -63,14 +63,14 @@ newtype Room = Room Text deriving (Eq, Show)
 inspect :: [Room] -> Packet
   '[ "next" ::= Choice ("stop" ::> () :|: Many Room)
    , "ready" ::= Noul
-   , "risk" ::= Score ("low" :|: "high")
-   , "each_room" ::= Each Noul ] (Questions Mini)
+   , "risk" ::= Score Text ("low" :|: "high")
+   , "each_room" ::= Each Room Noul ] (Questions Mini)
 inspect rooms =
      #next := choice "Which room to search next?"
                 (alt #stop "Every room has been searched" () .| many (\(Room r) -> r) (\(Room r) -> MStr r) rooms)
   :& #ready := noul "Is the search ready to stop?"
-  :& #risk := score "How risky is continuing?" (level #low (MStr "safe") .| level #high (MStr "dangerous"))
-  :& #each_room := each [(r, noul ("Has " <> r <> " been searched?")) | Room r <- rooms]
+  :& #risk := score "How risky is continuing?" (level #low (MStr "safe") "low" .| level #high (MStr "dangerous") "high")
+  :& #each_room := each (\(Room r) -> r) (\(Room r) -> noul ("Has " <> r <> " been searched?")) rooms
   :& Nil
 
 -- A transport in Mini, answering from the request it was handed.
@@ -122,9 +122,9 @@ miniChecks c = do
         (Room "cellar") (handle a.next (#stop (\() -> Room "none") .| onMany (\_ room -> room)))
       checkEq c "mini: a noul decodes" 0.9 a.ready.yes
       checkEq c "mini: a score grades through its levels"
-        ("high" :: Text) (grade 0.5 a.risk (level #low "low" .| level #high "high"))
+        ("high" :: Text) (grade 0.5 a.risk)
       checkEq c "mini: the battery answers under its runtime keys, in packet order"
-        ["cellar", "attic"] (map fst a.each_room)
+        ["cellar", "attic"] [name | (Room name, _) <- a.each_room]
       checkEq c "mini: usage and model come back" "mini-1.0" (responseModel resp)
   -- the class default equality, which aeson overrides with its own
   check c "mini: structural equality ignores object member order"

@@ -12,5 +12,5 @@ import Data.Aeson (Value (..))
 import Jev.Operators
 
 -- Two levels with one label could not be told apart in an answer.
-bad :: Q Value (Score ("background" :|: "blocked" :|: "blocked"))
-bad = score "?" (level #background "" .| level #blocked "" .| level #blocked "")
+bad :: Q Value (Score () ("background" :|: "blocked" :|: "blocked"))
+bad = score "?" (level #background "" () .| level #blocked "" () .| level #blocked "" ())

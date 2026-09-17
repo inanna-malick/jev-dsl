@@ -23,17 +23,17 @@
 -- >    ( #next    := choice "Most useful next step?"
 -- >                    (alt #rerun "Rerun the focused check" c .| alt #ask_model "Needs judgment" h .| many edgeKey edgeText edges)
 -- >   :& #enough  := noul "Do the diagnostics establish the mechanism?"
+-- >   :& #breadth := score "How far would the fix reach?" (level #local "One check" here .| level #wide "Other callers" there)
 -- >   :& Nil )
 --
--- Answers come back under the same labels as plain records, and a policy
--- turns them into an action or a doubt:
+-- The response reads by the same labels, and a policy turns an answer into
+-- an action or a doubt:
 --
--- > let a = answers r
--- > settle spawning a.next (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\k e -> …))
--- > judge merging a.enough
--- > grade 0.5 a.breadth (level #localized r1 .| level #adjacent r2 .| level #contract r3)
--- > explain spawning a.next       -- the line a log or a planner reads
--- > a.next.key, a.next.margin, a.enough.yes
+-- > settle spawning r.next (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\k e -> …))
+-- > judge merging r.enough
+-- > grade 0.5 r.breadth            -- the result written beside the level's wording
+-- > explain spawning r.next        -- the line a log or a planner reads
+-- > r.next.key, r.next.margin, r.enough.yes
 --
 -- Labels are wire ids verbatim. Duplicate labels, a missing label on
 -- access, and a handler list that does not match its alternatives are
@@ -52,8 +52,9 @@ module Jev.Operators
     -- * Rubrics
   , level, massAtOrAbove
     -- * Answers, as fields: @a.next.key@, @a.enough.yes@
-    -- ('A' carries them: @yes@; @chosen@, @key@, @mass@, @margin@,
-    -- @confidence@, @masses@; @expectation@.)
+    -- (a Noul carries @yes@; a choice @key@, @mass@, @margin@,
+    -- @confidence@, @masses@; a score @expectation@, @confidence@,
+    -- @masses@, @results@.)
   , A (..)
     -- * Acting on answers
   , settle, judge, grade, explain, handle, contenders
@@ -64,10 +65,10 @@ module Jev.Operators
     -- * Recording and replay: the same operation split
   , request, decode
     -- * Types, for signatures only
-  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Rubric
+  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Handles, Rubric
   , Noul, Choice, Score, Each, Group
   , Q, Questions, Answers, type (:-), State, state, Model, Response
-  , Schema, Alternatives
+  , Schema
   ) where
 
 import Data.Aeson (Value, ToJSON (..))
@@ -79,7 +80,7 @@ import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
-  ( A (..), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, JevError (..), Label, Many, Model, Noul, Weighed
+  ( A (..), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, Handles, JevError (..), Label, Many, Model, Noul, Weighed
   , Packet (..), Cell (..), PrepError (..), Q, Score, type (:-), type (::=), type (::>), type (:|:), Policy (..)
   , Rejection (..), ValidationIssue (..)
   )
@@ -94,10 +95,9 @@ type Offers alts = Core.Alts (Core.Offer Value) alts
 -- | Handlers for a disjunction, in declaration order, each taking its
 -- alternative's payload: @#k (\p -> …) .| onMany (\key p -> …)@.
 type Handlers r alts = Core.Alts (Core.Handler Value r) alts
--- | A rubric's levels in order, each carrying something: the wording a
--- score sends (@Rubric Value@), or the result 'grade' returns for that
--- level. The same 'level' builds both.
-type Rubric v levels = Core.Alts (Core.Level v) levels
+-- | A rubric: its levels in order, each with the wording the score sends
+-- and the result 'grade' returns when the score lands on it.
+type Rubric p levels = Core.Alts (Core.Level Value p) levels
 type Schema s = Core.Schema Value s
 
 (.|) :: Core.Single x => Core.Alts f x -> Core.Alts f rest -> Core.Alts f (x :|: rest)
@@ -115,9 +115,10 @@ many = Core.many
 onMany :: (Text -> p -> r) -> Handlers r (Many p)
 onMany = Core.onMany
 
--- | One level: its label, and either its wording when asking or its result
--- when grading an answer. Which one is fixed by where it is written.
-level :: KnownSymbol l => Label l -> v -> Rubric v l
+-- | One level: its label, its wording for the provider, and the result
+-- 'grade' returns when the score lands on it. What 'alt' takes, in the same
+-- order.
+level :: KnownSymbol l => Label l -> Value -> p -> Rubric p l
 level = Core.level
 
 -- Questions
@@ -127,12 +128,13 @@ noul = Core.noul
 choice :: Core.AltsOk alts => Text -> Offers alts -> Q Value (Choice alts)
 choice = Core.choice
 
-score :: Core.RubricOk levels => Text -> Rubric Value levels -> Q Value (Score levels)
+score :: Core.RubricOk levels => Text -> Rubric p levels -> Q Value (Score p levels)
 score = Core.score
 
--- | One question per item, keyed at runtime: the per-item battery. Takes a
--- question or a nested packet, exactly as a cell does.
-each :: (Core.ToQ x, Core.CellJson x ~ Value) => [(Text, x)] -> Q Value (Each (Core.CellKind x))
+-- | One question per row, keyed at runtime: the per-item battery, written
+-- as 'many' is. Each row comes back beside its answer, so there is nothing
+-- to look up. Takes a question or a nested packet, exactly as a cell does.
+each :: (Core.ToQ x, Core.CellJson x ~ Value) => (a -> Text) -> (a -> x) -> [a] -> Q Value (Each a (Core.CellKind x))
 each = Core.each
 
 state :: Value -> State
@@ -142,7 +144,7 @@ state = Core.state
 
 -- | The winner under a policy through a handler per alternative, or
 -- structured doubt. The only way to consume a choice.
-settle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Policy -> A Value (Choice alts) -> Handlers r hs -> Either Doubt r
+settle :: Handles hs alts => Policy -> A Value (Choice alts) -> Handlers r hs -> Either Doubt r
 settle = Core.settle
 
 -- | A proposition under a policy: yes, no, or doubt.
@@ -151,11 +153,10 @@ judge = Core.judge
 
 -- | The result for the level a score landed on: the highest level whose
 -- mass at or above it clears the floor, or the lowest when none does. At a
--- floor of 0.5 that is the median level. A missing, extra, or misordered
--- level is a compile error naming it, so a rubric is never dispatched on by
--- its label strings.
-grade :: (Core.Rubric hs, Core.MatchLevels hs levels)
-      => Double -> A Value (Score levels) -> Rubric r hs -> r
+-- floor of 0.5 that is the median level. The result was written beside the
+-- level's wording, so a rubric is never dispatched on by its label strings
+-- and there is no list to keep in step.
+grade :: Double -> A Value (Score p levels) -> p
 grade = Core.grade
 
 -- | One line saying why the policy settled or doubted the answer, with the
@@ -165,12 +166,12 @@ explain = Core.explain
 
 -- | The winner through a handler per alternative, with no policy: for when
 -- the program follows whatever came back.
-handle :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => A Value (Choice alts) -> Handlers r hs -> r
+handle :: Handles hs alts => A Value (Choice alts) -> Handlers r hs -> r
 handle = Core.handle
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers.
-contenders :: (Alternatives alts, Core.Match hs alts, hs ~ alts) => Double -> A Value (Choice alts) -> Handlers r hs -> [(Double, r)]
+contenders :: Handles hs alts => Double -> A Value (Choice alts) -> Handlers r hs -> [(Double, r)]
 contenders = Core.contenders
 
 -- | Read-only choices: which file, which skill.
@@ -185,13 +186,13 @@ spawning = Policy 0.55 0.20 0.70
 merging :: Policy
 merging = Policy 0.70 0.40 0.85
 
-massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> A Value (Score levels) -> Double
+massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> A Value (Score p levels) -> Double
 massAtOrAbove = Core.massAtOrAbove
 
 -- | An answer is a ledger row: @toJSON a.next@.
-instance ToJSON (A Value Noul) where toJSON = Core.previewAnswer
-instance Alternatives alts => ToJSON (A Value (Choice alts)) where toJSON = Core.previewAnswer
-instance Core.Rubric levels => ToJSON (A Value (Score levels)) where toJSON = Core.previewAnswer
+instance ToJSON (A Value Noul) where toJSON = Core.previewA
+instance Alternatives alts => ToJSON (A Value (Choice alts)) where toJSON = Core.previewA
+instance Core.Levels levels => ToJSON (A Value (Score p levels)) where toJSON = Core.previewA
 
 -- | A whole answers packet is a ledger row too: @toJSON (answers resp)@.
 instance (Core.Unique fs, Core.PacketSchema Value fs) => ToJSON (Packet fs Answers) where
@@ -219,6 +220,8 @@ request = Core.request
 decode :: Schema s => s Questions -> Value -> Either JevError (Response s)
 decode = Core.decode
 
+-- | The packet, under 'Answers'. A response already reads by its packet's
+-- labels, so this is for handing the whole packet to a function.
 answers :: Response s -> s Answers
 answers = Core.answers
 

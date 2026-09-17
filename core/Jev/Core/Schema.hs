@@ -43,7 +43,7 @@ module Jev.Core.Schema
     -- * Alternatives and rubric levels
   , type (::>), type (:|:), Many, Offer, Handler, Level, Interp
   , Alts (..), Single, (.|), alt, many, onMany, level
-  , Alternatives, AltsOk, Match, Rubric, RubricOk, MatchLevels, Index, Selected (..), Ranked (..)
+  , Alternatives, AltsOk, Match, Handles, Levels, RubricOk, Index, Selected, Ranked
     -- * Builders
   , noul, choice, score, each
     -- * Results
@@ -52,14 +52,17 @@ module Jev.Core.Schema
   , grade, massAtOrAbove
     -- * The operation
   , Schema (..), PacketSchema, Model (..), jevLatest
-  , request, decode, Response (..), JevError (..), roundTrip, jev1
+  , request, decode, Response, answers, responseModel, usage, diagnostics
+  , JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
   , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
-  , previewAnswer, checkLegend, checkExpectation
+  , checkLegend, checkExpectation
   ) where
 
 import Data.Kind (Constraint, Type)
 import Data.List (nub, sortOn)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Proxy (Proxy (..))
 import Data.String (IsString (..))
 import Data.Text (Text)
@@ -84,7 +87,7 @@ data Answers (v :: Type)
 type family mode :- (e :: Type) :: Type where
   Questions v :- e = Q v e
   Answers v :- Group s = s (Answers v)
-  Answers v :- Each e = [(Text, Answers v :- e)]
+  Answers v :- Each a e = [(a, Answers v :- e)]
   Answers v :- e = A v e
 infixr 0 :-
 
@@ -94,8 +97,8 @@ infixr 0 :-
 
 data Noul
 data Choice (alts :: Type)
-data Score (levels :: k)
-data Each (e :: Type)
+data Score (p :: Type) (levels :: k)
+data Each (a :: Type) (e :: Type)
 data Group (s :: Type -> Type)
 
 data family Q (v :: Type) (e :: Type)
@@ -124,7 +127,7 @@ instance k ~ k' => IsLabel k (Label k') where fromLabel = Label
 -- handler receives, what a level carries.
 data Offer (v :: Type)
 data Handler (v :: Type) (r :: Type)
-data Level (v :: Type)
+data Level (v :: Type) (p :: Type)
 
 type family Interp (f :: Type) (x :: Type) :: Type where
   Interp (Offer v) (k ::> p) = (v, p)
@@ -137,7 +140,7 @@ type Alts :: Type -> forall k. k -> Type
 data Alts f alts where
   One :: KnownSymbol k => Interp f (k ::> p) -> Alts f (k ::> p)
   Grp :: Interp f (Many p) -> Alts f (Many p)
-  Lvl :: KnownSymbol l => v -> Alts (Level v) (l :: Symbol)
+  Lvl :: KnownSymbol l => v -> p -> Alts (Level v p) (l :: Symbol)
   (:|) :: Alts f x -> Alts f rest -> Alts f (x :|: rest)
 infixr 4 :|
 
@@ -165,9 +168,10 @@ many key wording rows = Grp [(key x, wording x, x) | x <- rows]
 onMany :: (Text -> p -> r) -> Alts (Handler v r) (Many p)
 onMany = Grp
 
--- | One rubric level: its label, and its wording when asking or its result
--- when grading an answer.
-level :: KnownSymbol l => Label l -> r -> Alts (Level r) l
+-- | One rubric level: its label, its wording for the provider, and the
+-- result 'grade' returns when the score lands on it. The same three things
+-- an alternative carries, in the same order.
+level :: KnownSymbol l => Label l -> v -> p -> Alts (Level v p) l
 level _ = Lvl
 
 -- Handlers are written with labels; the label and the function fix the
@@ -208,6 +212,10 @@ type family Describe (x :: Type) :: ErrorMessage where
   Describe (k ::> p) = 'Text "#" ':<>: 'Text k
   Describe (Many p) = 'Text "the runtime group (Many)"
   Describe (h :|: hs) = Describe h
+
+-- | Handlers that fit a disjunction: one per alternative, in declaration
+-- order, each taking that alternative's payload.
+type Handles hs alts = (Alternatives alts, Match hs alts, hs ~ alts)
 
 -- | The selected alternative, carrying the payload it was offered with. A
 -- selection has no key of its own: it is consumed by 'handle', and the
@@ -282,23 +290,17 @@ label = T.pack (symbolVal (Proxy @k))
 -- Rubrics: a chain of bare labels
 -- ---------------------------------------------------------------------------
 
-class Rubric (levels :: k) where
-  rubricEntries :: Alts (Level v) levels -> [(Text, v)]
-  -- | The lowest level, then the rest. A rubric is never empty and a list
-  -- cannot say so, so this is what lets 'grade' fall back to the lowest
-  -- level without a partial function.
-  rubricLevels :: Alts (Level v) levels -> (v, [v])
+-- | A rubric's levels in order: label, wording, result. Never empty, which
+-- is what lets 'grade' fall back to the lowest level with no partial
+-- function and no check.
+class Levels (levels :: k) where
+  levelEntries :: Alts (Level v p) levels -> NonEmpty (Text, v, p)
 
-instance KnownSymbol l => Rubric (l :: Symbol) where
-  rubricEntries (Lvl d) = [(label @l, d)]
-  rubricLevels (Lvl d) = (d, [])
+instance KnownSymbol l => Levels (l :: Symbol) where
+  levelEntries (Lvl d p) = (label @l, d, p) NE.:| []
 
-instance (Rubric x, Rubric rest) => Rubric ((x :: kx) :|: (rest :: kr)) where
-  rubricEntries (x :| rest) = rubricEntries x ++ rubricEntries rest
-  rubricLevels (x :| rest) =
-    let (lowest, above) = rubricLevels x
-        (nextLowest, rest') = rubricLevels rest
-    in (lowest, above ++ nextLowest : rest')
+instance (Levels x, Levels rest) => Levels ((x :: kx) :|: (rest :: kr)) where
+  levelEntries (x :| rest) = levelEntries x <> levelEntries rest
 
 type RubricLabels :: forall k. k -> [Symbol]
 type family RubricLabels levels where
@@ -316,27 +318,6 @@ type family IndexIn (l :: Symbol) (ls :: [Symbol]) :: Nat where
   IndexIn l (l ': ls) = 0
   IndexIn l (j ': ls) = 1 + IndexIn l ls
 
--- | A list of results against a rubric's levels, position by position. The
--- equality on 'grade' is what enforces the match; this fires first so the
--- message names the level rather than showing a raw mismatch. The sibling
--- of 'Match', over bare labels rather than alternatives.
-type MatchLevels :: forall kh. forall kl. kh -> kl -> Constraint
-type family MatchLevels hs levels where
-  MatchLevels @Symbol @Symbol l l = ()
-  MatchLevels @Symbol @Symbol l l' =
-    TypeError ('Text "#" ':<>: 'Text l ':<>: 'Text " is written where the level #" ':<>: 'Text l' ':<>: 'Text " stands (results follow level order)")
-  MatchLevels @Type @Type (h :|: hs) (x :|: xs) = (MatchLevels h x, MatchLevels hs xs)
-  MatchLevels @Type @Symbol (h :|: hs) l =
-    TypeError ('Text "results continue past the end of the rubric: " ':<>: NameLevel hs ':<>: 'Text " is not a level of it")
-  MatchLevels @Symbol @Type l (x :|: xs) =
-    TypeError ('Text "results stop after #" ':<>: 'Text l ':<>: 'Text "; " ':<>: NameLevel xs ':<>: 'Text " still needs one; chain them with .|")
-  MatchLevels hs levels = ()
-
-type NameLevel :: forall k. k -> ErrorMessage
-type family NameLevel x where
-  NameLevel @Symbol l = 'Text "#" ':<>: 'Text l
-  NameLevel @Type (h :|: hs) = NameLevel h
-
 -- ---------------------------------------------------------------------------
 -- Leaves
 -- ---------------------------------------------------------------------------
@@ -351,31 +332,35 @@ data instance Q v (Choice alts) = ChoiceQ (Instructions v) (Alts (Offer v) alts)
 -- | What the provider chose, with everything a caller judges it by. Read
 -- the fields with record dot: @a.next.key@, @a.next.margin@.
 data instance A v (Choice alts) = Chosen
-  { chosen :: Selected v alts            -- ^ the winner, carrying its payload
-  , key :: Text                          -- ^ the winner's wire key
+  { key :: Text                          -- ^ the winner's wire key
   , mass :: Double                       -- ^ the winner's probability
   , margin :: Double                     -- ^ winner minus runner-up; the mass when it stands alone
   , confidence :: Double                 -- ^ the provider's own confidence
   , masses :: [(Text, Double)]           -- ^ the full distribution, best first
-  , ranked :: Ranked v alts              -- ^ for 'contenders'; opaque on the authoring surface
+  , ranked :: Ranked v alts              -- ^ opaque: what 'settle', 'handle' and 'contenders' read
   }
 
--- | Every alternative as a selection, best first. The constructor stays in
--- the core so the authoring surface reads it only through 'contenders'.
-newtype Ranked v alts = Ranked [(Double, Selected v alts)]
+-- | The alternative that won, and every alternative by mass, best first.
+-- Abstract: the constructor is not exported, so the only way to reach a
+-- selection is 'settle', 'handle' or 'contenders', each of which takes a
+-- handler per alternative. A program cannot hold one it has not written a
+-- branch for.
+data Ranked v alts = Ranked (Selected v alts) [(Double, Selected v alts)]
 
-data instance Q v (Score levels) = ScoreQ (Instructions v) (Alts (Level v) levels)
+data instance Q v (Score p levels) = ScoreQ (Instructions v) (Alts (Level v p) levels)
 
 -- | Where on the rubric the provider landed. Read with record dot:
--- @a.urgency.expectation@, @a.urgency.masses@.
-data instance A v (Score levels) = Scored
+-- @a.urgency.expectation@, @a.urgency.masses@; 'grade' picks one of the
+-- results the rubric was written with.
+data instance A v (Score p levels) = Scored
   { expectation :: Double        -- ^ the expected level index
   , confidence :: Double         -- ^ the provider's own confidence
   , masses :: [(Text, Double)]   -- ^ the distribution, by level label, in level order
+  , results :: NonEmpty p        -- ^ every level's result, in level order
   }
 
-newtype instance Q v (Each e) = EachQ [(Text, Q v e)]
-newtype instance A v (Each e) = EachA [(Text, Answers v :- e)]
+newtype instance Q v (Each a e) = EachQ [(Text, a, Q v e)]
+newtype instance A v (Each a e) = EachA [(Text, a, A v e)]
 
 newtype instance Q v (Group s) = GroupQ (s (Questions v))
 newtype instance A v (Group s) = GroupA (s (Answers v))
@@ -388,10 +373,10 @@ chosenMasses Chosen { masses = ms } = ms
 chosenConfidence :: A v (Choice alts) -> Double
 chosenConfidence Chosen { confidence = c } = c
 
-scoreMasses :: A v (Score levels) -> [(Text, Double)]
+scoreMasses :: A v (Score p levels) -> [(Text, Double)]
 scoreMasses Scored { masses = ms } = ms
 
-scoreConfidence :: A v (Score levels) -> Double
+scoreConfidence :: A v (Score p levels) -> Double
 scoreConfidence Scored { confidence = c } = c
 
 -- | Answers print as their own fields. Probabilities are shown to two
@@ -404,7 +389,7 @@ instance Show (A v (Choice alts)) where
     "Choice {key = " <> show k <> ", mass = " <> T.unpack (fmt2 m) <> ", margin = " <> T.unpack (fmt2 g)
       <> ", confidence = " <> T.unpack (fmt2 (chosenConfidence a)) <> ", masses = " <> T.unpack (showMasses (chosenMasses a)) <> "}"
 
-instance Show (A v (Score levels)) where
+instance Show (A v (Score p levels)) where
   show a@Scored { expectation = e } =
     "Score {expectation = " <> T.unpack (fmt2 e)
       <> ", confidence = " <> T.unpack (fmt2 (scoreConfidence a)) <> ", masses = " <> T.unpack (showMasses (scoreMasses a)) <> "}"
@@ -425,15 +410,16 @@ noul t = NoulQ (question t) Omitted
 choice :: forall alts v. (JsonValue v, AltsOk alts) => Text -> Alts (Offer v) alts -> Q v (Choice alts)
 choice t = ChoiceQ (question t)
 
-score :: forall levels v. (JsonValue v, RubricOk levels) => Text -> Alts (Level v) levels -> Q v (Score levels)
+score :: forall levels p v. (JsonValue v, RubricOk levels) => Text -> Alts (Level v p) levels -> Q v (Score p levels)
 score t = ScoreQ (question t)
 
--- | One question per item, keyed at runtime: the per-item battery. A cell
--- holds a question or a nested packet, and so does this, so a battery of
--- one question per item needs no packet around it and a battery of several
--- is the same call with a packet in it.
-each :: ToQ x => [(Text, x)] -> Q (CellJson x) (Each (CellKind x))
-each items = EachQ [(k, toQ x) | (k, x) <- items]
+-- | One question per row, keyed at runtime: the per-item battery. Written
+-- as 'many' is, a wire key and a question per row, and the row itself comes
+-- back beside its answer, so there is nothing to look up afterwards. A cell
+-- holds a question or a nested packet, and so does this, so one question per
+-- row needs no packet around it and several is the same call with a packet.
+each :: ToQ x => (a -> Text) -> (a -> x) -> [a] -> Q (CellJson x) (Each a (CellKind x))
+each key q rows = EachQ [(key r, r, toQ (q r)) | r <- rows]
 
 -- ---------------------------------------------------------------------------
 -- Results
@@ -491,7 +477,7 @@ doubt policy a =
 -- a result without a handler for every alternative, so a confident answer
 -- that means "no" or "missing" runs its own handler and never reads as a
 -- pass.
-settle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Policy -> A v (Choice alts) -> Alts (Handler v r) hs -> Either Doubt r
+settle :: forall alts hs v r. Handles hs alts => Policy -> A v (Choice alts) -> Alts (Handler v r) hs -> Either Doubt r
 settle policy a hs = maybe (Right (handle a hs)) Left (doubt policy a)
 
 -- | A proposition under a policy: yes, no, or structured doubt when the
@@ -522,13 +508,13 @@ explain policy a =
 -- | The winner against a handler per alternative in declaration order, with
 -- no policy: for when the program follows whatever came back. A missing,
 -- extra, or misordered handler is a type error naming the labels.
-handle :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => A v (Choice alts) -> Alts (Handler v r) hs -> r
-handle a hs = altHandle hs (chosen a)
+handle :: forall alts hs v r. Handles hs alts => A v (Choice alts) -> Alts (Handler v r) hs -> r
+handle a hs = case ranked a of Ranked sel _ -> altHandle hs sel
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers. The one way to act on a runner-up.
-contenders :: forall alts hs v r. (Alternatives alts, Match hs alts, hs ~ alts) => Double -> A v (Choice alts) -> Alts (Handler v r) hs -> [(Double, r)]
-contenders floor' a hs = let Ranked rs = ranked a in [(m, altHandle hs s) | (m, s) <- rs, m >= floor']
+contenders :: forall alts hs v r. Handles hs alts => Double -> A v (Choice alts) -> Alts (Handler v r) hs -> [(Double, r)]
+contenders floor' a hs = case ranked a of Ranked _ rs -> [(m, altHandle hs s) | (m, s) <- rs, m >= floor']
 
 -- | Run the result for the level the score landed on. Levels run lowest to
 -- highest, so this walks from the highest down and takes the first whose
@@ -536,21 +522,20 @@ contenders floor' a hs = let Ranked rs = ranked a in [(m, altHandle hs s) | (m, 
 -- does. At a floor of 0.5 that is the median level.
 --
 -- There is always an answer: an ordinal scale has a median even when the
--- distribution is flat, which is why this gives no 'Doubt'. A missing,
--- extra, or misordered level is a compile error naming the level, so a
--- rubric is never dispatched on by its label strings.
-grade :: forall levels hs v r. (Rubric hs, MatchLevels hs levels)
-      => Double -> A v (Score levels) -> Alts (Level r) hs -> r
-grade floor' a hs =
-  let (lowest, above) = rubricLevels hs
+-- distribution is flat, which is why this gives no 'Doubt'. Every level
+-- carries its result from the moment it is written, so there is no list to
+-- check and no label string to dispatch on.
+grade :: Double -> A v (Score p levels) -> p
+grade floor' a =
+  let rs = results a
       -- Mass at or above each level, aligned with the levels past the lowest.
       -- It falls as the level rises, so the last one to clear the floor is the
       -- highest that clears it, and the lowest level stands when none does.
       atOrAbove = drop 1 (scanr (+) 0 (map snd (scoreMasses a)))
-  in foldl (\taken (r, m) -> if m >= floor' then r else taken) lowest (zip above atOrAbove)
+  in foldl (\taken (r, m) -> if m >= floor' then r else taken) (NE.head rs) (zip (NE.tail rs) atOrAbove)
 
 -- | Mass at or beyond a level, by label.
-massAtOrAbove :: forall l levels v. KnownNat (Index l levels) => Label l -> A v (Score levels) -> Double
+massAtOrAbove :: forall l levels p v. KnownNat (Index l levels) => Label l -> A v (Score p levels) -> Double
 massAtOrAbove _ a = sum [m | (i, m) <- zip [0 :: Integer ..] (map snd (scoreMasses a)), i >= natVal (Proxy @(Index l levels))]
 
 -- ---------------------------------------------------------------------------
@@ -583,11 +568,7 @@ class JsonValue v => Endpoint v e where
   -- | The answer as a cell reads it (transparent for nesting).
   unwrapA :: A v e -> Answers v :- e
   -- | A payload-independent summary for inspection.
-  previewA :: Answers v :- e -> v
-
--- | Preview an answer whose endpoint is fixed by the answer type.
-previewAnswer :: forall v e. Endpoint v e => A v e -> v
-previewAnswer = previewA @v @e . unwrapA
+  previewA :: A v e -> v
 
 lookupAnswer :: Path -> [(Text, v)] -> Either DecodeError v
 lookupAnswer p ws = maybe (Left (MissingAnswer key)) Right (lookup key ws)
@@ -627,23 +608,21 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
     let key = encodePath p
     ChoiceAnswer sel ms conf <- parseChoice key v
     alts <- altWire key offer `orDecode` key
-    let keys = map fst alts
-    winner <- maybe (Left (UnknownSelection key sel)) Right (altSelect offer sel)
-    distribution key keys ms conf
+    picked <- maybe (Left (UnknownSelection key sel)) Right (altSelect offer sel)
+    distribution key (map fst alts) ms conf
     let best = sortOn (negate . snd) ms
-        rankedAll = [(m, s) | (k, m) <- best, Just s <- [altSelect offer k]]
-        winnerKey = altKeyOf winner
-        winnerMass = maybe 0 id (lookup winnerKey best)
-        runnerUp = [m | (k, m) <- best, k /= winnerKey]
-        winnerMargin = case runnerUp of { m : _ -> winnerMass - m; [] -> winnerMass }
+        everyAlt = [(m, s) | (k, m) <- best, Just s <- [altSelect offer k]]
+        pickedKey = altKeyOf picked
+        pickedMass = maybe 0 id (lookup pickedKey best)
+        beaten = [m | (k, m) <- best, k /= pickedKey]
+        pickedMargin = case beaten of { m : _ -> pickedMass - m; [] -> pickedMass }
     Right Chosen
-      { chosen = winner
-      , key = winnerKey
-      , mass = winnerMass
-      , margin = winnerMargin
+      { key = pickedKey
+      , mass = pickedMass
+      , margin = pickedMargin
       , confidence = conf
       , masses = best
-      , ranked = Ranked rankedAll
+      , ranked = Ranked picked everyAlt
       }
   unwrapA = id
   previewA a@Chosen { key = k, mass = m, margin = g } = jObject
@@ -657,25 +636,25 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
 orDecode :: Either PrepError x -> Text -> Either DecodeError x
 orDecode e key = either (const (Left (Malformed key "retained offer failed to render"))) Right e
 
-instance (JsonValue v, Rubric levels) => Endpoint v (Score levels) where
+instance (JsonValue v, Levels levels) => Endpoint v (Score p levels) where
   compileQ p (ScoreQ i rubric) = do
     let key = encodePath p
-        entries = rubricEntries rubric
+        wordings = [w | (_, w, _) <- NE.toList (levelEntries rubric)]
     checkInstructions key i
-    if null entries || length entries > 10 then Left (BadLevelCount key (length entries)) else Right ()
-    mapM_ (\(ix, (_, l)) -> checkLevel key ix l) (zip [0 ..] entries)
-    Right (leaf key (WScore i (map snd entries)))
+    if length wordings > 10 then Left (BadLevelCount key (length wordings)) else Right ()
+    mapM_ (\(ix, l) -> checkLevel key ix l) (zip [0 ..] wordings)
+    Right (leaf key (WScore i wordings))
   decodeA p (ScoreQ _ rubric) ws = lookupAnswer p ws >>= \v -> do
     let key = encodePath p
-        entries = rubricEntries rubric
-        labels = map fst entries
+        entries = levelEntries rubric
+        labels = [l | (l, _, _) <- NE.toList entries]
         indices = [T.pack (show i) | i <- [0 .. length labels - 1]]
     ScoreAnswer e lg ms conf <- parseScore key v
     distribution key indices ms conf
-    checkLegend key (map snd entries) lg
+    checkLegend key [w | (_, w, _) <- NE.toList entries] lg
     checkExpectation key (length labels) e
     let byIndex = [(l, maybe 0 id (lookup i ms)) | (i, l) <- zip indices labels]
-    Right Scored { expectation = e, confidence = conf, masses = byIndex }
+    Right Scored { expectation = e, confidence = conf, masses = byIndex, results = fmap (\(_, _, r) -> r) entries }
   unwrapA = id
   previewA a@Scored { expectation = e } = jObject
     [ ("expectation", jNumber e)
@@ -694,17 +673,17 @@ checkExpectation :: Text -> Int -> Double -> Either DecodeError ()
 checkExpectation key n e =
   if isNaN e || isInfinite e || e < 0 || e > fromIntegral (n - 1) then Left (ValueOutOfRange key "score") else Right ()
 
-instance Endpoint v e => Endpoint v (Each e) where
-  compileQ p (EachQ items) = concat <$> mapM (\(k, q) -> compileQ (extend p k) q) items
-  decodeA p (EachQ items) ws = EachA <$> mapM (\(k, q) -> (,) k . unwrapA <$> decodeA (extend p k) q ws) items
-  unwrapA (EachA xs) = xs
-  previewA xs = jObject [(k, previewA @v @e x) | (k, x) <- xs]
+instance Endpoint v e => Endpoint v (Each a e) where
+  compileQ p (EachQ items) = concat <$> mapM (\(k, _, q) -> compileQ (extend p k) q) items
+  decodeA p (EachQ items) ws = EachA <$> mapM (\(k, r, q) -> (,,) k r <$> decodeA (extend p k) q ws) items
+  unwrapA (EachA xs) = [(r, unwrapA x) | (_, r, x) <- xs]
+  previewA (EachA xs) = jObject [(k, previewA x) | (k, _, x) <- xs]
 
 instance Schema v s => Endpoint v (Group s) where
   compileQ p (GroupQ q) = compileSchema p q
   decodeA p (GroupQ q) ws = GroupA <$> decodeSchema p q ws
   unwrapA (GroupA x) = x
-  previewA = previewSchema
+  previewA (GroupA x) = previewSchema x
 
 -- ---------------------------------------------------------------------------
 -- Packets
@@ -716,7 +695,7 @@ data (k :: Symbol) ::= (e :: Type)
 -- 'Answers'.
 data Cell (k :: Symbol) (e :: Type) mode where
   (:=) :: ToQ x => Label k -> x -> Cell k (CellKind x) (Questions (CellJson x))
-  Answered :: (Answers v :- e) -> Cell k e (Answers v)
+  Answered :: Endpoint v e => A v e -> Cell k e (Answers v)
 infix 6 :=
 
 -- | What a cell may hold: a question, or a nested packet.
@@ -764,7 +743,7 @@ instance (flag ~ (k == j), Get' flag k (j ::= e' ': fs) all e) => Get k (j ::= e
 class Get' (flag :: Bool) (k :: Symbol) (fs :: [Type]) (all :: [Type]) (e :: Type) | flag k fs all -> e where
   get' :: Packet fs (Answers v) -> Answers v :- e
 instance Get' 'True k (k ::= e ': fs) all e where
-  get' (Answered a :& _) = a
+  get' (Answered a :& _) = unwrapA a
 instance Get k fs all e => Get' 'False k (j ::= e' ': fs) all e where
   get' (_ :& p) = get @k @fs @all p
 
@@ -784,8 +763,8 @@ instance JsonValue v => PacketSchema v '[] where
 
 instance (KnownSymbol k, Endpoint v e, PacketSchema v fs) => PacketSchema v (k ::= e ': fs) where
   packetCompile p (_ := x :& rest) = (++) <$> compileQ (extend p (label @k)) (toQ x) <*> packetCompile p rest
-  packetDecode p (_ := x :& rest) ws = (:&) <$> (Answered . unwrapA <$> decodeA (extend p (label @k)) (toQ x) ws) <*> packetDecode p rest ws
-  packetPreview (Answered a :& rest) = (label @k, previewA @v @e a) : packetPreview rest
+  packetDecode p (_ := x :& rest) ws = (:&) <$> (Answered <$> decodeA (extend p (label @k)) (toQ x) ws) <*> packetDecode p rest ws
+  packetPreview (Answered a :& rest) = (label @k, previewA a) : packetPreview rest
 
 instance (Show v, PacketSchema v fs) => Show (Packet fs (Answers v)) where
   show p = show (jObject (packetPreview p))
@@ -839,12 +818,31 @@ request (Model m) st q = either (Left . Prepare) Right $ do
     , ("questions", jObject [(k, questionValue w) | (k, w) <- qs])
     ])
 
-data Response v s = Response
-  { answers :: s (Answers v)
-  , responseModel :: Text
-  , usage :: v
-  , diagnostics :: [Text]   -- ^ distributions that do not sum to one, and the like: worth a log line, never a rejection
-  }
+data Response v s = Response (s (Answers v)) Text v [Text]
+
+-- | The packet, under 'Answers'. Usually unnecessary: a response reads by
+-- its packet's own labels, @r.next@, through the instance below.
+answers :: Response v s -> s (Answers v)
+answers (Response a _ _ _) = a
+
+-- | The model the request resolved to, as the envelope reported it.
+responseModel :: Response v s -> Text
+responseModel (Response _ m _ _) = m
+
+-- | The token counts for the call, as the provider sent them.
+usage :: Response v s -> v
+usage (Response _ _ u _) = u
+
+-- | Distributions that do not sum to one, and the like: worth a log line,
+-- never a rejection.
+diagnostics :: Response v s -> [Text]
+diagnostics (Response _ _ _ d) = d
+
+-- | A response reads by the labels of the packet that produced it:
+-- @r.next.key@. A label the packet lacks is the same compile error it is on
+-- the packet itself.
+instance HasField k (s (Answers v)) r => HasField k (Response v s) r where
+  getField = getField @k . answers
 
 -- | A response prints as its answers: the packet's labels over each
 -- answer's own fields, nested packets nested.
@@ -889,4 +887,4 @@ jev1
   :: (Monad m, Endpoint v e)
   => (v -> m (Either Text v)) -> Model -> State v -> Q v e
   -> m (Either JevError (Answers v :- e))
-jev1 transport model st q = fmap (fmap (\r -> case answers r of Answered a :& Nil -> a)) (roundTrip transport model st ((Label :: Label "value") := q :& Nil))
+jev1 transport model st q = fmap (fmap (\r -> case answers r of Answered a :& Nil -> unwrapA a)) (roundTrip transport model st ((Label :: Label "value") := q :& Nil))

@@ -110,7 +110,7 @@ exactAnswers (Exact xs) = xs
 instance JsonValue v => Schema v Exact where
   compileSchema _ (Exact qs) = mconcat <$> mapM (\(k, SomeQ q) -> compileQ (Exactly k) q) qs
   decodeSchema _ (Exact qs) ws = Exact <$> mapM (\(k, SomeQ q) -> (,) k . SomeA q <$> decodeA (Exactly k) q ws) qs
-  previewSchema (Exact xs) = jObject [(k, previewAnswer a) | (k, SomeA _ a) <- xs]
+  previewSchema (Exact xs) = jObject [(k, previewA a) | (k, SomeA _ a) <- xs]
 
 -- ---------------------------------------------------------------------------
 -- Builders over the raw instruction and criteria positions
@@ -122,5 +122,5 @@ noulWith i c = NoulQ i c
 choiceWith :: Instructions Value -> Alts (Offer Value) alts -> Q Value (Choice alts)
 choiceWith = ChoiceQ
 
-scoreWith :: Instructions Value -> Alts (Level Value) levels -> Q Value (Score levels)
+scoreWith :: Instructions Value -> Alts (Level Value p) levels -> Q Value (Score p levels)
 scoreWith = ScoreQ

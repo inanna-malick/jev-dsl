@@ -41,7 +41,7 @@ inspection edges =
                     .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
                     .| many (.edgeKey) (String . (.edgeText)) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
-  :& #children := each [ (e.edgeKey, noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) | e <- edges ]
+  :& #children := each (.edgeKey) (\e -> noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) edges
   :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
   :& Nil
 
@@ -50,7 +50,7 @@ type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edg
 type Inspection = Packet
   '[ "next" ::= Choice Routes
    , "enough" ::= Noul
-   , "children" ::= Each Noul
+   , "children" ::= Each Edge Noul
    , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
 
 _inspectionTyped :: [Edge] -> Inspection Questions
@@ -70,25 +70,24 @@ act a =
 report :: Inspection Answers -> Text
 report a =
   a.next.key <> " by " <> pct a.next.margin
-    <> ", relevant: " <> T.intercalate ", " [k | (k, n) <- a.children, judge routing n == Right True]
+    <> ", relevant: " <> T.intercalate ", " [e.edgeKey | (e, n) <- a.children, judge routing n == Right True]
     <> (if judge routing a.evidence.gap == Right True then ", source missing" else "")
   where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
 
--- A rubric is graded, not read off: one result per level, checked against
--- the rubric the question was asked with.
+-- A rubric is graded, not read off: the result is the level, written
+-- beside its wording when the rubric was asked.
 data Urgency = Background | AtCheckpoint | Now deriving (Show, Eq)
 
 urgency :: Transport -> Text -> IO (Either Text Urgency)
 urgency transport situation = do
   answer <- ask1 transport jevLatest (state (String situation))
     (score "What is the consequence of waiting?"
-       (  level #background "No current action depends on this"
-       .| level #checkpoint "Useful at the next ordinary checkpoint"
-       .| level #blocked "A worker cannot take its next action" ))
+       (  level #background "No current action depends on this" Background
+       .| level #checkpoint "Useful at the next ordinary checkpoint" AtCheckpoint
+       .| level #blocked "A worker cannot take its next action" Now ))
   pure $ case answer of
     Left err -> Left (T.pack (show err))
-    Right a -> Right (grade 0.5 a
-      (level #background Background .| level #checkpoint AtCheckpoint .| level #blocked Now))
+    Right a -> Right (grade 0.5 a)
 
 -- The same handlers on every contender above a floor.
 routes :: Handlers Text Routes

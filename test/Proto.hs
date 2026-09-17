@@ -126,12 +126,12 @@ protoChecks c = do
                          .| edgeOffers )
             :& #enough := noul "Does the supplied evidence answer the inquiry?"
             :& #urgency := score "What is the consequence of waiting?"
-                         (  level #background "No current action depends on this"
-                         .| level #checkpoint "Useful at the next ordinary checkpoint"
-                         .| level #blocked "A worker cannot take its next action"
-                         .| level #invalidating "Continuing would invalidate ongoing work" )
-            :& #children := each [ (name, #useful := noul ("Is " <> name <> " relevant?") :& #contradicts := noul ("Does " <> name <> " contradict the premise?") :& Nil)
-                                 | name <- ["e1", "e.2"] ]
+                         (  level #background "No current action depends on this" ("background" :: Text)
+                         .| level #checkpoint "Useful at the next ordinary checkpoint" ("checkpoint" :: Text)
+                         .| level #blocked "A worker cannot take its next action" ("blocked" :: Text)
+                         .| level #invalidating "Continuing would invalidate ongoing work" ("invalidating" :: Text) )
+            :& #children := each id (\name -> #useful := noul ("Is " <> name <> " relevant?") :& #contradicts := noul ("Does " <> name <> " contradict the premise?") :& Nil)
+                                 ["e1", "e.2"]
             :& #evidence := (#gap := noul "Does answering require source not supplied?" :& Nil)
             :& Nil
   case request jevLatest world packet of
@@ -183,7 +183,6 @@ protoChecks c = do
       checkEq c "packet: typed rubric index" 0.5 (massAtOrAbove #blocked a.urgency)
       -- the stub spreads a score evenly, so each of four levels holds 0.25
       let urgencyAt f = grade f a.urgency
-            (level #background "background" .| level #checkpoint "checkpoint" .| level #blocked "blocked" .| level #invalidating "invalidating")
       -- flat over four levels: blocked and above holds exactly half
       checkEq c "grade: the median level of a flat rubric" ("blocked" :: Text) (urgencyAt 0.5)
       checkEq c "grade: a strict floor falls back to the lowest level" ("background" :: Text) (urgencyAt 0.9)
@@ -260,7 +259,7 @@ protoChecks c = do
         _ -> Nothing
       rows :: [(Text, Value, Edge)] -> Offers (Many (Text, Value, Edge))
       rows = many (\(k, _, _) -> k) (\(_, d, _) -> d)
-      nine = level #l0 "" .| level #l1 "" .| level #l2 "" .| level #l3 "" .| level #l4 "" .| level #l5 "" .| level #l6 "" .| level #l7 "" .| level #l8 ""
+      nine = level #l0 "" () .| level #l1 "" () .| level #l2 "" () .| level #l3 "" () .| level #l4 "" () .| level #l5 "" () .| level #l6 "" () .| level #l7 "" () .| level #l8 "" ()
   checkEq c "prepare: empty runtime group with nothing else is an empty offer" (Just (EmptyOffer "value"))
     (prepErr (choice "?" (rows [])))
   checkEq c "prepare: duplicate runtime keys" (Just (DuplicateKeys "value" ["a"]))
@@ -274,9 +273,9 @@ protoChecks c = do
   checkEq c "prepare: bare-boolean instructions rejected" (Just (BadInstructions "value"))
     (prepErr (noulWith (Core.Instructions (Bool True)) Omitted))
   checkEq c "prepare: eleven levels rejected" (Just (BadLevelCount "value" 11))
-    (prepErr (score "?" (level #l9 "" .| level #l10 "" .| nine)))
+    (prepErr (score "?" (level #l9 "" () .| level #l10 "" () .| nine)))
   checkEq c "prepare: null level rejected" (Just (BadLevel "value" 0))
-    (prepErr (score "?" (level #a Null .| level #b "b")))
+    (prepErr (score "?" (level #a Null () .| level #b "b" ())))
   checkEq c "prepare: bare-number state rejected" (Just BadStateShape)
     (case request jevLatest (state (Number 1)) (#value := noul "?" :& Nil) of Left (Prepare e) -> Just e; _ -> Nothing)
 
@@ -293,7 +292,7 @@ protoChecks c = do
     (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 0.5 :: Double), ("read_publish_gate", 0.3), ("ghost", 0.2)])]) groups (\case ExtraMass _ "ghost" -> True; _ -> False)
   expectDecode "decode: missing mass rejected"
     (answerMap [("value", choiceAnswer ("run_retry_fixture" :: Text) [("run_retry_fixture", 1 :: Double)])]) groups (\case MissingMass _ "read_publish_gate" -> True; _ -> False)
-  let rubric = score "?" (level #none "no risk" .| level #adjacent "adjacent cases" .| level #contract "crosses a contract")
+  let rubric = score "?" (level #none "no risk" ("none" :: Text) .| level #adjacent "adjacent cases" ("adjacent" :: Text) .| level #contract "crosses a contract" ("contract" :: Text))
       scoreAnswer lg = object ["type" .= ("score" :: Text), "score" .= (1 :: Double), "confidence" .= (0.5 :: Double), "legend" .= object lg
         , "probabilities" .= object ["0" .= (0.3 :: Double), "1" .= (0.4 :: Double), "2" .= (0.3 :: Double)]]
   expectDecode "decode: altered legend rejected" (answerMap [("value", scoreAnswer ["0" .= ("no risk" :: Text), "1" .= ("altered" :: Text), "2" .= ("crosses a contract" :: Text)])])
@@ -304,7 +303,7 @@ protoChecks c = do
   expectDecode "decode: legend equality is exact, not Double"
     (answerMap [("value", object ["type" .= ("score" :: Text), "score" .= (0.5 :: Double), "confidence" .= (0.5 :: Double)
       , "legend" .= object ["0" .= big 9007199254740993, "1" .= big 9007199254740992], "probabilities" .= object ["0" .= (0.5 :: Double), "1" .= (0.5 :: Double)]])])
-    (score "?" (level #a (big 9007199254740992) .| level #b (big 9007199254740993))) (\case LegendMismatch _ -> True; _ -> False)
+    (score "?" (level #a (big 9007199254740992) () .| level #b (big 9007199254740993) ())) (\case LegendMismatch _ -> True; _ -> False)
   -- grade over real distributions, where the stub's flat one cannot reach
   let graded ps floor' = do
         r <- ask1 (fixed (answerMap [("value", object
@@ -312,7 +311,7 @@ protoChecks c = do
               , "legend" .= object ["0" .= ("no risk" :: Text), "1" .= ("adjacent cases" :: Text), "2" .= ("crosses a contract" :: Text)]
               , "probabilities" .= object [Key.fromText (T.pack (show i)) .= p | (i, p) <- zip [0 :: Int ..] ps] ])]))
               jevLatest world rubric
-        pure (fmap (\a -> grade floor' a (level #none "none" .| level #adjacent "adjacent" .| level #contract "contract")) r)
+        pure (fmap (grade floor') r)
   g1 <- graded [0.2, 0.3, 0.5 :: Double] 0.5
   checkEq c "grade: the top level clears exactly at the floor" (Right ("contract" :: Text)) g1
   g2 <- graded [0.2, 0.3, 0.5 :: Double] 0.6

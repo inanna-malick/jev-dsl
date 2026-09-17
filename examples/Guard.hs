@@ -14,8 +14,10 @@
 -- questions:
 --
 --   * 'Ask'    — a free-form reply is sorted into one branch: a choice over the
---                branches, with a second choice in the same packet for whatever
---                would stop the traveller where they stand
+--                branches, and in the same packet a Noul per topic the reply may
+--                also raise and a choice for whatever would stop the traveller
+--                where they stand. A node without one of those sends a battery
+--                of none, so every 'Ask' is one packet and one call
 --   * 'Check'  — the story is held against each wanted poster: one Noul per poster, in one call
 --   * 'Weigh'  — the story so far is graded on a rubric: a score
 --   * 'Happen' — something may happen at the gate: a choice among authored events
@@ -44,6 +46,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BL
+import Data.Foldable (asum)
 import Data.IORef
 import Data.List (mapAccumL, nub, sortOn)
 import Data.Maybe (fromMaybe)
@@ -385,10 +388,6 @@ branch label child = case T.lines child of
 quote :: Text -> Text
 quote t = "\"" <> t <> "\""
 
--- No topics were on offer here: the shape the per-topic answers would have had.
-noAlso :: [(Text, A Value Noul)]
-noAlso = []
-
 -- The hub topics the guard will answer more than one of in a breath.
 topics :: World -> [Text]
 topics w = map fst w.posters ++ map fst w.places ++ ["curfew", "captain", "rumour"]
@@ -432,24 +431,24 @@ interpret call = \case
         -- "which way to the temple, and when's the bell?" gets both answers
         -- without a second round trip.
         topical = [(k, meaning, node) | (k, meaning, node) <- branches, k `elem` topics t.here]
-        alsoQ = each [ (k, noul (T.unwords
-                    [ "Is the traveller asking the guard about this, or asking for it?"
-                    , "Mentioning it in passing, denying it, or answering the guard's own question about it is not asking."
-                    , "The topic:", meaning ]))
-                  | (k, meaning, _) <- topical ]
+        alsoQ = each (\(k, _, _) -> k) (\(_, meaning, _) -> noul (T.unwords
+                  [ "Is the traveller asking the guard about this, or asking for it?"
+                  , "Mentioning it in passing, denying it, or answering the guard's own question about it is not asking."
+                  , "The topic:", meaning ])) topical
 
         follow a alsos = do
           let winner = handle a branchOf
               others = [(k, m) | (k, m) <- a.masses, k /= a.key, m >= 0.2]
               -- Judged, not thresholded by hand; a topic the guard has
-              -- already spoken to is not raised again.
-              raised = [ (k, n) | (k, n) <- alsos, k /= a.key, judge routing n == Right True ]
-              alsoSaid = nub [ q | (k, _) <- raised
-                              , Just (Just q) <- [lookup k [(k', node.quip) | (k', _, node) <- topical]]
-                              , Just q /= winner.quip, q `notElem` t.told ]
+              -- already spoken to is not raised again. The battery hands back
+              -- the row the question was built from, so the node that answers
+              -- the topic is already here and there is nothing to look up.
+              raised = [ (k, node, n) | ((k, _, node), n) <- alsos, k /= a.key, judge routing n == Right True ]
+              alsoSaid = nub [ q | (_, node, _) <- raised, Just q <- [node.quip]
+                             , Just q /= winner.quip, q `notElem` t.told ]
           aside ("heard " <> a.key <> " " <> pct a.mass
             <> if null others then "" else "  (also " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- others] <> ")")
-          unless (null raised) (aside ("also asked " <> T.intercalate ", " [k <> " " <> pct n.yes | (k, n) <- raised]))
+          unless (null raised) (aside ("also asked " <> T.intercalate ", " [k <> " " <> pct n.yes | (k, _, n) <- raised]))
           mapM_ guard alsoSaid
           winner.play (t `saw` Turn line reply a.key a.mass)
             { told = alsoSaid ++ maybe [] pure winner.quip ++ t.told }
@@ -491,28 +490,27 @@ interpret call = \case
             when (a.key /= "nothing_new") (aside ("let it pass: " <> explain spawning a))
             pure Nothing
 
-    -- One call either way; the packet carries whichever questions this node
-    -- has, and the answers come back under the same labels.
-    case (trip, null topical) of
-      (Nothing, True) -> ask1 call jevLatest st sorting >>= must >>= \a -> follow a noAlso
-      (Nothing, False) -> do
-        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #also := alsoQ :& Nil))
-        follow a.branch a.also
-      (Just tr, True) -> do
-        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #stop := stopping tr :& Nil))
-        divert a.stop >>= maybe (follow a.branch noAlso) pure
-      (Just tr, False) -> do
-        a <- answers <$> (must =<< ask call jevLatest st (#branch := sorting :& #also := alsoQ :& #stop := stopping tr :& Nil))
-        divert a.stop >>= maybe (follow a.branch a.also) pure
+    -- One packet and one call, whatever this node has. A question the node
+    -- lacks is a battery of none, which renders to nothing on the wire, so
+    -- the optional tripwire and the topics need no case of their own and no
+    -- second packet shape.
+    r <- must =<< ask call jevLatest st
+      (  #branch := sorting
+      :& #also   := alsoQ
+      :& #stop   := each (const "now") stopping (maybe [] pure trip)
+      :& Nil )
+    stopped <- mapM (divert . snd) r.stop
+    maybe (follow r.branch r.also) pure (asum stopped)
 
   Say line next -> Node (\t -> guard line >> next.play t) (Just line)
 
   Check matches none -> program $ \t -> do
-    -- One Noul per poster, each carrying its own wording: the per-item battery.
-    resp <- must =<< ask call jevLatest (situation t [])
-      ( #fits := each [ (k, noul ("Does the traveller's story so far match this wanted poster? " <> text)) | (k, text) <- t.here.posters ]
-      :& Nil )
-    let scored = sortOn (Down . (.yes) . fst) [(n, k) | (k, n) <- (answers resp).fits]
+    -- One Noul per poster, each carrying its own wording: the per-item
+    -- battery. A battery is a question, so it needs no packet around it, and
+    -- each answer comes back beside the poster it was asked about.
+    fits <- must =<< ask1 call jevLatest (situation t [])
+      (each fst (\(_, poster) -> noul ("Does the traveller's story so far match this wanted poster? " <> poster)) t.here.posters)
+    let scored = sortOn (Down . (.yes) . fst) [(n, k) | ((k, _), n) <- fits]
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | (n, k) <- scored])
     -- Holding someone starts something, so the closest poster is judged under
     -- that policy, and the policy's own line says why it went the way it did.
@@ -525,14 +523,15 @@ interpret call = \case
       [] -> none.play t
 
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
+    -- Each level carries what the provider is shown and what the guard does
+    -- next, on one line. The highest level half the weight reaches is the
+    -- one taken, which is the median; there is no string to dispatch on and
+    -- no second list that could fall out of step with this one.
     a <- must =<< ask1 call jevLatest (situation t [])
-      (score q (level #sound (String sound) .| level #thin (String thin) .| level #false (String false)))
-    -- The story is graded on the rubric it was asked with: the highest level
-    -- half the weight reaches, which is the median. The three levels are
-    -- checked against this rubric at compile time, so there is no string to
-    -- dispatch on and no branch that can quietly go missing.
+      (score q (  level #sound (String sound) ("sound", x)
+               .| level #thin (String thin) ("thin", y)
+               .| level #false (String false) ("false", z) ))
     let (taken, next) = grade 0.5 a
-          (level #sound ("sound", x) .| level #thin ("thin", y) .| level #false ("false", z))
     aside ("weighed " <> taken <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
       <> "; thin or worse " <> pct (massAtOrAbove #thin a) <> ")")
     next.play t

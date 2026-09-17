@@ -58,15 +58,15 @@ count ls = #count := scale (question "How many messages are pending in `context.
 type Owners = "configuration_owner" ::> Text :|: "reviewer" ::> Text :|: "neither" ::> ()
 type UrgencyLevels = "informational" :|: "blocking"
 
-triage :: Packet '[ "route" ::= Choice Owners, "urgency" ::= Score UrgencyLevels, "wake" ::= Noul ] Questions
+triage :: Packet '[ "route" ::= Choice Owners, "urgency" ::= Score () UrgencyLevels, "wake" ::= Noul ] Questions
 triage =
      #route := choiceWith (Core.Instructions (object ["question" .= ("Who can resolve the missing configuration?" :: Text), "focus" .= ["Current blocker" :: Text]]))
                  (  alt #configuration_owner (object ["handles" .= object ["configuration" .= ["missing values" :: Text, "invalid values"]]]) "config"
                  .| alt #reviewer (object ["handles" .= ["completed work" :: Text]]) "review"
                  .| alt #neither Null () )
   :& #urgency := score "How urgently does this message need attention?"
-                 (  level #informational (object ["means" .= ("Useful information, work can continue" :: Text)])
-                 .| level #blocking (object ["means" .= ("Work cannot continue until someone responds" :: Text)]) )
+                 (  level #informational (object ["means" .= ("Useful information, work can continue" :: Text)]) ()
+                 .| level #blocking (object ["means" .= ("Work cannot continue until someone responds" :: Text)]) () )
   :& #wake := noulWith wakeInstructions wakeCriteria
   :& Nil
 
@@ -78,10 +78,10 @@ type Readiness = "unresolved_issue" :|: "partial_evidence" :|: "current_applicab
 type Kinds = "shared_decision" ::> () :|: "local_repair" ::> () :|: "ship" ::> () :|: "unknown" ::> ()
 type Pairs = "o1_o2" ::> () :|: "o3_o4" ::> () :|: "o4_o5" ::> ()
 
-type Branch = Packet '[ "action" ::= Choice Actions, "affected" ::= Noul, "readiness" ::= Score Readiness ]
+type Branch = Packet '[ "action" ::= Choice Actions, "affected" ::= Noul, "readiness" ::= Score () Readiness ]
 type Decision = Packet '[ "owner" ::= Choice (Many (Text, Value)), "kind" ::= Choice Kinds, "witness" ::= Choice Pairs ]
 type Evidence = Packet '[ "old_review_applies" ::= Noul, "opinion_overrides" ::= Noul ]
-type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each (Group Branch), "evidence" ::= Group Evidence ]
+type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each Text (Group Branch), "evidence" ::= Group Evidence ]
 
 world :: Value -> World Questions
 world req =
@@ -97,7 +97,7 @@ world req =
             .| alt #o3_o4 (descr "decision.witness" "o3_o4") ()
             .| alt #o4_o5 (descr "decision.witness" "o4_o5") () )
        :& Nil)
-  :& #branches := each [ (b, branch b) | b <- ["delivery", "search", "ui"] ]
+  :& #branches := each id branch ["delivery", "search", "ui"]
   :& #evidence :=
        (  #old_review_applies := noulWith (instr "evidence.old_review_applies") Omitted
        :& #opinion_overrides := noulWith (instr "evidence.opinion_overrides") Omitted
@@ -111,9 +111,9 @@ world req =
             .| alt #repair_or_revalidate (descr ("branches." <> b <> ".action") "repair_or_revalidate") () )
       :& #affected := noulWith (instr ("branches." <> b <> ".affected")) Omitted
       :& #readiness := scoreWith (instr ("branches." <> b <> ".readiness"))
-            (  level #unresolved_issue (lvl ("branches." <> b <> ".readiness") 0)
-            .| level #partial_evidence (lvl ("branches." <> b <> ".readiness") 1)
-            .| level #current_applicable (lvl ("branches." <> b <> ".readiness") 2) )
+            (  level #unresolved_issue (lvl ("branches." <> b <> ".readiness") 0) ()
+            .| level #partial_evidence (lvl ("branches." <> b <> ".readiness") 1) ()
+            .| level #current_applicable (lvl ("branches." <> b <> ".readiness") 2) () )
       :& Nil
     q k = maybe Null id (lookup k (requestQuestions req))
     instr k = instructionsOf (q k)

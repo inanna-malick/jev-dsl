@@ -49,7 +49,7 @@ packet =
      #next     := choice "Which continuation advances the inquiry?" offers
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
   :& #urgency  := score "What is the consequence of waiting?" urgency
-  :& #children := each [ (e.key, #useful := noul ("Is " <> e.key <> " (" <> e.text <> ") relevant?") :& Nil) | e <- edges ]
+  :& #children := each (.key) (\e -> #useful := noul ("Is " <> e.key <> " (" <> e.text <> ") relevant?") :& Nil) edges
   :& #evidence := (#gap := noul "Is source missing?" :& Nil)
   :& Nil
 ```
@@ -62,13 +62,18 @@ Labels are the wire keys; nested packets flatten to dotted paths with dots
 in keys escaped, so a label may be anything. A duplicate label is a compile
 error naming it.
 
-`ask transport model state packet` returns a `Response`; `answers` is the
-same packet under `Answers`, read with the labels: `a.next`, `a.enough`,
-`a.children` (a list of `(key, sub-packet)`), `a.evidence.gap`. A label the
-packet lacks is a compile error listing the labels it has. `usage` is a
-`Usage { inputTokens, outputTokens }`; `resolvedModel` is the model the
-request actually resolved to; `diagnostics` is a list of log lines, such as
-a distribution that did not sum to one.
+`ask transport model state packet` returns a `Response`. It has no record
+fields of its own: `answers`, `usage`, `resolvedModel` and `diagnostics` are
+plain functions over it, and a response reads by its packet's own labels
+directly, with no need to project out the packet first: `r.next`,
+`r.enough`, `r.children` (a list of `(item, sub-answer)`, the row beside
+what it answered), `r.evidence.gap`. `answers r` is still there for handing
+the whole packet to a function that wants it as one value rather than a
+label at a time. A label the packet lacks is a compile error listing the
+labels it has. `usage` is a `Usage { inputTokens, outputTokens }`;
+`resolvedModel` is the model the request actually resolved to;
+`diagnostics` is a list of log lines, such as a distribution that did not
+sum to one.
 
 ## Acting on answers
 
@@ -128,11 +133,13 @@ The rest of an answer is fields, read with record dot:
 |---|---|
 | `choice` | `key`, `mass`, `margin`, `confidence`, `masses` (best first) |
 | `noul` | `yes` |
-| `score` | `expectation`, `confidence`, `masses` (by level, in order) |
+| `score` | `expectation`, `confidence`, `masses`, `results` (by level, in order) |
 
 Each kind has one typed consumer: `settle` for a choice, `judge` for a Noul,
-`grade` for a score. Each takes the branches as a value and so cannot hand back
-a result the program did not write a case for.
+`grade` for a score. `settle` and `handle` take a handler list as a value and
+so cannot hand back a result the program did not write a case for. `grade`
+needs no such list: the result it returns was written beside the level's own
+wording when the rubric was built.
 
 `key` is for logs and ledgers, never for dispatch: a `case` on it is
 unchecked, and the compiler cannot tell you when the alternatives change.
@@ -142,7 +149,7 @@ play, usually a sign the alternatives were not really rivals.
 
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
-`margin`, `confidence`, `masses`, `yes`, `expectation`. The
+`margin`, `confidence`, `masses`, `yes`, `expectation`, `results`. The
 verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `settle`,
 `judge`, `grade`, `handle`, `explain`. Under `-Wall` a local binding with any of
 these names shadows; name your own `tag`, `weight`, `askLine`, or import
@@ -191,7 +198,9 @@ row.
 
 The chain's type is `"use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge`.
 Give it a name when a helper wants to mention it in a signature; never for
-the compiler's sake.
+the compiler's sake. `Handles hs alts` bundles the constraints `settle`,
+`handle` and `contenders` need between a handler list and the alternatives
+it answers, for a helper that wants to take either as a parameter.
 
 Handlers follow declaration order. A label out of order, a handler missing
 or extra, a label where `Many` stands, or parentheses inside a chain each
@@ -199,42 +208,44 @@ produce a compile error that says which label was expected.
 
 ## Rubrics
 
-A score ranges over a chain of levels, in order:
+A score ranges over a chain of levels, in order, each with its wording for
+the provider and the result `grade` returns when the score lands on it —
+the same two things an alternative carries, beside its label:
 
 ```haskell
-urgency = level #background "No current action depends on this"
-       .| level #checkpoint "Useful at the next ordinary checkpoint"
-       .| level #blocked "A worker cannot take its next action"
-       .| level #invalidating "Continuing would invalidate ongoing work"
+score "What is the consequence of waiting?"
+  (  level #background   "No current action depends on this"        keepGoing
+  .| level #checkpoint   "Useful at the next ordinary checkpoint"    noteIt
+  .| level #blocked      "A worker cannot take its next action"     wakeSomeone
+  .| level #invalidating "Continuing would invalidate ongoing work" stopEverything )
 ```
 
-Its type is `"background" :|: "checkpoint" :|: "blocked" :|: "invalidating"`.
+The levels' type is `"background" :|: "checkpoint" :|: "blocked" :|: "invalidating"`,
+and the question's is `Score p levels` for whatever type the results have.
 Duplicate labels are a compile error; one to ten levels is checked when the
 request is built.
 
-`grade floor answer results` is how you act on one. It takes a result per
-level, written with the same `level` builder, and runs the one for the level
-the score landed on: the highest level whose mass at or above it clears the
-floor, or the lowest when none does. At a floor of `0.5` that is the median.
+`grade floor answer` is how you act on one: the result written beside the
+level the score landed on, the highest level whose mass at or above it
+clears the floor, or the lowest when none does. At a floor of `0.5` that is
+the median.
 
 ```haskell
 grade 0.5 a.urgency
-  (  level #background   keepGoing
-  .| level #checkpoint   noteIt
-  .| level #blocked      wakeSomeone
-  .| level #invalidating stopEverything )
 ```
 
-A missing, extra, or misordered level is a compile error naming the level it
-expected, exactly as for a choice's handlers. That is the point: a rubric's
-labels are known at compile time, so nothing should ever dispatch on them as
-strings.
+There is no list of results to keep in step with the rubric, so a result
+cannot go missing, arrive twice, or land on the wrong level: it is the same
+expression as the level's wording. That is the point. A rubric's labels are
+known at compile time, so nothing should ever dispatch on them as strings,
+and the way not to is to leave no string to dispatch on.
 
 There is no `Doubt` here. An ordinal scale has a median even when the
 distribution is flat, so `grade` always answers; read `confidence` yourself if
-you want to gate on it. The answer also gives `expectation` and `masses` by
-label for the ledger, plus `massAtOrAbove #blocked`, which sums the rubric from
-a level up when you want the raw number rather than a branch.
+you want to gate on it. The answer also gives `expectation`, `masses` by
+label, and `results` (every level's result, in level order) for the ledger,
+plus `massAtOrAbove #blocked`, which sums the rubric from a level up when you
+want the raw number rather than a branch.
 
 A score is right only for a genuinely ordered, mutually exclusive
 situation. Most judgments are not: reach for a Noul or a choice first.
@@ -242,25 +253,27 @@ situation. Most judgments are not: reach for a Noul or a choice first.
 ## The per-item battery
 
 When the question is "for each of these N things, ...", `each` asks a
-sub-packet per item, keyed at runtime, in one call:
+question per item, keyed at runtime, in one call. It takes a key, a
+question, and the rows, exactly as `many` does:
 
 ```haskell
-#clauses := each [ (c.key, noul ("Does the draft satisfy " <> c.key <> "? " <> c.text)) | c <- clauses ]
+#clauses := each (.key) (\c -> noul ("Does the draft satisfy " <> c.key <> "? " <> c.text)) clauses
 ```
 
-`each` holds a question or a nested packet, exactly as a cell does, so one
-question per item needs nothing around it and several per item is the same
-call with a packet in it. The answers come back as `[(key, answer)]`, read
-with `lookup`. Each item's wording is written where the question is, so a
-battery is an ordinary fold over whatever list the program has. This is the highest-value
+`each`'s second argument is a question or a nested packet, exactly as a
+cell does, so one question per item needs nothing around it and several per
+item is the same call with a packet in it. The answers come back as
+`[(row, answer)]`, the row itself beside what it answered — there is
+nothing to look up afterward, the same property `many` already has. Each
+item's wording is written where the question is, so a battery is an
+ordinary fold over whatever list the program has. This is the highest-value
 shape in the corpus: per-item questions catch things a single summary
 question waves through.
 
 ## What is checked where
 
 At compile time: label uniqueness and presence, handler lists against
-alternatives, result lists against rubric levels, rubric label uniqueness,
-cell contents.
+alternatives, rubric label uniqueness, cell contents.
 
 When the request is built, with a named `PrepError` inside `JevError`:
 empty offers, duplicate or colliding runtime keys, wording and state shapes
@@ -300,6 +313,11 @@ catamorphism whose algebra is Jev.
   ask a Noul per thing with `each`, in the same packet, and judge each one.
   Reading a choice's runner-up mass as "this also applies" conflates
   doubt with multiplicity.
+- **An optional question is a battery of none or one.** A question a node
+  may or may not have does not need a separate packet shape: ask it with
+  `each` over `maybe [] pure` of the optional thing. An empty `each`
+  renders to nothing on the wire and decodes back to `[]`. `examples/Guard.hs`
+  asks this way wherever a question only sometimes applies.
 - **Rules in Haskell, judgments in Jev.** Decide eligibility before the
   call and offer only what is legal now; do not ask a Noul whether an
   alternative should be on offer. What the state cannot decide, a question

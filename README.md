@@ -74,7 +74,7 @@ inspection edges =
                     .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
                     .| many (.edgeKey) (String . (.edgeText)) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
-  :& #children := each [ (e.edgeKey, noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) | e <- edges ]
+  :& #children := each (.edgeKey) (\e -> noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) edges
   :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
   :& Nil
 ```
@@ -83,10 +83,13 @@ A cell holds a question or a nested packet. Nesting flattens to dotted wire
 keys and reads back through the labels, so `a.evidence.gap` is the answer to
 the question written above.
 
-`each` is the per-item battery: one question per item, keyed at runtime, in
-the same call. It takes a question or a nested packet, exactly as a cell
-does, so a single question needs no packet around it. Per-item questions catch what a single summary question
-waves through, and the list is whatever the program already has.
+`each` is the per-item battery, written like `many`: a key, a question per
+row, and the rows. Its second argument is a question or a nested packet,
+exactly as a cell does, so a single question needs no packet around it. The
+answers come back paired with the row that produced them, so there is
+nothing to look up afterward — the same property `many` already has.
+Per-item questions catch what a single summary question waves through, and
+the list is whatever the program already has.
 
 Answers come back under the same labels, and every one is consumed under a
 policy:
@@ -103,21 +106,30 @@ act a =
 ```
 
 A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`; a
-Noul with `yes`; a score with `expectation`, `confidence` and `masses`.
-Those are for logs and thresholds. Dispatch goes through the branches
-instead, one typed consumer per question kind: `settle` for a choice,
-`judge` for a Noul, `grade` for a score. Each takes the branches in
-declaration order, and the compiler rejects a misordered, missing, extra, or
-mislabelled one with a message naming what it expected.
+Noul with `yes`; a score with `expectation`, `confidence`, `masses`, and
+`results` (every level's result, in level order). Those are for logs and
+thresholds. Dispatch goes through the branches instead, one typed consumer
+per question kind: `settle` for a choice, `judge` for a Noul, `grade` for a
+score. For a choice, the handler list is taken in declaration order and the
+compiler rejects a misordered, missing, extra, or mislabelled one with a
+message naming what it expected. A score has no handler list to get wrong:
+the result is the level, written right beside its wording when the rubric
+was asked.
 
 ```haskell
-grade 0.5 a.urgency
-  (level #background keepGoing .| level #checkpoint noteIt .| level #blocked wakeSomeone)
+(score "What is the consequence of waiting?"
+   (  level #background "No current action depends on this" Background
+   .| level #checkpoint "Useful at the next ordinary checkpoint" AtCheckpoint
+   .| level #blocked "A worker cannot take its next action" Now ))
 ```
 
-`grade` runs the result for the level the score landed on, the highest whose
-mass at or above it clears the floor. A rubric's labels are known at compile
-time, so nothing has to dispatch on them as strings.
+```haskell
+grade 0.5 a
+```
+
+`grade` returns the result written beside the level the score landed on: the
+highest level whose mass at or above it clears the floor, or the lowest when
+none does.
 
 A handler list is a value. `settle`, `handle` and `contenders` all take the
 answer and the same list, so nothing is threaded between them:
@@ -138,7 +150,7 @@ type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edg
 type Inspection = Packet
   '[ "next" ::= Choice Routes
    , "enough" ::= Noul
-   , "children" ::= Each Noul
+   , "children" ::= Each Edge Noul
    , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
 ```
 

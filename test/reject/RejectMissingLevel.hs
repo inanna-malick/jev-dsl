@@ -11,5 +11,5 @@ module RejectMissingLevel where
 import Data.Aeson (Value (..))
 import Jev.Operators
 
-bad :: A Value (Score ("background" :|: "blocked")) -> Double
+bad :: A Value (Score () ("background" :|: "blocked")) -> Double
 bad = massAtOrAbove #critical

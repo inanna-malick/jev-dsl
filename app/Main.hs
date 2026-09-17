@@ -46,9 +46,9 @@ type Triage = Packet
   '[ "explains" ::= Choice ("no_match" ::> () :|: Many Diagnostic)
    , "next" ::= Choice Next
    , "verify" ::= Choice (Many Check :|: "defer" ::> ())
-   , "relevant" ::= Each Noul
+   , "relevant" ::= Each Check Noul
    , "sufficient" ::= Noul
-   , "breadth" ::= Score ("localized" :|: "adjacent" :|: "contract")
+   , "breadth" ::= Score Text ("localized" :|: "adjacent" :|: "contract")
    ]
 
 data Inputs = Inputs
@@ -77,12 +77,14 @@ triage inputs = (world, questions)
                     .| alt #ask_model "Deciding needs judgment beyond the supplied diagnostics and checks" (Handoff "needs judgment") )
       :& #verify := choice "Which available check most directly verifies a fix for the explaining diagnostic?"
                       (many (.checkKey) (String . (.checkText)) available .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
-      :& #relevant := each [ (c.checkKey, noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?")) | c <- available ]
+      :& #relevant := each (.checkKey) (\c -> noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?")) available
       :& #sufficient := noul "Do `diagnostics` alone establish the mechanism of `failure`?"
+      -- Each level carries the line the report prints for it, so what the
+      -- provider is shown and what the program does sit on the same line.
       :& #breadth := score "How broadly would fixing the explaining diagnostic alter established behavior?"
-                       (  level #localized "Localized to the failing check"
-                       .| level #adjacent "May affect adjacent callers of the same code"
-                       .| level #contract "Crosses a contract other components rely on" )
+                       (  level #localized "Localized to the failing check" "localized to the failing check"
+                       .| level #adjacent "May affect adjacent callers of the same code" "may affect adjacent callers"
+                       .| level #contract "Crosses a contract other components rely on" "crosses a contract others rely on" )
       :& Nil
 
 -- ---------------------------------------------------------------------------
@@ -131,32 +133,29 @@ die msg = hPutStrLn stderr msg >> exitFailure
 -- ---------------------------------------------------------------------------
 
 report :: Response Triage -> IO ()
-report resp = do
-  let a = answers resp
-  let u = usage resp
-  TIO.putStrLn ("usage: " <> showT u.inputTokens <> " in, " <> showT u.outputTokens <> " out; model " <> resolvedModel resp)
-  mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics resp)
+report r = do
+  let u = usage r
+  TIO.putStrLn ("usage: " <> showT u.inputTokens <> " in, " <> showT u.outputTokens <> " out; model " <> resolvedModel r)
+  mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics r)
   -- Each choice is settled under a policy: a result only through a handler
   -- per alternative, or a doubt with the numbers behind it.
-  line "explains" (explain routing a.explains) $ settle routing a.explains
+  line "explains" (explain routing r.explains) $ settle routing r.explains
     (  #no_match (\() -> "<no listed diagnostic>")
     .| onMany (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") )
-  line "next" (explain spawning a.next) $ settle spawning a.next
+  line "next" (explain spawning r.next) $ settle spawning r.next
     (  #rerun (\() -> "rerun the most relevant check")
     .| #read_source (\what -> what <> " the implicated source")
     .| #ask_model (\(Handoff why) -> "hand back to the model (" <> why <> ")") )
-  line "verify" (explain spawning a.verify) $ settle spawning a.verify
+  line "verify" (explain spawning r.verify) $ settle spawning r.verify
     (onMany (\_ c -> "run " <> c.checkKey) .| #defer (\() -> "<defer to the model>"))
   -- Nouls are judged under the same policies.
-  TIO.putStrLn ("relevant: " <> T.intercalate ", " [k <> "=" <> verdict (judge routing n) | (k, n) <- a.relevant])
-  line "sufficient" (explain merging a.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging a.sufficient)
-  -- A rubric is graded, not read off: the level half the weight reaches.
-  TIO.putStrLn ("breadth: " <> grade 0.5 a.breadth
-    (  level #localized "localized to the failing check"
-    .| level #adjacent  "may affect adjacent callers"
-    .| level #contract  "crosses a contract others rely on" )
-    <> "\n  expectation " <> showT a.breadth.expectation
-    <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent a.breadth))
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [c.checkKey <> "=" <> verdict (judge routing n) | (c, n) <- r.relevant])
+  line "sufficient" (explain merging r.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging r.sufficient)
+  -- A rubric is graded, not read off: the level half the weight reaches,
+  -- and the line it carries is the one written beside its wording.
+  TIO.putStrLn ("breadth: " <> grade 0.5 r.breadth
+    <> "\n  expectation " <> showT r.breadth.expectation
+    <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent r.breadth))
   where
     line name why outcome = TIO.putStrLn (name <> ": " <> either (const "doubted") id outcome <> "\n  " <> why)
     verdict = either (const "?") (\b -> if b then "yes" else "no")
