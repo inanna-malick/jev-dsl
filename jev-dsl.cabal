@@ -1,4 +1,4 @@
-cabal-version:      3.0
+cabal-version:      3.4
 name:               jev-dsl
 version:            0.1.0.0
 synopsis:           Typed question packets for TypeSafe's Jev
@@ -50,23 +50,38 @@ common shared
   if flag(strict)
     ghc-options:    -Werror
 
-library
+-- The core is a library of its own so the boundary is the build system's to
+-- keep, not a comment's: it cannot reach aeson because it does not depend on
+-- it. A program with its own JSON type depends on this and writes a
+-- JsonValue instance; it never pays for aeson.
+library jev-core
   import:           shared
-  hs-source-dirs:   src
-  -- Jev.Core.* import boot packages only (base, containers, text) so they can
-  -- be copied verbatim into an environment without aeson and given another
-  -- JsonValue instance. Only Jev.Operators and Jev.Aeson depend on aeson.
+  visibility:       public
+  hs-source-dirs:   core
   exposed-modules:
-    Jev.Operators
-    Jev.Aeson
     Jev.Core
     Jev.Core.Json
     Jev.Core.Contract
     Jev.Core.Schema
   build-depends:
-    , base        >= 4.21 && < 5
-    , containers  >= 0.6 && < 0.9
-    , text        >= 2.0 && < 2.2
+    , base >= 4.21 && < 5
+    , text >= 2.0 && < 2.2
+
+library
+  import:           shared
+  hs-source-dirs:   src
+  exposed-modules:
+    Jev.Operators
+    Jev.Aeson
+  reexported-modules:
+    Jev.Core,
+    Jev.Core.Json,
+    Jev.Core.Contract,
+    Jev.Core.Schema
+  build-depends:
+    , base >= 4.21 && < 5
+    , text >= 2.0 && < 2.2
+    , jev-dsl:jev-core
     , aeson       ^>= 2.2
     , scientific  >= 0.3 && < 0.4
     , vector      >= 0.13 && < 0.14
@@ -109,9 +124,9 @@ test-suite jev-dsl-test
     Shape
     Golden
     Rejections
+    Mini
   build-depends:
     , base
-    , containers
     , text
     , aeson
     , bytestring
@@ -119,3 +134,4 @@ test-suite jev-dsl-test
     , filepath
     , vector
     , jev-dsl
+    , jev-dsl:jev-core

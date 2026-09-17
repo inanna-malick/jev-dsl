@@ -10,6 +10,7 @@ import Corpus (corpusChecks)
 import Proto (protoChecks)
 import Golden (goldenChecks, genericChecks)
 import Rejections (rejectionChecks)
+import Mini (miniChecks)
 
 main :: IO ()
 main = do
@@ -26,4 +27,5 @@ main = do
   goldenChecks c
   genericChecks c
   rejectionChecks c
+  miniChecks c
   finish c

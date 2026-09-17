@@ -290,11 +290,28 @@ carry request-level members the research harness added on purpose.
 
 ## Bring your own JSON type
 
-`Jev.Operators` fixes the JSON type to aeson's `Value`. `Jev.Core` is the
-same library polymorphic over a small `JsonValue` class and imports only
-`base`, `containers`, and `text`. It can be copied into an environment that
-cannot load aeson. Write an instance for your value type and a facade like
-`src/Jev/Operators.hs`.
+`jev-core` is the library polymorphic over a small `JsonValue` class. It is
+a separate library that depends on `base` and `text` and nothing else, so it
+cannot reach aeson and a program that depends on it never pays for one. That
+is the build system's guarantee, not a comment's.
+
+`jev-dsl` is `jev-core` plus one `JsonValue` instance for aeson's `Value`
+and `Jev.Operators`, a facade that pins the value type so wording literals
+and inference behave. Depend on `jev-dsl` if aeson is what you have.
+
+For another JSON type, depend on `jev-dsl:jev-core` and supply two
+instances. `JsonValue` is six constructors and a view, and `jEqual` has a
+structural default you can leave alone unless your numbers are exact.
+`IsString` is the other one: wording is written as a bare literal, so
+without it the authoring surface does not read the way it does here.
+
+A facade like `src/Jev/Operators.hs` is optional. It buys pinned inference
+and hides the core's internals, and it is worth writing for a type you
+author against daily, but the core's own verbs take the value type as a
+parameter and can be driven directly. `test/Mini.hs` is a second value type,
+structurally unlike aeson's, exercised end to end through the core with no
+facade at all: it builds a request, decodes a response, and runs `handle`,
+`judge` and `grade` over the answers.
 
 ## Contract pin
 
