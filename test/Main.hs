@@ -11,6 +11,7 @@ import Proto (protoChecks)
 import Golden (goldenChecks, genericChecks)
 import Rejections (rejectionChecks)
 import Mini (miniChecks)
+import Ergonomics (ergonomicChecks)
 
 main :: IO ()
 main = do
@@ -23,6 +24,7 @@ main = do
   check c "json: jEqual ignores object order" (jEqual v w)
   check c "json: jEqual distinguishes values" (not (jEqual v (jObject [("b", jNumber 3)])))
   protoChecks c
+  ergonomicChecks c
   corpusChecks c
   goldenChecks c
   genericChecks c

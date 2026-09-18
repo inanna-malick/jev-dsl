@@ -190,6 +190,12 @@ protoChecks c = do
       checkEq c "grade: a strict floor falls back to the lowest level" ("background" :: Text) (urgencyAt 0.9)
       checkEq c "grade: a floor nothing can miss takes the highest" ("invalidating" :: Text) (urgencyAt 0.2)
       checkEq c "grade: a floor above one is still total" ("background" :: Text) (urgencyAt 1.5)
+      -- graded names the level it landed on, so a ledger line needs no
+      -- second copy of the label beside the result.
+      checkEq c "graded: the level's own label travels with its result"
+        ("blocked", "blocked" :: Text) (graded 0.5 a.urgency)
+      checkEq c "graded: grade is its result" (map (`grade` a.urgency) [0.2, 0.5, 0.9 :: Double])
+        (map (snd . (`graded` a.urgency)) [0.2, 0.5, 0.9 :: Double])
       checkEq c "packet: one confidence for choices and scores" (0.7, 0.5) (a.next.confidence, a.urgency.confidence)
       check c "packet: each answers are a transparent keyed list" (case lookup "e.2" a.children of
         Just sub -> yes sub.useful == 0.8
@@ -229,6 +235,14 @@ protoChecks c = do
   checkEq c "judge: explain names the doubt and the floor it missed"
     (Right "doubted yes (Underweight): mass 0.55 < 0.70 by 0.15; margin 0.10")
     (fmap (explain strict) jd)
+
+  -- holds: a settled yes, and nothing else. A doubt is not a no, but it is
+  -- not a yes either, which is the whole reason it is a separate verb.
+  checkEq c "holds: a clear yes" (Right True) (fmap (holds strict) jy)
+  checkEq c "holds: a clear no" (Right False) (fmap (holds strict) jn)
+  checkEq c "holds: a doubt does not hold" (Right False)
+    (fmap (holds (Policy 0 0.4 0 :: Policy Strict)) jd)
+  checkEq c "holds: agrees with judge wherever judge answers" (Right True) (fmap (holds lenient) jd)
 
   -- structured wording
   let mech = #mechanism := choice "Which mechanism explains the second callback?"
@@ -306,20 +320,20 @@ protoChecks c = do
       , "legend" .= object ["0" .= big 9007199254740993, "1" .= big 9007199254740992], "probabilities" .= object ["0" .= (0.5 :: Double), "1" .= (0.5 :: Double)]])])
     (score "?" (Core.level #a (big 9007199254740992) () .| Core.level #b (big 9007199254740993) ())) (\case LegendMismatch _ -> True; _ -> False)
   -- grade over real distributions, where the stub's flat one cannot reach
-  let graded ps floor' = do
+  let gradeOver ps floor' = do
         r <- ask1 (session (fixed (answerMap [("value", object
               [ "type" .= ("score" :: Text), "score" .= (1 :: Double), "confidence" .= (0.5 :: Double)
               , "legend" .= object ["0" .= ("no risk" :: Text), "1" .= ("adjacent cases" :: Text), "2" .= ("crosses a contract" :: Text)]
               , "probabilities" .= object [Key.fromText (T.pack (show i)) .= p | (i, p) <- zip [0 :: Int ..] ps] ])])) jevLatest)
               world rubric
         pure (fmap (grade floor') r)
-  g1 <- graded [0.2, 0.3, 0.5 :: Double] 0.5
+  g1 <- gradeOver [0.2, 0.3, 0.5 :: Double] 0.5
   checkEq c "grade: the top level clears exactly at the floor" (Right ("contract" :: Text)) g1
-  g2 <- graded [0.2, 0.3, 0.5 :: Double] 0.6
+  g2 <- gradeOver [0.2, 0.3, 0.5 :: Double] 0.6
   checkEq c "grade: a stricter floor steps down one level" (Right ("adjacent" :: Text)) g2
-  g3 <- graded [0.34, 0.33, 0.33 :: Double] 0.5
+  g3 <- gradeOver [0.34, 0.33, 0.33 :: Double] 0.5
   checkEq c "grade: a near-flat rubric takes the middle" (Right ("adjacent" :: Text)) g3
-  g4 <- graded [0.1, 0.2, 0.3 :: Double] 0.7
+  g4 <- gradeOver [0.1, 0.2, 0.3 :: Double] 0.7
   checkEq c "grade: nothing clears, so the lowest level stands" (Right ("none" :: Text)) g4
   expectDecode "decode: out-of-range probability rejected" (answerMap [("value", noulAt 1.5)]) (noul "?") (\case ValueOutOfRange _ _ -> True; _ -> False)
   expectDecode "decode: unexpected answer key rejected"

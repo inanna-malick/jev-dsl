@@ -49,23 +49,24 @@ module Jev.Operators
   ( -- * Packets
     Packet ((:=), (:&))
     -- * Questions
-  , noul, choice, score, each
+  , noul, choice, score, each, optional
     -- * Alternatives
   , alt, many, (.|), offered
     -- * Rubrics
   , level, massAtOrAbove
     -- * State
-  , state, field, State, Field (toField)
+  , state, field, State, Field (toField), FieldPath ((:/)), StatePath
     -- * Answers, as fields: @a.next.key@, @a.enough.yes@. The fields are
     -- all there is: an answer cannot be built or matched, and what it
-    -- decides is reached through 'settle', 'judge', 'grade' and 'taken'.
+    -- decides is reached through 'settle', 'judge', 'grade', 'taken'
+    -- and 'takenUnder'.
   , Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Acting on answers
-  , settle, judge, grade, explain, handle, contenders, taken
+  , settle, takenUnder, judge, holds, grade, graded, explain, handle, contenders, taken
   , Policy (..), lenient, careful, strict, Lenient, Careful, Strict
   , Settled (..), Doubt (..), Cause (..), Weighed
     -- * Uniform payloads: the continuation is the payload
-  , Carries (mapCarried, carriedRows), Retarget, Uniform (..), uniform, mapUniform
+  , Carries (mapCarried), Retarget, Uniform, uniform, mapUniform, withUniform, branches
     -- * Asking
   , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics
   , JevError (..), PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..)
@@ -73,9 +74,9 @@ module Jev.Operators
   , request, decode
     -- * Types, for signatures only
   , type (::=), type (:&), type (::>), type (::*), type (:|:), Offers, Handlers, Handles, Rubric
-  , Noul, Choice, Score, Each, Group
+  , Noul, Choice, Score, Each, Optional, Group
   , Q, Questions, Answers, Fields, type (:-), Model, Response
-  , Schema, Unique, Label
+  , Schema, Unique, Label, AltsOk, RubricOk
   ) where
 
 import Data.Aeson (Value (String), ToJSON (..))
@@ -89,9 +90,10 @@ import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
   ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
-  , Alternatives, Carries (mapCarried, carriedRows), Cause (..), Choice, DecodeError (..), Doubt (..), Each, Field, Group
+  , Alternatives, AltsOk, RubricOk, Carries (mapCarried), Cause (..), Choice, DecodeError (..), Doubt (..), Each, Optional, Field, Group
+  , FieldPath ((:/)), StatePath
   , Handles, JevError (..), Label, Lenient, Careful, Strict, Model, Noul, Packet (..), Retarget, Schema, Settled (..)
-  , Uniform (..), uniform, mapUniform
+  , uniform, mapUniform
   , PrepError (..), Q, Score, Unique, Weighed, type (:-), type (::=), type (:&), type (::>), type (::*), type (:|:), Policy (..)
   , Rejection (..), ValidationIssue (..)
   )
@@ -102,6 +104,10 @@ type Fields = Core.Fields Value
 type State t = Core.State Value t
 type Response s = Core.Response Value s
 type Session m = Core.Session m Value
+
+-- | A disjunction whose alternatives all carry the same kind of thing,
+-- with the chain itself kept out of sight. 'withUniform' opens one.
+type Uniform r = Core.Uniform Value r
 
 -- | Offers for a disjunction: @alt #k wording payload .| many #g key wording rows@.
 type Offers alts = Core.Alts (Core.Offer Value) alts
@@ -138,6 +144,17 @@ many l key wording rows = Core.many l key (String . wording) rows
 offered :: Alternatives alts => Offers alts -> [(Text, Text)]
 offered o = [(k, w) | (k, String w) <- Core.offered o]
 
+-- | Every branch of a uniform chain: its key, its wording, and what it
+-- carries. What 'offered' gives, with the payload beside it.
+branches :: Uniform r -> [(Text, Text, r)]
+branches u = [(k, w, c) | (k, String w, c) <- Core.branches u]
+
+-- | Open a uniform chain to build a question from it. Its alternatives are
+-- existential, so they are named only inside, and the question built there
+-- gets every check a written-out chain gets.
+withUniform :: Uniform r -> (forall alts. (AltsOk alts, Carries alts r) => Offers alts -> x) -> x
+withUniform = Core.withUniform
+
 -- | One level: its label, its wording for the provider, and the result
 -- 'grade' returns when the score lands on it. What 'alt' takes, in the same
 -- order.
@@ -148,10 +165,12 @@ level l w p = Core.level l (String w) p
 noul :: Text -> Q Value Noul
 noul = Core.noul
 
-choice :: Core.AltsOk alts => Text -> Offers alts -> Q Value (Choice alts)
+-- | A disjunction. Duplicate labels are a compile error naming the label.
+choice :: AltsOk alts => Text -> Offers alts -> Q Value (Choice alts)
 choice = Core.choice
 
-score :: Core.RubricOk levels => Text -> Rubric p levels -> Q Value (Score p levels)
+-- | An ordered rubric of one to ten levels, lowest first.
+score :: RubricOk levels => Text -> Rubric p levels -> Q Value (Score p levels)
 score = Core.score
 
 -- | One question per row, keyed at runtime: the per-item battery, written
@@ -160,15 +179,20 @@ score = Core.score
 each :: (Core.ToQ x, Core.NestedQ x Value, Core.QJson x ~ Value) => (a -> Text) -> (a -> x) -> [a] -> Q Value (Each a (Core.QKind x))
 each = Core.each
 
+-- | An optional question or nested packet. Absence sends nothing and
+-- reads back as 'Nothing'; presence reads as 'Just' its answer.
+optional :: (Core.ToQ x, Core.NestedQ x Value, Core.QJson x ~ Value) => Maybe x -> Q Value (Optional (Core.QKind x))
+optional = Core.optional
+
 -- | The shared input to every question, written the way a packet is. Its
 -- fields keep their Haskell types, so a row the state carries is the row a
 -- question is built from: @each fst (…) st.posters@.
 state :: Unique t => Packet t Fields -> State t
 state = Core.state
 
--- | The name of a state field, as wording refers to it, in backticks. A
--- name the state does not have is a compile error listing the names it has.
-field :: (KnownSymbol k, Core.StateHas k t) => Label k -> State t -> Text
+-- | A checked reference in wording: @field #source st@ or
+-- @field (#gate :/ #posters) st@. Renders the path in backticks.
+field :: StatePath ks t => FieldPath ks -> State t -> Text
 field = Core.field
 
 -- Acting on answers
@@ -179,9 +203,20 @@ field = Core.field
 settle :: Handles hs alts r => Policy p -> Chosen alts -> Handlers' hs -> Either Doubt (Settled p r)
 settle = Core.settle
 
+-- | 'taken' under a policy, with no handlers to repeat when every
+-- alternative already carries the same type of result.
+takenUnder :: Carries alts r => Policy p -> Chosen alts -> Either Doubt (Settled p r)
+takenUnder = Core.takenUnder
+
 -- | A proposition under a policy: yes, no, or doubt.
 judge :: Policy p -> Yes -> Either Doubt (Settled p Bool)
 judge = Core.judge
+
+-- | Whether a proposition holds under a policy: a settled yes and nothing
+-- else. A doubt is not a no, so both read as 'False'; a caller that must
+-- tell them apart uses 'judge' and keeps the line that says why.
+holds :: Policy p -> Yes -> Bool
+holds = Core.holds
 
 -- | The payload the winner was offered with, when every alternative
 -- carries the same kind of thing. Having them all is exhaustiveness by
@@ -196,6 +231,11 @@ taken = Core.taken
 -- and there is no list to keep in step.
 grade :: Double -> Scored p levels -> p
 grade = Core.grade
+
+-- | 'grade', with the label of the level the score landed on, for a ledger
+-- line that names it.
+graded :: Double -> Scored p levels -> (Text, p)
+graded = Core.graded
 
 -- | One line saying why the policy settled the answer, with the numbers
 -- behind it. A doubt already carries its own line as @why@.

@@ -16,8 +16,8 @@
 --   * 'Ask'    — a free-form reply is sorted into one branch: a choice over the
 --                branches, and in the same packet a Noul per topic the reply may
 --                also raise and a choice for whatever would stop the traveller
---                where they stand. A node without one of those sends a battery
---                of none, so every 'Ask' is one packet and one call
+--                where they stand. The stop is optional; absent questions
+--                send nothing, so every 'Ask' is one packet and one call
 --   * 'Check'  — the story is held against each wanted poster: one Noul per poster, in one call
 --   * 'Weigh'  — the story so far is graded on a rubric: a score
 --   * 'Happen' — something may happen at the gate: a choice among authored events
@@ -46,7 +46,6 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BL
-import Data.Foldable (asum)
 import Data.IORef
 import Data.List (mapAccumL, nub, sortOn)
 import Data.Maybe (fromMaybe)
@@ -148,7 +147,7 @@ data Action = Admit | TurnAway | SendForCaptain deriving (Show, Eq)
 -- the alternative the provider picks hands the program the node the author
 -- wrote beside it.
 data GuardF r
-  = Ask Text (Maybe (Trip r)) (Uniform Value r)    -- the guard's line; where a stop leads; the branches
+  = Ask Text (Maybe (Trip r)) (Uniform r)          -- the guard's line; where a stop leads; the branches
   | Say Text r                                     -- the guard speaks; no reply expected
   | Check [(Text, r)] r                            -- child per poster matched, and the child when none does
   | Weigh Text (Text, r) (Text, r) (Text, r)       -- a question, and the sound / thin / false levels
@@ -336,10 +335,6 @@ gate w = askOrigin
     happen next = Fix (Happen next)
     end = Fix End
 
--- | What would stop a traveller mid-sentence: an admission, a
--- contradiction, or nothing new. Each carries where it leads.
-type Stop r = "admits" ::> r :|: "contradicts" ::> r :|: "nothing_new" ::> ()
-
 -- | A runtime group whose rows are written as key, wording and the node
 -- they lead to. The row's node is the payload, so the group carries what
 -- every other alternative carries and the whole chain is uniform.
@@ -348,13 +343,6 @@ rows l xs = mapCarried child (many l (\(k, _, _) -> k) (\(_, m, _) -> m) xs)
   where
     child :: (Text, Text, r) -> r
     child (_, _, c) = c
-
--- | Every branch of an ask: its key, its wording, and the node it leads to.
-branches :: Uniform Value r -> [(Text, Text, r)]
-branches (Uniform o) = [(k, wordingText d, c) | (k, d, c) <- carriedRows o]
-
-wordingText :: Value -> Text
-wordingText = \case { String x -> x; v -> T.pack (show v) }
 
 -- ---------------------------------------------------------------------------
 -- Fold one: print the script, each knot once
@@ -440,14 +428,13 @@ interpret sess = \case
                   , "Mentioning it in passing, denying it, or answering the guard's own question about it is not asking."
                   , "The topic:", meaning ])) topical
 
-        follow :: Node -> Text -> Double -> [(Text, Double)] -> [((Text, Text, Node), Yes)] -> IO Outcome
         follow winner heard sureness spread alsos = do
           let others = [(k, m) | (k, m) <- spread, k /= heard, m >= 0.2]
               -- Judged, not thresholded by hand; a topic the guard has
               -- already spoken to is not raised again. The battery hands back
               -- the row the question was built from, so the node that answers
               -- the topic is already here and there is nothing to look up.
-              raised = [ (k, node, n) | ((k, _, node), n) <- alsos, k /= heard, judge lenient n == Right (Settled True) ]
+              raised = [ (k, node, n) | ((k, _, node), n) <- alsos, k /= heard, holds lenient n ]
               alsoSaid = nub [ q | (_, node, _) <- raised, Just q <- [node.quip]
                              , Just q /= winner.quip, q `notElem` t.told ]
           aside ("heard " <> heard <> " " <> pct sureness
@@ -458,37 +445,40 @@ interpret sess = \case
             { told = alsoSaid ++ maybe [] pure winner.quip ++ t.told }
 
         -- What would stop a traveller mid-sentence, as a disjunction whose
-        -- alternatives carry their own continuations. There is no way to read
-        -- a result without a handler for every outcome, so a confident
-        -- "nothing new" runs its own branch instead of passing for a stop by
-        -- omission. Stopping to ask again is cheap and reversible, so it is
+        -- alternatives carry their own optional continuations. The author
+        -- explicitly gives "nothing new" the payload Nothing: no diversion.
+        -- Every outcome has a payload; its meaning is the author's choice.
+        -- Stopping to ask again is cheap and reversible, so it is
         -- settled under the policy for starting something, not the one for
         -- receipts: the guard is meant to err towards asking.
         -- The wording names a state field, and the name is the state's own:
         -- a field this state does not have is a compile error, not a
         -- question the provider silently reads as being about nothing.
-        stopping :: Trip Node -> Q Value (Choice (Stop Node))
         stopping (Trip admits contradicts) =
           choice "Does this reply give the guard fresh reason to stop the traveller where they stand?"
             (  alt #admits (T.unwords
                  [ "The reply owns up to something the standing orders forbid: goods hidden from the customs officer,"
                  , "a weapon not bonded, a crime, or being someone the posters want. Read an admission made in passing"
                  , "or as a joke as an admission." ])
-                 admits
+                 (Just admits)
             .| alt #contradicts (T.unwords
                  [ "The reply cannot both be true and leave", field #conversation_so_far st, "standing: it names a different road in,"
                  , "a different errand, or different goods than this same traveller already gave, or denies having said"
                  , "what the record shows they said." ])
-                 contradicts
+                 (Just contradicts)
             .| alt #nothing_new (T.unwords
                  [ "The reply adds nothing the guard has not already heard: small talk, a question, a denial, or a"
                  , "repeat or elaboration of what", field #conversation_so_far st, "already contains." ])
-                 () )
-        divert :: Chosen (Stop Node) -> IO (Maybe Outcome)
-        divert a = case settle careful a (#admits Just .| #contradicts Just .| #nothing_new (\() -> Nothing)) of
-          Right (Settled (Just node)) -> do
+                 Nothing )
+        -- Stopping a traveller mid-sentence acts on a single reading, so
+        -- the step that does it demands a verdict from the policy meant to
+        -- decide it. A lenient verdict does not typecheck here.
+        stop :: Settled Careful (Maybe Node) -> Maybe Play
+        stop (Settled node) = fmap (.play) node
+        divert a = case takenUnder careful a of
+          Right v | Just go <- stop v -> do
             aside (explain careful a)
-            Just <$> node.play (t `saw` Turn line reply a.key a.mass)
+            Just <$> go (t `saw` Turn line reply a.key a.mass)
           -- A doubt is not a stop. It is a reading the guard could not make,
           -- and the traveller gets the benefit of it, with a line whenever
           -- the guard nearly stopped them. The doubt carries its own line.
@@ -497,20 +487,17 @@ interpret sess = \case
             pure Nothing
           _ -> pure Nothing
 
-    -- One packet and one call, whatever this node has. A question the node
-    -- lacks is a battery of none, which renders to nothing on the wire, so
-    -- the optional tripwire and the topics need no case of their own and no
-    -- second packet shape.
-    case offers of
-      Uniform o -> do
-        r <- must =<< ask sess st
-          (  #branch := choice "Which branch does the traveller's reply take?" o
-          :& #also   := alsoQ
-          :& #stop   := each (const "now") stopping (maybe [] pure trip) )
-        stopped <- mapM (divert . snd) r.stop
-        -- The alternative the provider picked carries the node the author
-        -- wrote beside it, so following the answer is taking its payload.
-        maybe (follow (taken r.branch) r.branch.key r.branch.mass r.branch.masses r.also) pure (asum stopped)
+    -- One packet and one call. The optional tripwire sends nothing when
+    -- absent and reads as Maybe, without a synthetic key or singleton list.
+    withUniform offers $ \o -> do
+      r <- must =<< ask sess st
+        (  #branch := choice "Which branch does the traveller's reply take?" o
+        :& #also   := alsoQ
+        :& #stop   := optional (stopping <$> trip) )
+      stopped <- maybe (pure Nothing) divert r.stop
+      -- The alternative the provider picked carries the node the author
+      -- wrote beside it, so following the answer is taking its payload.
+      maybe (follow (taken r.branch) r.branch.key r.branch.mass r.branch.masses r.also) pure stopped
 
   Say line next -> Node (\t -> guard line >> next.play t) (Just line)
 
@@ -524,7 +511,8 @@ interpret sess = \case
     let st = situation t
         wanted = [(k, poster, node) | (k, node) <- matches, Just poster <- [lookup k st.gate.posters]]
     fits <- must =<< ask1 sess st
-      (each (\(k, _, _) -> k) (\(_, poster, _) -> noul ("Does the traveller's story so far match this wanted poster? " <> poster)) wanted)
+      (each (\(k, _, _) -> k) (\(_, poster, _) -> noul
+        ("Does the traveller's story so far match this wanted poster from " <> field (#gate :/ #posters) st <> "? " <> poster)) wanted)
     let scored = sortOn (Down . (.yes) . snd) fits
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | ((k, _, _), n) <- scored])
     -- Holding someone starts something, so the closest poster is judged under
@@ -532,7 +520,7 @@ interpret sess = \case
     case scored of
       ((k, _, node), n) : _ -> do
         aside (k <> ": " <> explain careful n)
-        if judge careful n == Right (Settled True) then node.play t else none.play t
+        if holds careful n then node.play t else none.play t
       [] -> none.play t
 
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
@@ -541,10 +529,8 @@ interpret sess = \case
     -- one taken, which is the median; there is no string to dispatch on and
     -- no second list that could fall out of step with this one.
     a <- must =<< ask1 sess (situation t)
-      (score q (  level #sound sound ("sound", x)
-               .| level #thin thin ("thin", y)
-               .| level #false false ("false", z) ))
-    let (landed, next) = grade 0.5 a
+      (score q (level #sound sound x .| level #thin thin y .| level #false false z))
+    let (landed, next) = graded 0.5 a
     aside ("weighed " <> landed <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
       <> "; thin or worse " <> pct (massAtOrAbove #thin a) <> ")")
     next.play t
@@ -558,10 +544,13 @@ interpret sess = \case
     if null unused || even (length t.turns) then next.play t else do
       a <- must =<< ask1 sess (situation t)
         (choice "Which of these fits this moment at the gate, given what has happened so far?"
-          (alt #nothing "The night goes on; nothing in particular happens" () .| many #happening (.tag) (.blurb) turned))
+          (alt #nothing "The night goes on; nothing in particular happens" Nothing
+           .| mapCarried Just (many #happening (.tag) (.blurb) turned)))
       -- Firing an event changes the world, so it goes through a policy too.
-      -- If the night reads as ambiguous, nothing in particular happens.
-      case settle lenient a (#nothing (\() -> Nothing) .| #happening (\_ h -> Just h)) of
+      -- Every alternative already carries what to do, the quiet one
+      -- included, so the policy adds no handlers. If the night reads as
+      -- ambiguous, nothing in particular happens.
+      case takenUnder lenient a of
         Left _ -> next.play t
         Right (Settled Nothing) -> next.play t
         Right (Settled (Just h)) -> do

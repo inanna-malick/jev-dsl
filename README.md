@@ -4,10 +4,10 @@ A Haskell DSL for agents that would rather have a question judged than
 guessed. A packet of labelled questions is written once as an expression;
 its type is inferred, it renders to the exact request JSON for
 [TypeSafe's Jev](https://docs.typesafe.ai), and the answers come back under
-the same labels as records read by field. Each answer is consumed under a
-policy, through a handler for every alternative, so the branch that runs is
-always one the program wrote and always carries the payload it was offered
-with. No schema, no instance, no codec, no network.
+the same labels as records read by field. A choice is consumed through
+exhaustive labelled handlers or its carried payload, with a policy when
+needed. The branch that runs is one the program wrote and carries the
+payload it was offered with. No schema, no instance, no codec, no network.
 
 **Early alpha.** The interface is still moving, and this repository is the
 only place it has been used. See [Status](#status) for what is unsettled.
@@ -93,7 +93,10 @@ type Inspection = Packet
 
 Nobody wrote that. It is what the compiler inferred from the packet in
 [Route](#route) below, and it is printable, so a model that has lost track
-of a value's shape can ask the compiler instead of guessing.
+of a value's shape can ask the compiler instead of guessing. Ask for it at
+a mode — `:t (packet :: Packet _ Questions)` — because a packet written on
+its own is still polymorphic in whether it holds questions, answers or
+state fields, and that is not the shape anyone wants to read.
 
 **The compile error is the feedback loop, so it is the most-read text in
 the library.** A person reads an error once and remembers; a model reads
@@ -204,9 +207,9 @@ answers come back paired with the row that produced them, so there is
 nothing to look up afterward — the same property `many` already has.
 Per-item questions catch what a single summary question waves through.
 
-Answers come back under the same labels, and every one is consumed under a
-policy. Handlers are found by their label, so they need not follow the
-order the alternatives were written in:
+Answers come back under the same labels, ready to consume under a policy.
+Handlers are found by their label, so they need not follow the order the
+alternatives were written in:
 
 ```haskell
 act :: Inspection Answers -> Text
@@ -215,18 +218,23 @@ act a =
          (  #edges       (\k _ -> "follow " <> k)
          .| #use_witness (\(Witness w) -> "located at " <> w)
          .| #ask_model   (\(Handoff h) -> "hand back: " <> h) ) of
-    Right (Settled step) -> step <> (if judge lenient a.enough == Right (Settled True) then "; evidence suffices" else "")
+    Right (Settled step) -> step <> (if holds lenient a.enough then "; evidence suffices" else "")
     Left d -> "stopped: " <> d.why
 ```
 
 A choice answers with `key`, `mass`, `margin`, `confidence` and `masses`; a
 Noul with `yes`; a score with `expectation`, `confidence` and `masses`.
 Those are for logs and thresholds. Dispatch goes through the branches
-instead, one typed consumer per question kind: `settle` for a choice,
-`judge` for a Noul, `grade` for a score. A missing, extra, duplicated or
-misspelled handler is a compile error naming the label. A score has no
-handler list to get wrong: the result is written right beside its wording
-when the rubric was asked.
+instead: `settle` or `takenUnder` for a choice under a policy, `judge` for
+a Noul, `grade` for a score. A missing, extra, duplicated or misspelled
+handler is a compile error naming the label. A score has no handler list to
+get wrong: the result is written right beside its wording when the rubric
+was asked.
+
+Where a Noul is a filter rather than a decision, `holds policy answer` is
+the same judgment as a `Bool`. It is `True` only for a settled yes, because
+a doubt is not a no — which is exactly what comparing a verdict for
+equality would quietly make it.
 
 ```haskell
 (score "What is the consequence of waiting?"
@@ -241,15 +249,28 @@ grade 0.5 a
 
 `grade` returns the result written beside the level the score landed on:
 the highest level whose mass at or above it clears the floor, or the lowest
-when none does.
+when none does. `graded` returns that result with the level's own label, so
+a ledger line that names the level does not need the label written into the
+result a second time.
 
-When every alternative carries the same kind of thing — the usual case when
-the payload is what to do next — there is no handler list to write at all,
-because having them all is exhaustiveness by construction:
+When every alternative carries the same kind of thing — usually what to
+do next — consume that payload directly. Adding a policy need not add a
+handler list:
 
 ```haskell
-taken :: Carries alts r => Chosen alts -> r
+takenUnder :: Carries alts r => Policy p -> Chosen alts -> Either Doubt (Settled p r)
 ```
+
+| Choice consumption | Labelled handlers | Uniform payloads |
+|---|---|---|
+| Without a policy | `handle answer handlers` | `taken answer` |
+| Under a policy | `settle policy answer handlers` | `takenUnder policy answer` |
+
+Every alternative has a payload, including the exit. The author assigns
+its meaning: `Nothing` may mean no action, but a successful policy check
+only supports the selected alternative, not permission to proceed. In the
+Guard, the stop alternatives carry `Just continuation` or `Nothing`, and
+`takenUnder careful` returns that decision without repeating the branches.
 
 ## State, written once
 
@@ -278,7 +299,15 @@ noul ("Do " <> field #diagnostics world <> " alone establish the mechanism of " 
 
 `field` renders the key in backticks the way the provider reads it, and a
 name the state does not have is a compile error listing the names it does.
-Nested states read back through record dot: `world.gate.posters`.
+Nested states read back through record dot: `world.gate.posters`. Name the
+same nested field in wording with a checked path:
+
+```haskell
+field (#gate :/ #posters) st
+```
+
+Each segment is checked against its packet. This renders `gate.posters`
+in backticks; its effect on model answers has not yet been measured.
 
 ## What it is for
 
@@ -297,9 +326,9 @@ that acts demand a verdict from it:
 merge :: Settled Strict Patch -> IO Receipt
 ```
 
-Nothing but `settle strict` produces that argument. A `lenient` verdict
-from some earlier routing decision will not typecheck, so the strength of
-the evidence travels with the value instead of living in a comment. When
+`settle strict` or `takenUnder strict` gives that result its policy tag.
+A `lenient` result does not directly fit the signature. The tag documents
+the chosen policy; it is not a provenance or authorization boundary. When
 the floor is not met there is no verdict at all, only `d.why`, which is the
 line to put in the log next to whatever the program did instead.
 
@@ -407,15 +436,14 @@ runs, or the captain arrives.
 
 Every hub is one packet and one call. The branch choice, a Noul per topic
 the reply may also raise, and the tripwire that would stop the traveller
-where they stand go in one request; a question the node lacks is a battery
-of none, which renders to nothing on the wire, so there is no second packet
-shape:
+where they stand go in one request. `optional` omits an absent tripwire
+from the wire and reads it back as `Nothing`, with no second packet shape:
 
 ```haskell
 r <- must =<< ask sess st
   (  #branch := choice "Which branch does the traveller's reply take?" o
   :& #also   := alsoQ
-  :& #stop   := each (const "now") stopping (maybe [] pure trip) )
+  :& #stop   := optional (stopping <$> trip) )
 ```
 
 The state every call sends is one typed packet, and the node that hears a
@@ -436,7 +464,9 @@ scripts/guard.sh --script                 # print the tree, no network
 TYPESAFE_API_KEY=... scripts/guard.sh     # play it
 ```
 
-A session on 2026-09-17, sixteen calls, twenty thousand input tokens:
+A historical session on 2026-09-17, sixteen calls, twenty thousand input
+tokens. This predates `optional` and nested state references; it is not a
+capture of the current Guard request:
 
 ```
 guard: Halt. Where do you hail from, traveller?
@@ -552,15 +582,22 @@ checked. What is not:
 - **The policy floors are plausible, not calibrated.** Three named policies
   cover the cases seen so far. The numbers come from judgment about the
   cost of being wrong, not from measurement.
-- **Only a state's top-level fields can be named.** `field #k st` checks a
-  name against the state's own labels, but a name inside a nested state has
-  no way to be written yet. Nested access already works for reading
-  (`st.gate.posters`); the reference is what is missing.
-- **A fold over a node type needs a little help.** A program that carries
-  its continuations as payloads holds them in `Uniform`, and the two local
-  functions that consume such an answer need explicit signatures, because
-  the alternatives are existential. Straight-line packet code needs no
-  annotations at all.
+- **Nested field references are not model-validated yet.** The compiler
+  checks `field (#gate :/ #posters) st`, but the measured wording improvements
+  behind this design came from top-level references. Nested references need
+  their own live evaluation.
+- **The operators have to be read, even though they are never written.**
+  `::=`, `:&`, `::>`, `::*`, `:|:`, `:/` and `:-` appear in inferred types
+  and in error messages, so an author who prints a type meets all of them.
+  Nothing on the authoring surface requires writing one; the cost is
+  reading, and it is real.
+- **Two checks still report in the type checker's voice.** Offering
+  alternatives that carry different types, or asking `taken` for a type the
+  chain does not carry, gives GHC's own `No instance for Carries ...`;
+  handling a runtime group with a one-argument function reports a mismatch
+  between the key and the row. Both name the label and the types, but
+  neither is a sentence in the author's vocabulary, unlike every other
+  check here. Both are decided before the library's own messages can run.
 - **Scores are rarely the right shape.** Most judgments are not ordered and
   exclusive. Reach for a Noul or a choice first.
 

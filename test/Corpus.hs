@@ -61,7 +61,7 @@ diagnose transport inquiry hypotheses = do
     Right resp -> do
       let a = answers resp
           live = [h | (_, Just h) <- contenders 0.3 a.mechanism hypothesisOf]
-          worthProbing = [h | h <- live, Just n <- [lookup h a.probes], judge lenient n == Right (Settled True)]
+          worthProbing = [h | h <- live, Just n <- [lookup h a.probes], holds lenient n]
           observations = [(h.hKey, "ran " <> h.probe) | h <- worthProbing]
       r2 <- ask1 sess (state (#inquiry := inquiry :& #observations := observations))
               (choice "Which mechanism do the observations support?" offers)
@@ -81,7 +81,7 @@ expand transport inquiry edges = do
   r <- ask sess (state (#inquiry := (inquiry :: Text))) packet
   pure $ fmap (\resp ->
     let a = answers resp
-    in ( [e.edgeKey | (e, n) <- a.relevant, judge lenient n == Right (Settled True)]
+    in ( [e.edgeKey | (e, n) <- a.relevant, holds lenient n]
        , settle lenient a.next (#edges (\_ e -> Just e.command) .| #stop (\() -> Nothing)) )) r
 
 -- ---------------------------------------------------------------------------

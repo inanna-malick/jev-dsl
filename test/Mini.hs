@@ -125,6 +125,15 @@ miniChecks c = do
       checkEq c "mini: the battery answers under its runtime keys, in packet order"
         ["cellar", "attic"] [name | (Room name, _) <- a.each_room]
       checkEq c "mini: usage and model come back" "mini-1.0" (responseModel resp)
+  -- The new authoring forms also run without the aeson facade.
+  let world = state (#house := (#rooms := (["cellar"] :: [Text])))
+      optionalRoom = #next := optional (Just (choice
+        ("Which of " <> field (#house :/ #rooms) world <> " next?")
+        (alt #cellar "Search the cellar" (Room "cellar"))))
+  rOptional <- roundTrip (session stub jevLatest) world optionalRoom
+  checkEq c "mini: optional choice and policy-aware payload consumption"
+    (Right (Just (Right (Settled (Room "cellar")))))
+    (fmap (\resp -> fmap (takenUnder (Policy 0.55 0.2 0.7)) resp.next) rOptional)
   -- the class default equality, which aeson overrides with its own
   check c "mini: structural equality ignores object member order"
     (jEqual (MObj [("a", MNum 1), ("b", MArr [MNull])]) (MObj [("b", MArr [MNull]), ("a", MNum 1)]))

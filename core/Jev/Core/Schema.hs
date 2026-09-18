@@ -45,10 +45,10 @@ module Jev.Core.Schema
   , QKind, QJson, ToQ (..), ToCell (..), CellOk, Nested, NestedQ
   , Unique, Get, PacketLabels
     -- * State
-  , State, state, rawState, stateValue, field, StateHas
+  , State, state, rawState, stateValue, field, FieldPath ((:/)), StatePath, StateHas
   , Field (..)
     -- * Endpoints
-  , Noul, Choice, Score, Each, Group
+  , Noul, Choice, Score, Each, Optional, Group
   , Q (..), A (..), Yes (..), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Alternatives and rubric levels
   , type (::>), type (::*), type (:->), type (:|:), Offer, HandlerT, Level, Interp
@@ -57,14 +57,14 @@ module Jev.Core.Schema
   , Alternatives, AltsOk, Handles, Covers, Fits, HandlersOk, Fetch (..), Dispatch (..)
   , Levels, RubricOk, Index, Selected
     -- * Uniform payloads
-  , Carries (..), Retarget, Dict (..), taken, Uniform (..), uniform, mapUniform
+  , Carries (..), Retarget, Dict (..), taken, Uniform (..), uniform, mapUniform, withUniform, branches
     -- * Builders
-  , noul, choice, score, each
+  , noul, choice, score, each, optional
     -- * Results
   , Weighed (..), Weight (..), Doubt (..), Cause (..), Policy (..), Settled (..)
   , Lenient, Careful, Strict
-  , settle, judge, explain, contenders, handle
-  , grade, massAtOrAbove
+  , settle, takenUnder, judge, holds, explain, contenders, handle
+  , grade, graded, massAtOrAbove
     -- * The operation
   , Schema (..), Model (..), jevLatest, Session, session
   , request, decode, Response, answers, responseModel, usage, diagnostics
@@ -107,6 +107,7 @@ type family mode :- (e :: Type) :: Type where
   Answers v :- Score p levels = Scored p levels
   Answers v :- Group s = s (Answers v)
   Answers v :- Each a e = [(a, Answers v :- e)]
+  Answers v :- Optional e = Maybe (Answers v :- e)
   Answers v :- e = A v e
   Fields v :- a = a
 infixr 0 :-
@@ -119,6 +120,7 @@ data Noul
 data Choice (alts :: Type)
 data Score (p :: Type) (levels :: k)
 data Each (a :: Type) (e :: Type)
+data Optional (e :: Type)
 data Group (s :: Type -> Type)
 
 data family Q (v :: Type) (e :: Type)
@@ -272,6 +274,9 @@ type family HandlerAt' (hit :: Bool) k a b all where
 type Covers :: Type -> Type -> Type -> Constraint
 type family Covers alts hs r where
   Covers (k ::> p) hs r = HandlerAt k hs hs ~ (p -> r)
+  -- A handler of the wrong shape is reported by the functional dependency
+  -- on 'Fetch' before this equality is reached, so there is no sentence to
+  -- put here that would ever be the one printed.
   Covers (k ::* p) hs r = HandlerAt k hs hs ~ (Text -> p -> r)
   Covers (a :|: b) hs r = (Covers a hs r, Covers b hs r)
 
@@ -387,7 +392,7 @@ data Dict c where Dict :: c => Dict c
 
 -- | A disjunction whose alternatives all carry the same kind of thing. The
 -- payload is then the answer, and there is no handler list to write.
-class Alternatives alts => Carries (alts :: Type) (p :: Type) where
+class Alternatives alts => Carries (alts :: Type) (p :: Type) | alts -> p where
   carriedOf :: Selected alts -> p
   -- | Every alternative: its key, its wording, and what it carries.
   carriedRows :: Alts (Offer v) alts -> [(Text, v, p)]
@@ -434,6 +439,17 @@ uniform = Uniform
 mapUniform :: forall v r s. (r -> s) -> Uniform v r -> Uniform v s
 mapUniform f (Uniform (o :: Alts (Offer v) alts)) =
   case carriedDict @alts @r @s of Dict -> Uniform (mapCarried f o)
+
+-- | Open a uniform chain. Its alternatives are existential, so the
+-- continuation names them at a type only it can see, and a question built
+-- there keeps every check a written-out chain gets.
+withUniform :: Uniform v r -> (forall alts. (AltsOk alts, Carries alts r) => Alts (Offer v) alts -> x) -> x
+withUniform (Uniform o) k = k o
+
+-- | Every branch of a uniform chain: its key, its wording, and what it
+-- carries. The keys and wording are the ones a request would send.
+branches :: Uniform v r -> [(Text, v, r)]
+branches (Uniform o) = carriedRows o
 
 -- ---------------------------------------------------------------------------
 -- Rubrics: a chain of bare labels
@@ -482,8 +498,8 @@ data instance Q v (Choice alts) = ChoiceQ (Instructions v) (Alts (Offer v) alts)
 -- | What the provider chose, with everything a caller judges it by:
 -- @a.next.key@, @a.next.margin@. The fields are all there is to read; the
 -- alternative that won is reached only through 'settle', 'handle',
--- 'contenders' or 'taken', so a program cannot hold a selection it has not
--- written a branch for.
+-- 'contenders', 'taken' or 'takenUnder', so a program cannot hold a
+-- selection it has not written a branch for.
 data Chosen alts = Chosen
   { key :: Text                          -- ^ the winner's wire key
   , mass :: Double                       -- ^ the winner's probability
@@ -504,12 +520,15 @@ data Scored (p :: Type) (levels :: k) = Scored
   { expectation :: Double        -- ^ the expected level index
   , confidence :: Double         -- ^ the provider's own confidence
   , masses :: [(Text, Double)]   -- ^ the distribution, by level label, in level order
-  , results :: NonEmpty p        -- every level's result, in level order
+  , results :: NonEmpty (Text, p)  -- every level's label and result, in level order
   }
 newtype instance A v (Score p levels) = ScoreA (Scored p levels)
 
 newtype instance Q v (Each a e) = EachQ [(Text, a, Q v e)]
 newtype instance A v (Each a e) = EachA [(Text, a, A v e)]
+
+newtype instance Q v (Optional e) = OptionalQ (Maybe (Q v e))
+newtype instance A v (Optional e) = OptionalA (Maybe (A v e))
 
 newtype instance Q v (Group s) = GroupQ (s (Questions v))
 newtype instance A v (Group s) = GroupA (s (Answers v))
@@ -568,6 +587,12 @@ score t = ScoreQ (question t)
 -- holds a question or a nested packet, and so does this.
 each :: (ToQ x, NestedQ x (QJson x)) => (a -> Text) -> (a -> x) -> [a] -> Q (QJson x) (Each a (QKind x))
 each key q rows = EachQ [(key r, r, toQ (q r)) | r <- rows]
+
+-- | A question or nested packet that may be absent. An absent question
+-- sends nothing; its answer is 'Nothing'. A present question uses the
+-- containing cell's path, with no synthetic key or row.
+optional :: (ToQ x, NestedQ x (QJson x)) => Maybe x -> Q (QJson x) (Optional (QKind x))
+optional = OptionalQ . fmap toQ
 
 -- ---------------------------------------------------------------------------
 -- Results
@@ -643,17 +668,31 @@ doubt policy a =
     _ | Just (k2, m2) <- runnerUp w, winnerMass w - m2 < minMargin policy -> out (NearTie (winner w, winnerMass w) (k2, m2))
     _ -> Nothing
 
--- | The winner under a policy, or a structured doubt. There is no way to
--- get a result without a handler for every alternative, so a confident
--- answer that means "no" or "missing" runs its own handler and never reads
--- as a pass.
+-- | The winner under a policy, or a structured doubt. This consumer
+-- requires a handler for every alternative, including "no" or "missing".
+-- Success supports the selected alternative, not permission to proceed.
 settle :: forall alts hs r p. Handles hs alts r => Policy p -> Chosen alts -> Alts HandlerT hs -> Either Doubt (Settled p r)
 settle policy a hs = maybe (Right (Settled (handle a hs))) Left (doubt policy a)
+
+-- | 'taken' under a policy: no handlers to repeat when all alternatives
+-- already carry the same result type. The author assigns meaning to every
+-- payload, including an explicit no-op such as 'Nothing'.
+takenUnder :: Carries alts r => Policy p -> Chosen alts -> Either Doubt (Settled p r)
+takenUnder policy a = maybe (Right (Settled (taken a))) Left (doubt policy a)
 
 -- | A proposition under a policy: yes, no, or a structured doubt when the
 -- provider was not clear either way.
 judge :: Policy p -> Yes -> Either Doubt (Settled p Bool)
 judge policy a = maybe (Right (Settled (yes a >= 0.5))) Left (doubt policy a)
+
+-- | Whether a proposition holds under a policy: a settled yes, and
+-- nothing else. A doubt is not a no, so both read as 'False' here. A
+-- caller that must tell them apart uses 'judge', which keeps the doubt and
+-- the line that says why.
+holds :: Policy p -> Yes -> Bool
+holds policy a = case judge policy a of
+  Right (Settled b) -> b
+  Left _ -> False
 
 -- | One line saying why the policy settled or doubted the answer, with the
 -- numbers behind it. A doubt already carries this line as its @why@; this
@@ -705,10 +744,16 @@ contenders floor' a hs = [(m, dispatch hs s) | (m, s) <- ranked a, m >= floor']
 -- carries its result from the moment it is written, so there is no list to
 -- check and no label string to dispatch on.
 grade :: Double -> Scored p levels -> p
-grade floor' a =
+grade floor' = snd . graded floor'
+
+-- | 'grade', with the label of the level it landed on. A ledger line that
+-- names the level then reads it from the answer instead of a label written
+-- a second time into the result.
+graded :: Double -> Scored p levels -> (Text, p)
+graded floor' a =
   let rs = results a
       atOrAbove = drop 1 (scanr (+) 0 (map snd (scoreMasses a)))
-  in foldl (\taken (r, m) -> if m >= floor' then r else taken) (NE.head rs) (zip (NE.tail rs) atOrAbove)
+  in foldl (\landed (r, m) -> if m >= floor' then r else landed) (NE.head rs) (zip (NE.tail rs) atOrAbove)
 
 -- | Mass at or beyond a level, by label.
 massAtOrAbove :: forall l levels p. KnownNat (Index l levels) => Label l -> Scored p levels -> Double
@@ -831,7 +876,7 @@ instance (JsonValue v, Levels levels) => Endpoint v (Score p levels) where
     checkLegend key [w | (_, w, _) <- NE.toList entries] lg
     checkExpectation key (length labels) e
     let byIndex = [(l, maybe 0 id (lookup i ms)) | (i, l) <- zip indices labels]
-    Right (ScoreA Scored { expectation = e, confidence = conf, masses = byIndex, results = fmap (\(_, _, r) -> r) entries })
+    Right (ScoreA Scored { expectation = e, confidence = conf, masses = byIndex, results = fmap (\(l, _, r) -> (l, r)) entries })
   unwrapA (ScoreA a) = a
   previewA (ScoreA a@Scored { expectation = e }) = jObject
     [ ("expectation", jNumber e)
@@ -861,6 +906,12 @@ instance Schema v s => Endpoint v (Group s) where
   decodeA p (GroupQ q) ws = GroupA <$> decodeSchema p q ws
   unwrapA (GroupA x) = x
   previewA (GroupA x) = previewSchema x
+
+instance Endpoint v e => Endpoint v (Optional e) where
+  compileQ p (OptionalQ q) = maybe (Right []) (compileQ p) q
+  decodeA p (OptionalQ q) ws = OptionalA <$> traverse (\x -> decodeA p x ws) q
+  unwrapA (OptionalA a) = fmap unwrapA a
+  previewA (OptionalA a) = maybe jNull previewA a
 
 -- ---------------------------------------------------------------------------
 -- Packets: a cell is a packet of one, and two packets join
@@ -924,11 +975,15 @@ infixr 5 :&
 type family PacketLabels (t :: Type) :: [Symbol] where
   PacketLabels (k ::= e) = '[k]
   PacketLabels (a :& b) = PacketLabels a ++ PacketLabels b
+  PacketLabels t = '[]
 
 type family HasCell (k :: Symbol) (t :: Type) :: Bool where
   HasCell k (k ::= e) = 'True
   HasCell k (j ::= e) = 'False
   HasCell k (a :& b) = HasCell k a || HasCell k b
+  -- A state sent as given has no cells at all, which is what makes the
+  -- raw case of 'HasField' on a 'State' unreachable rather than undefined.
+  HasCell k t = 'False
 
 -- | Every label in a packet is written once.
 type Unique t = NoRepeats (PacketLabels t) ('Text "Jev: duplicate packet label")
@@ -1005,31 +1060,85 @@ instance (JsonValue v, Unique t) => Field v (Packet t (Fields v)) where
 
 -- | The shared input to every question. Its fields keep their Haskell
 -- types, so a row the state carries is the row a question is built from.
-data State (v :: Type) (t :: Type) = State (Packet t (Fields v)) v
+-- A state sent as given keeps no packet, and its index says so, so the
+-- two cases never need a fallback that cannot happen.
+data State (v :: Type) (t :: Type) where
+  Typed :: Packet t (Fields v) -> v -> State v t
+  Raw :: v -> State v ()
 
 -- | A state written the way a packet is.
 state :: (JsonValue v, Unique t) => Packet t (Fields v) -> State v t
-state p = State p (jObject (fieldPairs p))
+state p = Typed p (jObject (fieldPairs p))
 
 -- | A state sent as given, for a shape the authoring surface leaves out.
 -- The fields of such a state cannot be referenced.
 rawState :: v -> State v ()
-rawState = State (error "rawState: no fields")
+rawState = Raw
 
 stateValue :: State v t -> v
-stateValue (State _ v) = v
+stateValue = \case
+  Typed _ v -> v
+  Raw v -> v
 
-instance (Get k t t a, r ~ a) => HasField k (State v t) r where
-  getField (State p _) = case getCell @k @t @t p of Given a -> a
+-- | A state reads by its own labels. The witness in the context is what a
+-- field access already proves, and it also rules out the raw state, whose
+-- index carries no cells: that case is inaccessible, not unwritten.
+instance (HasCell k t ~ 'True, Get k t t a, r ~ a) => HasField k (State v t) r where
+  getField = \case Typed p _ -> case getCell @k @t @t p of Given a -> a
 
 instance (Get k t t a, r ~ a) => HasField k (Packet t (Fields v)) r where
   getField p = case getCell @k @t @t p of Given a -> a
 
 -- | The name of a state field, as wording refers to it. A name the state
--- does not have is a compile error listing the names it does. Only the
--- name is checked, never the field's type: wording refers to a name.
-field :: forall k v t. (KnownSymbol k, StateHas k t) => Label k -> State v t -> Text
-field _ _ = "`" <> labelText @k <> "`"
+-- does not have is a compile error listing the names it does. Intermediate
+-- fields must be nested packets; the final field may have any type.
+field :: StatePath ks t => FieldPath ks -> State v t -> Text
+field path _ = "`" <> renderFieldPath path <> "`"
+
+-- | A nonempty path of state labels. Bare labels name top-level fields;
+-- @#gate :/ #posters@ names a field inside a nested state packet.
+data FieldPath (ks :: [Symbol]) where
+  FieldLabel :: KnownSymbol k => Label k -> FieldPath '[k]
+  (:/) :: KnownSymbol k => Label k -> FieldPath ks -> FieldPath (k ': ks)
+infixr 6 :/
+
+instance (KnownSymbol k, ks ~ '[k]) => IsLabel k (FieldPath ks) where
+  fromLabel = FieldLabel (Label @k)
+
+-- State references are model-facing wording, not question wire keys.
+-- They use the same escaping convention, but have their own renderer.
+renderFieldPath :: FieldPath ks -> Text
+renderFieldPath = T.intercalate "." . map escape . segments
+  where
+    segments :: FieldPath ls -> [Text]
+    segments (FieldLabel l) = [labelOf l]
+    segments (l :/ rest) = labelOf l : segments rest
+    escape = T.concatMap (\c -> case c of
+      '\\' -> "\\\\"
+      '.' -> "\\."
+      _ -> T.singleton c)
+
+-- | Every intermediate field is a nested packet; the final field may
+-- have any type. Missing labels are reported against their own packet.
+type family StatePath (ks :: [Symbol]) (t :: Type) :: Constraint where
+  StatePath '[k] t = StateHas k t
+  StatePath (k ': rest) t = DescendState k (StateField k t t) rest
+
+type family StateField (k :: Symbol) (t :: Type) (all :: Type) :: Type where
+  StateField k (k ::= a) all = a
+  StateField k (j ::= a) all = TypeError
+    ('Text "Jev: this state has no #" ':<>: 'Text k ':<>: 'Text "; it has " ':<>: ShowLabels (PacketLabels all))
+  StateField k (a :& b) all = StateFieldSide (HasCell k a) k a b all
+
+type family StateFieldSide (left :: Bool) k a b all :: Type where
+  StateFieldSide 'True k a b all = StateField k a all
+  StateFieldSide 'False k a b all = StateField k b all
+
+type family DescendState (k :: Symbol) (a :: Type) (rest :: [Symbol]) :: Constraint where
+  DescendState k (Packet t (Fields v)) rest = StatePath rest t
+  DescendState k a rest = TypeError
+    ('Text "Jev: cannot descend through #" ':<>: 'Text k
+     ':<>: 'Text "; expected a nested state packet, found " ':<>: 'ShowType a)
 
 type StateHas k t = StateHas' (HasCell k t) k t
 type family StateHas' (there :: Bool) (k :: Symbol) (t :: Type) :: Constraint where

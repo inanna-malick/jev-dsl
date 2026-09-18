@@ -63,7 +63,10 @@ list — there is no `Nil`. That also makes a shared set of questions an
 ordinary value: `common :& #next := choice …` sends both. A packet's *type*
 is written the same way its value is, a chain rather than a list:
 `Packet ("next" ::= Choice Alts :& "enough" ::= Noul)`; nobody writes this
-by hand, but a helper's signature can name it. Under a `let` in a session,
+by hand, but a helper's signature can name it. To read the type back off an
+expression, ask for it at a mode — `packet :: Packet _ Questions` — since a
+packet on its own stays polymorphic in whether it holds questions, answers
+or state fields, and the unpinned type is unreadable. Under a `let` in a session,
 keep `:&` at the start of each continuation line and indent every line past
 the first, as above; a `:&` left at the end of a line, or a continuation
 line starting in the same column as the binding, ends the expression early.
@@ -122,11 +125,26 @@ to match:
 noul ("Do " <> field #diagnostics world <> " alone establish the mechanism of " <> field #failure world <> "?")
 ```
 
-`field #k st` renders the key in backticks the way the provider reads it —
-`` `diagnostics` `` — and a name the state does not have is a compile
-error listing the names it does. Nested states read back with record dot
-(`world.gate.posters`); only a top-level name can be checked with `field`
-so far.
+`field #k st` renders the key in backticks — `` `diagnostics` `` — and a
+name the state does not have is a compile error listing the names it does.
+Nested states read back with record dot (`world.gate.posters`); name one
+in wording with a path:
+
+```haskell
+field (#gate :/ #posters) world
+```
+
+`:/` associates right, so deeper paths read `#gate :/ #watch :/ #captain`.
+Every segment is checked. Intermediate fields must be nested state packets;
+the final field may have any type. The result above is `` `gate.posters` ``.
+Dots and backslashes inside individual labels are escaped with a backslash.
+These are references in model-facing wording, distinct from question wire
+keys even though the escaping convention is the same.
+
+The model's interpretation of nested references is **not yet validated**.
+The measured evidence that field references improve answers was collected
+on top-level names; compile-time path checking makes no claim about that
+semantic effect.
 
 For a state shape the surface leaves out — a bare string, say — `Jev.Core`
 still has `rawState :: v -> State v ()`, whose fields cannot be named by
@@ -134,7 +152,7 @@ still has `rawState :: v -> State v ()`, whose fields cannot be named by
 
 ## Acting on answers
 
-Every answer is consumed under a policy. A policy is three floors, and
+A choice or Noul can be consumed under a policy. A policy is three floors, and
 three are named for how bad it is to be wrong:
 
 | Policy | For | mass | margin | confidence |
@@ -156,11 +174,10 @@ case settle careful a.next
   Left d -> stop d.why
 ```
 
-There is no way to reach a result without a handler for every alternative,
-including a runtime group, which is handled through its own label like any
-other. That matters more than it looks: a confident answer that means
-"none of these" or "the evidence is missing" runs its own handler, and
-cannot be mistaken for approval by a caller that only checked for success.
+`settle` requires a handler for every alternative, including each runtime
+group. A confident "none of these" runs its own handler. `Right` means the
+selected alternative cleared the policy, not that the answer was approval;
+inspect the result your handler returned.
 
 The verdict carries the policy that reached it, so a function that must not
 be handed a lightly-settled answer can demand one in its own signature:
@@ -181,6 +198,19 @@ a `Doubt`. A Noul weighs yes against no, so the same three policies apply;
 there is no confidence on the wire for a Noul, so that floor is not
 consulted.
 
+`holds policy answer` is the same question asked as a `Bool`, for the
+common case of a Noul in a guard or a list comprehension:
+
+```haskell
+[e.edgeKey | (e, n) <- a.relevant, holds lenient n]
+```
+
+It is `True` only for a settled yes. A doubt is not a no, and both read as
+`False` here, which is the whole reason it is a separate verb: comparing a
+verdict for equality (`judge p n == Right (Settled True)`) silently turns
+every doubt into a no. Use `judge` wherever the doubt is worth acting on or
+worth a line in the log, and `holds` where the answer is a filter.
+
 `explain policy answer` says in one line which check settled or doubted the
 answer and the numbers behind it, on a *settled* answer — a `Chosen` or a
 `Yes`, not a verdict. It works on a choice or a Noul, and it is usually
@@ -199,11 +229,25 @@ handlers. All three take the answer and the branches, so there is nothing to
 thread between them, and a handler list is an ordinary value you bind once
 and use on the winner and on every contender.
 
-When every alternative carries the same type — the usual case when the
-payload is what to do next — there is no handler list to write at all:
-`taken answer` reads out the winner's payload directly. Having every
-alternative is exhaustiveness by construction, so nothing is left to
-dispatch on.
+When every alternative carries the same type — usually what to do next —
+consume its payload without repeating the branches:
+
+| | Labelled handlers | Uniform payloads |
+|---|---|---|
+| Without a policy | `handle answer handlers` | `taken answer` |
+| Under a policy | `settle policy answer handlers` | `takenUnder policy answer` |
+
+`takenUnder policy answer` returns `Either Doubt (Settled p r)`, with the
+same checks and exact doubt explanations as `settle`. A uniform chain is
+built by giving every alternative a payload of one type, including the
+exit: `alt #none "No matching row" Nothing .| mapCarried Just (many ...)`. The selected payload
+is the one authored beside its wording. Every alternative has a payload;
+the author defines its meaning. For example, `Nothing` can explicitly mean
+no diversion, as in the Guard's tripwire. A settled `Nothing` is not
+approval of some other action.
+
+`Carries alts r` lets the compiler infer `r` from `alts`; the new consumer
+needs no result annotation merely to read a field off its payload.
 
 The rest of an answer is fields, read with record dot:
 
@@ -217,9 +261,9 @@ Those are all there is to read. An answer cannot be built or matched, and
 its type is what a helper's signature names: `Chosen alts` for a choice,
 `Yes` for a Noul, `Scored p levels` for a score.
 
-Each kind has one typed consumer: `settle` for a choice, `judge` for a Noul,
-`grade` for a score. `settle` and `handle` take a handler list as a value and
-so cannot hand back a result the program did not write a case for. `grade`
+Choices use the four consumers above; `judge` consumes a Noul and `grade`
+a score. Labelled handlers cover every alternative; uniform choices carry
+a result beside every alternative instead. `grade`
 needs no such list: the result it returns was written beside the level's own
 wording when the rubric was built.
 
@@ -232,12 +276,15 @@ play, usually a sign the alternatives were not really rivals.
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
 `margin`, `confidence`, `masses`, `yes`, `expectation`, `cause`, `why`. The
-verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `field`,
-`session`, `settle`, `judge`, `grade`, `handle`, `explain`, `taken`,
-`offered`, `uniform`, `lenient`, `careful`, `strict`. Under `-Wall` a local
+verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `optional`, `state`, `field`,
+`session`, `settle`, `takenUnder`, `judge`, `holds`, `grade`, `graded`, `handle`,
+`explain`, `taken`, `offered`, `branches`, `uniform`, `withUniform`,
+`lenient`, `careful`, `strict`. Under `-Wall` a local
 binding with any of these names shadows; name your own `tag`, `weight`,
 `askLine`, or import qualified. `field` and `taken` are the likeliest
 collisions — a record of your own is likely to want either name.
+`optional` also conflicts with `Control.Applicative.optional`; use an
+explicit import list or qualify one of the modules when using both.
 
 ## Writing questions
 
@@ -330,6 +377,15 @@ the median.
 grade 0.5 a.urgency
 ```
 
+`graded floor answer` returns the same result with the label of the level
+it landed on, `(Text, p)`, for a ledger line that names the level. Without
+it a program that wants both writes the label a second time into the
+result, and the two copies can drift.
+
+```haskell
+let (landed, next) = graded 0.5 a
+```
+
 There is no list of results to keep in step with the rubric, so a result
 cannot go missing, arrive twice, or land on the wrong level: it is the same
 expression as the level's wording. That is the point. A rubric's labels are
@@ -404,32 +460,40 @@ catamorphism whose algebra is Jev.
 
 - **The continuation is the payload.** When every branch carries the same
   type — usually the next step to take — offer them with their
-  continuations as payloads and read the winner with `taken`, which needs
-  no handler list at all. No dispatch table.
+  continuations as payloads and read the winner with `taken`, or
+  `takenUnder policy` when a floor is needed. Neither needs a handler list.
 - **`Uniform` is for a node type that is itself a functor over such
   payloads.** `examples/Guard.hs`'s `GuardF` holds its branches in
-  `Uniform Value r`; `uniform` builds one from a chain of alternatives,
-  `mapUniform` is its `fmap`, and `mapCarried`/`carriedRows` reach the
-  wording and the children underneath when a fold needs to see them
-  directly, as `render` and `branches` do there.
+  `Uniform r`, which hides the chain's own type so the node type stays a
+  plain functor. `uniform` builds one, `mapUniform` is its `fmap`, and
+  `branches` lists every alternative as key, wording and payload for a
+  fold that prints or inspects the tree. To *ask* one, open it with
+  `withUniform u $ \o -> ... choice "..." o ...`: the alternatives are
+  existential, so they are named only inside, and the question built there
+  gets every check a written-out chain gets.
 - **A choice picks one; a Noul each says how many.** A choice's
   distribution is uncertainty about which single alternative fits, not
   evidence that several apply. When things can be true at the same time,
   ask a Noul per thing with `each`, in the same packet, and judge each one.
   Reading a choice's runner-up mass as "this also applies" conflates
   doubt with multiplicity.
-- **An optional question is a battery of none or one.** A question a node
-  may or may not have does not need a separate packet shape: ask it with
-  `each` over `maybe [] pure` of the optional thing. An empty `each`
-  renders to nothing on the wire and decodes back to `[]`. `examples/Guard.hs`
-  asks this way wherever a question only sometimes applies.
+- **An optional question is a `Maybe`.** Write
+  `#stop := optional (stopping <$> trip)`. `optional` takes a `Maybe` question
+  or nested packet and returns a `Maybe` answer at the same cell label.
+  `Nothing` sends no questions; `Just` uses the cell's path directly, with
+  no synthetic `now` segment. A present answer must still pass decoding.
+  Missing questions do not count as answers: a response containing a key
+  for an absent question is rejected. A request with no questions at all
+  still fails with `EmptyQuestionMap`. Presence comes from the retained
+  question, so a present packet with zero leaves still returns `Just` its
+  empty answers.
 - **Rules in Haskell, judgments in Jev.** Decide eligibility before the
   call and offer only what is legal now; do not ask a Noul whether an
   alternative should be on offer. What the state cannot decide, a question
   does.
 - **Two questions, one call, reconciled in code.** A branch choice and a
   Noul such as "does this reply admit to something the rules forbid" go in
-  the same packet; the program takes the Noul's route when `judge careful`
+  the same packet; the program takes the Noul's route when `holds careful`
   says yes and the chosen branch otherwise. Give the Noul a route only
   where there is somewhere to send the case; a tripwire with nowhere to go
   steals branches that mean something.

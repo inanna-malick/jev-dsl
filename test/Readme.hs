@@ -65,15 +65,15 @@ act a =
          (  #edges       (\k _ -> "follow " <> k)
          .| #use_witness (\(Witness w) -> "located at " <> w)
          .| #ask_model   (\(Handoff h) -> "hand back: " <> h) ) of
-    Right (Settled step) -> step <> (if judge lenient a.enough == Right (Settled True) then "; evidence suffices" else "")
+    Right (Settled step) -> step <> (if holds lenient a.enough then "; evidence suffices" else "")
     Left d -> "stopped: " <> d.why
 
 -- Reading answers: every answer is a plain record, read by field.
 report :: Inspection Answers -> Text
 report a =
   a.next.key <> " by " <> pct a.next.margin
-    <> ", relevant: " <> T.intercalate ", " [e.edgeKey | (e, n) <- a.children, judge lenient n == Right (Settled True)]
-    <> (if judge lenient a.evidence.gap == Right (Settled True) then ", source missing" else "")
+    <> ", relevant: " <> T.intercalate ", " [e.edgeKey | (e, n) <- a.children, holds lenient n]
+    <> (if holds lenient a.evidence.gap then ", source missing" else "")
   where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
 
 -- A rubric is graded, not read off: the result is the level, written
@@ -98,6 +98,21 @@ routes = #use_witness (const "witness") .| #ask_model (const "model") .| #edges 
 
 alive :: Inspection Answers -> [Text]
 alive a = map snd (contenders 0.25 a.next routes)
+
+-- Uniform choices already carry every result. The policy adds no handlers.
+selectLine sess world numbered = do
+  answer <- ask1 sess world (choice "Which line begins the branch?"
+    (alt #not_here "No line begins it" Nothing
+     .| mapCarried (Just . (.lineNo)) (many #lines (T.pack . show . (.lineNo)) (.lineText) numbered)))
+  pure (fmap (takenUnder lenient) answer)
+
+-- Optional leaves and packets keep an inferred shape across presence changes.
+withExtra extra = #ready := noul "Ready?" :& #extra := optional (noul <$> extra)
+withEvidence extra = #ready := noul "Ready?"
+                 :& #evidence := optional ((\q -> #gap := noul q) <$> extra)
+
+gateReference = field (#gate :/ #posters)
+  (state (#gate := (#posters := (["wanted"] :: [Text]))))
 
 -- A verdict carries the policy that reached it, so the step that cannot be
 -- taken back can demand one and nothing weaker will typecheck.

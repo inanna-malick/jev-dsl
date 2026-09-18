@@ -125,6 +125,7 @@ test-suite jev-dsl-test
     Golden
     Rejections
     Mini
+    Ergonomics
   build-depends:
     , base
     , text

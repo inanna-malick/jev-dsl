@@ -2,6 +2,41 @@
 
 ## 0.1.0.0 (unreleased, early alpha)
 
+Authoring improvements:
+
+- `holds policy answer` is a Noul judged to a `Bool`: `True` only for a
+  settled yes. It replaces `judge p n == Right (Settled True)`, which was
+  the commonest way to read a Noul here and silently counted every doubt
+  as a no.
+- `graded floor answer` is `grade` with the label of the level it landed
+  on. A ledger line that names the level no longer needs the label written
+  into the result as well.
+- `State` keeps no partial function. A state sent as given carries no
+  packet, and its index says so, so reading a field off one is the compile
+  error it always was with nothing undefined behind it. `state`,
+  `rawState` and `State` itself are unchanged on the surface.
+- `branches` lists a `Uniform` chain as key, wording and payload, and
+  `withUniform` opens one to build a question from it. `Uniform r` on the
+  authoring surface no longer names the JSON type.
+- `takenUnder policy answer` consumes uniform choice payloads under the
+  same policy checks as `settle`, without identity handlers. Together with
+  `taken`, `handle`, and `settle`, this completes policy/no-policy and
+  payload/handler consumption. It is not the old handler-based `accept`.
+- `Carries alts r` now determines `r` from `alts`, so reading a field off
+  a uniform result needs no extra payload annotation.
+- `optional` takes a `Maybe` question or packet and reads back as a
+  `Maybe` answer. Absence sends no questions; presence uses the containing
+  path directly. It shares a name with `Control.Applicative.optional`.
+- `field` accepts typed paths: `field (#gate :/ #posters) st`. Every
+  segment is checked; intermediate fields must contain nested packets.
+  A bare `#label` still works, but `field` now takes a `FieldPath` rather
+  than a `Label`. State references have their own renderer; their effect
+  on model answers is unmeasured beyond the existing top-level evidence.
+- The Guard uses `optional` and uniform tripwire payloads. Its tripwire
+  wire key changes from `stop.now` to `stop`; its poster wording now names
+  `gate.posters`. Old transcripts remain historical evidence, not a
+  baseline for these requests. The worked example's request is unchanged.
+
 First cut. The surface is `Jev.Operators`; `Jev.Core` is the same library
 polymorphic over the JSON type. Expect the interface to change.
 
