@@ -15,7 +15,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Text as T
 import Fixtures
 import qualified Jev.Core as Core
-import Jev.Operators
+import Jev.Operators hiding (alt, level, many, state)
 import Replay
 
 data Disposition
@@ -23,27 +23,27 @@ data Disposition
   | Inexpressible String           -- there is no way to write it
   | ProviderDecided                -- valid locally; the provider decides
 
-st :: State
-st = state (object ["message" .= ("m" :: T.Text)])
+st :: State ()
+st = rawState (object ["message" .= ("m" :: T.Text)])
 
-prepErr :: Schema s => s Questions -> Maybe PrepError
+prepErr :: Schema Value s => s Questions -> Maybe PrepError
 prepErr q = case request jevLatest st q of
   Left (Prepare e) -> Just e
   _ -> Nothing
 
-stateErr :: State -> Maybe PrepError
-stateErr s = case request jevLatest s (#wake := noul "?" :& Nil) of
+stateErr :: State () -> Maybe PrepError
+stateErr s = case request jevLatest s (#wake := noul "?") of
   Left (Prepare e) -> Just e
   _ -> Nothing
 
-route :: [(T.Text, Value)] -> Packet '["route" ::= Choice (Many (T.Text, Value))] Questions
-route cs = #route := choice "?" (many fst snd cs) :& Nil
+route :: [(T.Text, Value)] -> Packet ("route" ::= Choice ("row" ::* (T.Text, Value))) Questions
+route cs = #route := choice "?" (many #row fst snd cs)
 
-count :: [Value] -> Packet '["count" ::= Scale] Questions
-count ls = #count := scale (question "?") ls :& Nil
+count :: [Value] -> Packet ("count" ::= Scale) Questions
+count ls = #count := scale (question "?") ls
 
-wake :: Instructions Value -> Packet '["wake" ::= Noul] Questions
-wake i = #wake := noulWith i Omitted :& Nil
+wake :: Instructions Value -> Packet ("wake" ::= Noul) Questions
+wake i = #wake := noulWith i Omitted
 
 table :: [(String, Disposition, Maybe PrepError)]
 table =
@@ -55,9 +55,9 @@ table =
   , ("score-null-level", Prep (Core.BadLevel "count" 0), prepErr (count [Null, "l"]))
   , ("question-empty-key", Prep (Core.EmptyQuestionKey ""), prepErr (exact [("", someQ (noul "?"))]))
   , ("empty-questions", Prep Core.EmptyQuestionMap, prepErr (exact []))
-  , ("state-null", Prep Core.BadStateShape, stateErr (state Null))
-  , ("state-boolean", Prep Core.BadStateShape, stateErr (state (Bool True)))
-  , ("state-number", Prep Core.BadStateShape, stateErr (state (Number 42)))
+  , ("state-null", Prep Core.BadStateShape, stateErr (rawState Null))
+  , ("state-boolean", Prep Core.BadStateShape, stateErr (rawState (Bool True)))
+  , ("state-number", Prep Core.BadStateShape, stateErr (rawState (Number 42)))
   , ("instructions-boolean", Prep (Core.BadInstructions "wake"), prepErr (wake (Core.Instructions (Bool True))))
   , ("instructions-number", Prep (Core.BadInstructions "wake"), prepErr (wake (Core.Instructions (Number 42))))
   , ("choice-boolean-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Bool True), ("owner_1", Null)]))

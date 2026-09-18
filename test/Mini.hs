@@ -61,17 +61,16 @@ newtype Room = Room Text deriving (Eq, Show)
 -- A packet with one of each question kind, a runtime group, a static exit,
 -- and a per-item battery. No type annotations beyond the domain payload.
 inspect :: [Room] -> Packet
-  '[ "next" ::= Choice ("stop" ::> () :|: Many Room)
-   , "ready" ::= Noul
-   , "risk" ::= Score Text ("low" :|: "high")
-   , "each_room" ::= Each Room Noul ] (Questions Mini)
+  (    "next" ::= Choice ("stop" ::> () :|: "rooms" ::* Room)
+   :&  "ready" ::= Noul
+   :&  "risk" ::= Score Text ("low" :|: "high")
+   :&  "each_room" ::= Each Room Noul ) (Questions Mini)
 inspect rooms =
      #next := choice "Which room to search next?"
-                (alt #stop "Every room has been searched" () .| many (\(Room r) -> r) (\(Room r) -> MStr r) rooms)
+                (alt #stop "Every room has been searched" () .| many #rooms (\(Room r) -> r) (\(Room r) -> MStr r) rooms)
   :& #ready := noul "Is the search ready to stop?"
   :& #risk := score "How risky is continuing?" (level #low (MStr "safe") "low" .| level #high (MStr "dangerous") "high")
   :& #each_room := each (\(Room r) -> r) (\(Room r) -> noul ("Has " <> r <> " been searched?")) rooms
-  :& Nil
 
 -- A transport in Mini, answering from the request it was handed.
 stub :: Mini -> IO (Either Text Mini)
@@ -102,7 +101,7 @@ miniChecks :: Checks -> IO ()
 miniChecks c = do
   let rooms = [Room "cellar", Room "attic"]
       packet = inspect rooms
-  case request jevLatest (state (MObj [("house", MStr "Greyhaven")])) packet of
+  case request jevLatest (rawState (MObj [("house", MStr "Greyhaven")])) packet of
     Left e -> check c ("mini: request failed: " ++ show e) False
     Right req -> do
       check c "mini: the request is built in a value type the core never saw"
@@ -113,13 +112,13 @@ miniChecks c = do
         ((lookupKey "questions" req >>= lookupKey "next" >>= lookupKey "criteria" >>= lookupKey "cellar") == Just (MStr "cellar"))
       check c "mini: the battery flattens to one question per item"
         ((lookupKey "questions" req >>= lookupKey "each_room.attic") /= Nothing)
-  r <- roundTrip stub jevLatest (state (MObj [("house", MStr "Greyhaven")])) packet
+  r <- roundTrip (session stub jevLatest) (rawState (MObj [("house", MStr "Greyhaven")])) packet
   case r of
     Left e -> check c ("mini: round trip failed: " ++ show e) False
     Right resp -> do
       let a = answers resp
       checkEq c "mini: the chosen row is the payload the program offered"
-        (Room "cellar") (handle a.next (#stop (\() -> Room "none") .| onMany (\_ room -> room)))
+        (Room "cellar") (handle a.next (#stop (\() -> Room "none") .| #rooms (\_ room -> room)))
       checkEq c "mini: a noul decodes" 0.9 a.ready.yes
       checkEq c "mini: a score grades through its levels"
         ("high" :: Text) (grade 0.5 a.risk)

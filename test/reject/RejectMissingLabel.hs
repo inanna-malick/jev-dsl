@@ -8,9 +8,8 @@
 -- expect: Jev: this packet has no #urgency; it has #enough, #more
 module RejectMissingLabel where
 
-import Data.Aeson (Value (..))
 import Jev.Operators
 
 -- Accessing a label the packet does not have lists the labels it has.
-bad :: Packet '["enough" ::= Noul, "more" ::= Noul] Answers -> Double
+bad :: Packet ("enough" ::= Noul :& "more" ::= Noul) Answers -> Double
 bad a = yes a.urgency

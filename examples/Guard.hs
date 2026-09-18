@@ -41,7 +41,7 @@
 module Main (main) where
 
 import Control.Monad (unless, when)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -54,6 +54,7 @@ import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import GHC.TypeLits (KnownSymbol)
 import Jev.Operators
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -142,8 +143,12 @@ world = World
 
 data Action = Admit | TurnAway | SendForCaptain deriving (Show, Eq)
 
+-- 'Ask' holds the branches as Jev alternatives, each carrying the child it
+-- leads to. There is no table from a key to a node and no case on a string:
+-- the alternative the provider picks hands the program the node the author
+-- wrote beside it.
 data GuardF r
-  = Ask Text (Maybe (Trip r)) [(Text, Text, r)]    -- the guard's line; where a stop leads; branch label, meaning, child
+  = Ask Text (Maybe (Trip r)) (Uniform Value r)    -- the guard's line; where a stop leads; the branches
   | Say Text r                                     -- the guard speaks; no reply expected
   | Check [(Text, r)] r                            -- child per poster matched, and the child when none does
   | Weigh Text (Text, r) (Text, r) (Text, r)       -- a question, and the sound / thin / false levels
@@ -161,7 +166,7 @@ instance Functor Trip where
   fmap f (Trip a b) = Trip (f a) (f b)
 
 instance Functor GuardF where
-  fmap f (Ask line trip bs) = Ask line (fmap (fmap f) trip) [(k, m, f r) | (k, m, r) <- bs]
+  fmap f (Ask line trip bs) = Ask line (fmap (fmap f) trip) (mapUniform f bs)
   fmap f (Say line r) = Say line (f r)
   fmap f (Check ms none) = Check [(k, f r) | (k, r) <- ms] (f none)
   fmap f (Weigh q (a, x) (b, y) (c, z)) = Weigh q (a, f x) (b, f y) (c, f z)
@@ -206,17 +211,22 @@ gate w = askOrigin
     -- Each retry level is a knot, because every sidetrack at one level leads to the same next level.
     -- Without that the printed script would re-expand one subtree per sidetrack, which is exponential;
     -- the name must identify the node, so it carries whatever the continuation was built from.
-    askPatient name line pressEvasive branches k = go (0 :: Int)
+    --
+    -- Every alternative carries the node it leads to, so the branch the provider picks is the branch
+    -- the program runs: no table from a key to a node, and no case on a string.
+    askPatient name line pressEvasive offered' k = go (0 :: Int)
       where
-        go n = knot (name <> "_" <> T.pack (show n)) $ askLine line Nothing (branches ++ [evasive] ++ [(l, m) | (l, m, _) <- sidetracks line] ++ [threat, bribe]) $ \answer ->
-          case lookup answer [(l, r) | (l, _, r) <- sidetracks line] of
-            Just retort | n < 2 -> say retort (go (n + 1))
-            Just _ -> k "evasive"
-            Nothing
-              | answer == "threat" -> say "Threaten the watch at its own gate and you can spend the night on the wrong side of it." (verdict TurnAway)
-              | answer == "bribe" -> say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain)
-              | answer == "evasive" && pressEvasive && n == 0 -> say "I'll ask once more, and I'd think about the answer this time." (go 1)
-              | otherwise -> k answer
+        go n = knot (name <> "_" <> T.pack (show n)) $ askLine line Nothing $ uniform
+          (  rows #branch [(l, m, k l) | (l, m) <- offered']
+          .| rows #aside [(l, m, aside' retort) | (l, m, retort) <- sidetracks line]
+          .| alt #evasive evasiveMeaning evasiveGoes
+          .| alt #threat threatMeaning (say "Threaten the watch at its own gate and you can spend the night on the wrong side of it." (verdict TurnAway))
+          .| alt #bribe bribeMeaning (say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain)) )
+          where
+            aside' retort = if n < 2 then say retort (go (n + 1)) else k "evasive"
+            evasiveGoes
+              | pressEvasive && n == 0 = say "I'll ask once more, and I'd think about the answer this time." (go 1)
+              | otherwise = k "evasive"
     sidetracks :: Text -> [(Text, Text, Text)]
     sidetracks line =
       [ ("nonsense", nonsenseMeaning, callOuts !! (T.length line `mod` length callOuts))
@@ -232,8 +242,8 @@ gate w = askOrigin
         , "Nobody asked for your life story. Just the question.")
       , ("lost", "Does not seem to understand the question, or answers in another tongue"
         , "Slowly, then. Simple words.") ]
-    threat = ("threat", "Threatens the guard or the watch")
-    bribe = ("bribe", "Offers coin, a favour, or anything of value to be let through")
+    threatMeaning = "Threatens the guard or the watch" :: Text
+    bribeMeaning = "Offers coin, a favour, or anything of value to be let through" :: Text
     callOuts =
       [ "Are you having me on right now? Once more."
       , "Is this a game to you? Try that again, plainly."
@@ -246,16 +256,14 @@ gate w = askOrigin
     -- posters, bribes, and runners.
     weigh = knot "weigh" (weighInto (verdict Admit) pressOnce pressOnce)
     pressOnce = knot "press_again" $
-      askLine "Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?" Nothing
-        [ ("straight", "Answers plainly, with detail a guard could check")
-        , ("changes_story", "Gives an account that differs from what they said before")
-        , evasive, threat, bribe, nonsense ]
-        (\case
-          "evasive" -> verdict TurnAway
-          "threat" -> say "That is the wrong thing to say to me tonight." (verdict TurnAway)
-          "bribe" -> say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain)
-          "nonsense" -> say "I have no patience left for the act. Off with you." (verdict TurnAway)
-          _ -> weighInto (verdict Admit) (say "Fine. But I've got my eye on you." (verdict Admit)) (verdict TurnAway))
+      askLine "Hm. That doesn't quite hang together. Once more, plainly: what brings you in, and what have you got with you?" Nothing $ uniform
+        (  alt #straight "Answers plainly, with detail a guard could check" plainly
+        .| alt #changes_story "Gives an account that differs from what they said before" plainly
+        .| alt #evasive evasiveMeaning (verdict TurnAway)
+        .| alt #threat threatMeaning (say "That is the wrong thing to say to me tonight." (verdict TurnAway))
+        .| alt #bribe bribeMeaning (say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain))
+        .| alt #nonsense nonsenseMeaning (say "I have no patience left for the act. Off with you." (verdict TurnAway)) )
+      where plainly = weighInto (verdict Admit) (say "Fine. But I've got my eye on you." (verdict Admit)) (verdict TurnAway)
     weighInto sound thin false = Fix (Weigh "Taken together, does this traveller's story hold up?"
       ("The answers fit each other and the road they came by; an ordinary traveller on an ordinary errand sounds like this, even when brief or odd in manner", sound)
       ("A real gap: a claim that cannot be squared with the rest, a question dodged, or an errand that does not fit the cargo", thin)
@@ -269,61 +277,44 @@ gate w = askOrigin
 
     admitted = knot "gate" $ happen $
       askLine "Anything else before you go through?"
-        (Just (Trip (say "Wait. Say that again." weigh) (say "That is not what you told me a moment ago." weigh)))
-        ( [(k, "Asks about the " <> k <> " on the posters, or the reward") | (k, _) <- w.posters]
-       ++ [(k, "Asks the way to the " <> k <> ", whether it is open, what goes on there, or for what it offers: " <> d) | (k, d) <- w.places]
-       ++ [ ("curfew", "Asks about the curfew: when the bell goes, what it means for them tonight")
-          , ("captain", "Asks about the captain or the watch")
-          , ("rumour", "Asks about the robbery, or for news and gossip")
-          , ("chat", "Small talk, a remark about the night, or anything else")
-          , ("flattery", "Flatters, sweet-talks, or compliments the guard")
-          , threat
-          , nonsense
-          , ("leave", "Signals they are done, however indirectly: says goodbye, thanks the guard, says they will get out of the way, or asks whether they may go") ] )
-        $ \case
-          "leave" -> say "Then go on. And mind the curfew." end
-          "nonsense" -> say "Very funny. Anything else, or are we done?" admitted
-          "flattery" -> say "Save it. Through you go, before I change my mind." admitted
-          "threat" -> say "Threaten the watch and you'll not be going through after all." (verdict TurnAway)
-          topic -> say (fromMaybe "Mm. Long night. Move along when you're ready." (lookup topic smallTalk)) admitted
+        (Just (Trip (say "Wait. Say that again." weigh) (say "That is not what you told me a moment ago." weigh))) $ uniform
+        (  rows #poster [(k, "Asks about the " <> k <> " on the posters, or the reward", answered k) | (k, _) <- w.posters]
+        .| rows #place [(k, "Asks the way to the " <> k <> ", whether it is open, what goes on there, or for what it offers: " <> d, answered k) | (k, d) <- w.places]
+        .| rows #topic
+             [ ("curfew", "Asks about the curfew: when the bell goes, what it means for them tonight", answered "curfew")
+             , ("captain", "Asks about the captain or the watch", answered "captain")
+             , ("rumour", "Asks about the robbery, or for news and gossip", answered "rumour")
+             , ("chat", "Small talk, a remark about the night, or anything else", answered "chat") ]
+        .| alt #flattery "Flatters, sweet-talks, or compliments the guard" (say "Save it. Through you go, before I change my mind." admitted)
+        .| alt #threat threatMeaning (say "Threaten the watch and you'll not be going through after all." (verdict TurnAway))
+        .| alt #nonsense nonsenseMeaning (say "Very funny. Anything else, or are we done?" admitted)
+        .| alt #leave "Signals they are done, however indirectly: says goodbye, thanks the guard, says they will get out of the way, or asks whether they may go"
+             (say "Then go on. And mind the curfew." end) )
+      where answered topic = say (fromMaybe "Mm. Long night. Move along when you're ready." (lookup topic smallTalk)) admitted
 
     turnedAway = knot "turned_away" $ happen $
-      askLine "The gate's closed to you tonight. Unless you've something to add." Nothing
-        [ ("explain", "Adds to their story, gives a reason, or names someone who can vouch for them")
-        , ("bribe", "Offers money, a favour, or anything of value to the guard")
-        , ("insult", "Insults, mocks, or threatens the guard")
-        , ("beg", "Pleads, appeals to pity, or asks for an exception")
-        , ("chat", "Small talk, a question, or anything else")
-        , nonsense
-        , ("leave", "Gives up, says goodbye, or turns to go") ]
-        $ \case
-          "explain" -> say "Go on, then. All of it, from the start." weigh
-          "bribe" -> say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain)
-          "insult" -> say "Say that again and it's the captain you'll be explaining yourself to." turnedAway
-          "beg" -> say "Save it. I've heard better from the drunks at the Broken Wheel." turnedAway
-          "leave" -> say "Then go. The road's that way." end
-          "nonsense" -> say "Play the fool somewhere else. The gate's still closed." turnedAway
-          _ -> say "The gate's still closed." turnedAway
+      askLine "The gate's closed to you tonight. Unless you've something to add." Nothing $ uniform
+        (  alt #explain "Adds to their story, gives a reason, or names someone who can vouch for them" (say "Go on, then. All of it, from the start." weigh)
+        .| alt #bribe "Offers money, a favour, or anything of value to the guard" (say "Did you just offer the watch coin? At its own gate?" (verdict SendForCaptain))
+        .| alt #insult "Insults, mocks, or threatens the guard" (say "Say that again and it's the captain you'll be explaining yourself to." turnedAway)
+        .| alt #beg "Pleads, appeals to pity, or asks for an exception" (say "Save it. I've heard better from the drunks at the Broken Wheel." turnedAway)
+        .| alt #chat "Small talk, a question, or anything else" (say "The gate's still closed." turnedAway)
+        .| alt #nonsense nonsenseMeaning (say "Play the fool somewhere else. The gate's still closed." turnedAway)
+        .| alt #leave "Gives up, says goodbye, or turns to go" (say "Then go. The road's that way." end) )
 
     held = knot "held" $ happen $
       -- No tripwire here: there is nothing left to escalate to, and it would only steal the branches below.
-      askLine "Stand there. The captain's on his way. Anything to say for yourself?" Nothing
-        [ ("explain", "Tries to explain, gives an account, or names someone who can vouch for them")
-        , ("name_drop", "Claims rank, connections, or acquaintance with someone important as a reason to be released")
-        , ("protest", "Protests innocence, objects, or demands to be released")
-        , ("threaten", "Threatens the guard or the watch")
-        , ("run", "Tries to run, push past, or escape")
-        , ("chat", "Anything else")
-        , nonsense ]
-        $ \case
-          -- A held traveller can talk their way down to the road, never straight through the gate.
-          "explain" -> say "Go on. Slowly." (weighInto (verdict TurnAway) (verdict TurnAway) (verdict SendForCaptain))
-          "name_drop" -> say "Then your important friend can come and say so to the captain." held
-          "protest" -> say "Tell it to the captain." held
-          "threaten" -> say "Threatening the watch at its own gate. Bold." held
-          "run" -> say "Runner! Nobody runs from this gate. Not far." end
-          "nonsense" -> say "Save the act for the captain. Stand there." held
-          _ -> say "Stand there." held
+      askLine "Stand there. The captain's on his way. Anything to say for yourself?" Nothing $ uniform
+        -- A held traveller can talk their way down to the road, never straight through the gate.
+        (  alt #explain "Tries to explain, gives an account, or names someone who can vouch for them"
+             (say "Go on. Slowly." (weighInto (verdict TurnAway) (verdict TurnAway) (verdict SendForCaptain)))
+        .| alt #name_drop "Claims rank, connections, or acquaintance with someone important as a reason to be released"
+             (say "Then your important friend can come and say so to the captain." held)
+        .| alt #protest "Protests innocence, objects, or demands to be released" (say "Tell it to the captain." held)
+        .| alt #threaten "Threatens the guard or the watch" (say "Threatening the watch at its own gate. Bold." held)
+        .| alt #run "Tries to run, push past, or escape" (say "Runner! Nobody runs from this gate. Not far." end)
+        .| alt #chat "Anything else" (say "Stand there." held)
+        .| alt #nonsense nonsenseMeaning (say "Save the act for the captain. Stand there." held) )
 
     smallTalk =
       [ ("thief", "Slight, quick, heavy satchel. Seen anyone like that on the road? Tell the watch. Don't be a hero.")
@@ -336,15 +327,34 @@ gate w = askOrigin
       , ("captain", "The captain's not slept since the robbery. If you've nothing to tell him, don't take up his time.")
       , ("rumour", "They say the counting house was opened with a key, not a crowbar. Draw your own conclusions. I'm not paid to.") ]
 
-    evasive = ("evasive", "Does not say, changes the subject, or answers a different question")
-    nonsense = ("nonsense", nonsenseMeaning)
+    evasiveMeaning = "Does not say, changes the subject, or answers a different question" :: Text
     nonsenseMeaning = "Nonsense, gibberish, or play-acting: mocks the guard, claims to be the guard, gives the guard orders, or talks as if to a machine"
 
-    askLine line trip branches k = Fix (Ask line trip [(l, meaning, k l) | (l, meaning) <- branches])
+    askLine line trip offers = Fix (Ask line trip offers)
     say line next = Fix (Say line next)
     knot name body = Fix (Knot name body)
     happen next = Fix (Happen next)
     end = Fix End
+
+-- | What would stop a traveller mid-sentence: an admission, a
+-- contradiction, or nothing new. Each carries where it leads.
+type Stop r = "admits" ::> r :|: "contradicts" ::> r :|: "nothing_new" ::> ()
+
+-- | A runtime group whose rows are written as key, wording and the node
+-- they lead to. The row's node is the payload, so the group carries what
+-- every other alternative carries and the whole chain is uniform.
+rows :: forall k r. KnownSymbol k => Label k -> [(Text, Text, r)] -> Offers (k ::* r)
+rows l xs = mapCarried child (many l (\(k, _, _) -> k) (\(_, m, _) -> m) xs)
+  where
+    child :: (Text, Text, r) -> r
+    child (_, _, c) = c
+
+-- | Every branch of an ask: its key, its wording, and the node it leads to.
+branches :: Uniform Value r -> [(Text, Text, r)]
+branches (Uniform o) = [(k, wordingText d, c) | (k, d, c) <- carriedRows o]
+
+wordingText :: Value -> Text
+wordingText = \case { String x -> x; v -> T.pack (show v) }
 
 -- ---------------------------------------------------------------------------
 -- Fold one: print the script, each knot once
@@ -354,8 +364,9 @@ gate w = askOrigin
 -- order, so a hub reached from many places is printed once and named after.
 render :: GuardF ([Text] -> ([Text], Text)) -> [Text] -> ([Text], Text)
 render node tied = case node of
-  Ask line trip bs ->
-    let (tied1, tripLines) = case trip of
+  Ask line trip offers ->
+    let bs = branches offers
+        (tied1, tripLines) = case trip of
           Nothing -> (tied, [])
           Just (Trip admits contradicts) ->
             let (tA, outA) = admits tied
@@ -396,7 +407,7 @@ topics w = map fst w.posters ++ map fst w.places ++ ["curfew", "captain", "rumou
 -- Fold two: play the script against a traveller
 -- ---------------------------------------------------------------------------
 
-data Turn = Turn { asked :: Text, replied :: Text, taken :: Text, sureness :: Double }
+data Turn = Turn { asked :: Text, replied :: Text, heardAs :: Text, sureness :: Double }
 data Traveller = Traveller { turns :: [Turn], standing :: [Action], happened :: [Text], told :: [Text], here :: World }
 data Outcome = Outcome (Maybe Action) [Turn]
 
@@ -407,22 +418,15 @@ type Transport = Value -> IO (Either Text Value)
 -- any. That fact lets an Ask answer a runner-up topic in the same breath as the winner.
 data Node = Node { play :: Play, quip :: Maybe Text }
 
-interpret :: Transport -> GuardF Node -> Node
-interpret call = \case
-  Ask line trip branches -> program $ \t -> do
+interpret :: Session IO -> GuardF Node -> Node
+interpret sess = \case
+  Ask line trip offers -> program $ \t -> do
     let askedBefore = length [() | u <- t.turns, u.asked == line]
         variants = fromMaybe [] (lookup line t.here.again)
     guard (if askedBefore == 0 || null variants then line else variants !! min (askedBefore - 1) (length variants - 1))
     reply <- hear
-    let st = situation t [("question", String line), ("reply", String reply)]
-        sorting = choice "Which branch does the traveller's reply take?"
-                    (many (\(k, _, _) -> k) (\(_, meaning, _) -> String meaning) branches)
-
-        -- One handler list, bound once: the branch a selection stands for.
-        -- The row the author wrote is the payload, so there is nothing to
-        -- look up afterwards.
-        branchOf :: Handlers Node (Many (Text, Text, Node))
-        branchOf = onMany (\_ (_, _, node) -> node)
+    let st = exchange t line reply
+        bs = branches offers
 
         -- A reply can raise more than one topic at once, and a choice cannot
         -- say so: its distribution is uncertainty about which single branch
@@ -430,27 +434,27 @@ interpret call = \case
         -- same time are a Noul each, asked per topic in the same call, so
         -- "which way to the temple, and when's the bell?" gets both answers
         -- without a second round trip.
-        topical = [(k, meaning, node) | (k, meaning, node) <- branches, k `elem` topics t.here]
+        topical = [(k, meaning, node) | (k, meaning, node) <- bs, k `elem` topics t.here]
         alsoQ = each (\(k, _, _) -> k) (\(_, meaning, _) -> noul (T.unwords
                   [ "Is the traveller asking the guard about this, or asking for it?"
                   , "Mentioning it in passing, denying it, or answering the guard's own question about it is not asking."
                   , "The topic:", meaning ])) topical
 
-        follow a alsos = do
-          let winner = handle a branchOf
-              others = [(k, m) | (k, m) <- a.masses, k /= a.key, m >= 0.2]
+        follow :: Node -> Text -> Double -> [(Text, Double)] -> [((Text, Text, Node), Yes)] -> IO Outcome
+        follow winner heard sureness spread alsos = do
+          let others = [(k, m) | (k, m) <- spread, k /= heard, m >= 0.2]
               -- Judged, not thresholded by hand; a topic the guard has
               -- already spoken to is not raised again. The battery hands back
               -- the row the question was built from, so the node that answers
               -- the topic is already here and there is nothing to look up.
-              raised = [ (k, node, n) | ((k, _, node), n) <- alsos, k /= a.key, judge routing n == Right True ]
+              raised = [ (k, node, n) | ((k, _, node), n) <- alsos, k /= heard, judge lenient n == Right (Settled True) ]
               alsoSaid = nub [ q | (_, node, _) <- raised, Just q <- [node.quip]
                              , Just q /= winner.quip, q `notElem` t.told ]
-          aside ("heard " <> a.key <> " " <> pct a.mass
+          aside ("heard " <> heard <> " " <> pct sureness
             <> if null others then "" else "  (also " <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- others] <> ")")
           unless (null raised) (aside ("also asked " <> T.intercalate ", " [k <> " " <> pct n.yes | (k, _, n) <- raised]))
           mapM_ guard alsoSaid
-          winner.play (t `saw` Turn line reply a.key a.mass)
+          winner.play (t `saw` Turn line reply heard sureness)
             { told = alsoSaid ++ maybe [] pure winner.quip ++ t.told }
 
         -- What would stop a traveller mid-sentence, as a disjunction whose
@@ -460,44 +464,53 @@ interpret call = \case
         -- omission. Stopping to ask again is cheap and reversible, so it is
         -- settled under the policy for starting something, not the one for
         -- receipts: the guard is meant to err towards asking.
+        -- The wording names a state field, and the name is the state's own:
+        -- a field this state does not have is a compile error, not a
+        -- question the provider silently reads as being about nothing.
+        stopping :: Trip Node -> Q Value (Choice (Stop Node))
         stopping (Trip admits contradicts) =
           choice "Does this reply give the guard fresh reason to stop the traveller where they stand?"
-            (  alt #admits (String (T.unwords
+            (  alt #admits (T.unwords
                  [ "The reply owns up to something the standing orders forbid: goods hidden from the customs officer,"
                  , "a weapon not bonded, a crime, or being someone the posters want. Read an admission made in passing"
-                 , "or as a joke as an admission." ]))
+                 , "or as a joke as an admission." ])
                  admits
-            .| alt #contradicts (String (T.unwords
-                 [ "The reply cannot both be true and leave `conversation_so_far` standing: it names a different road in,"
+            .| alt #contradicts (T.unwords
+                 [ "The reply cannot both be true and leave", field #conversation_so_far st, "standing: it names a different road in,"
                  , "a different errand, or different goods than this same traveller already gave, or denies having said"
-                 , "what the record shows they said." ]))
+                 , "what the record shows they said." ])
                  contradicts
-            .| alt #nothing_new (String (T.unwords
+            .| alt #nothing_new (T.unwords
                  [ "The reply adds nothing the guard has not already heard: small talk, a question, a denial, or a"
-                 , "repeat or elaboration of what `conversation_so_far` already contains." ]))
+                 , "repeat or elaboration of what", field #conversation_so_far st, "already contains." ])
                  () )
-        divert a = case settle spawning a (#admits Just .| #contradicts Just .| #nothing_new (\() -> Nothing)) of
-          Right (Just node) -> do
-            aside (explain spawning a)
+        divert :: Chosen (Stop Node) -> IO (Maybe Outcome)
+        divert a = case settle careful a (#admits Just .| #contradicts Just .| #nothing_new (\() -> Nothing)) of
+          Right (Settled (Just node)) -> do
+            aside (explain careful a)
             Just <$> node.play (t `saw` Turn line reply a.key a.mass)
           -- A doubt is not a stop. It is a reading the guard could not make,
           -- and the traveller gets the benefit of it, with a line whenever
-          -- the guard nearly stopped them.
-          _ -> do
-            when (a.key /= "nothing_new") (aside ("let it pass: " <> explain spawning a))
+          -- the guard nearly stopped them. The doubt carries its own line.
+          Left d -> do
+            when (a.key /= "nothing_new") (aside ("let it pass: " <> d.why))
             pure Nothing
+          _ -> pure Nothing
 
     -- One packet and one call, whatever this node has. A question the node
     -- lacks is a battery of none, which renders to nothing on the wire, so
     -- the optional tripwire and the topics need no case of their own and no
     -- second packet shape.
-    r <- must =<< ask call jevLatest st
-      (  #branch := sorting
-      :& #also   := alsoQ
-      :& #stop   := each (const "now") stopping (maybe [] pure trip)
-      :& Nil )
-    stopped <- mapM (divert . snd) r.stop
-    maybe (follow r.branch r.also) pure (asum stopped)
+    case offers of
+      Uniform o -> do
+        r <- must =<< ask sess st
+          (  #branch := choice "Which branch does the traveller's reply take?" o
+          :& #also   := alsoQ
+          :& #stop   := each (const "now") stopping (maybe [] pure trip) )
+        stopped <- mapM (divert . snd) r.stop
+        -- The alternative the provider picked carries the node the author
+        -- wrote beside it, so following the answer is taking its payload.
+        maybe (follow (taken r.branch) r.branch.key r.branch.mass r.branch.masses r.also) pure (asum stopped)
 
   Say line next -> Node (\t -> guard line >> next.play t) (Just line)
 
@@ -506,8 +519,11 @@ interpret call = \case
     -- battery. A battery is a question, so it needs no packet around it, and
     -- each answer comes back beside its row, which here is the poster as it
     -- reads tonight and the child the tree wrote for a match.
-    let wanted = [(k, poster, node) | (k, node) <- matches, Just poster <- [lookup k t.here.posters]]
-    fits <- must =<< ask1 call jevLatest (situation t [])
+    -- The rows come from the state that was sent, so the poster a question
+    -- is built from is the poster the provider was shown.
+    let st = situation t
+        wanted = [(k, poster, node) | (k, node) <- matches, Just poster <- [lookup k st.gate.posters]]
+    fits <- must =<< ask1 sess st
       (each (\(k, _, _) -> k) (\(_, poster, _) -> noul ("Does the traveller's story so far match this wanted poster? " <> poster)) wanted)
     let scored = sortOn (Down . (.yes) . snd) fits
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | ((k, _, _), n) <- scored])
@@ -515,8 +531,8 @@ interpret call = \case
     -- that policy, and the policy's own line says why it went the way it did.
     case scored of
       ((k, _, node), n) : _ -> do
-        aside (k <> ": " <> explain spawning n)
-        if judge spawning n == Right True then node.play t else none.play t
+        aside (k <> ": " <> explain careful n)
+        if judge careful n == Right (Settled True) then node.play t else none.play t
       [] -> none.play t
 
   Weigh q (sound, x) (thin, y) (false, z) -> program $ \t -> do
@@ -524,12 +540,12 @@ interpret call = \case
     -- next, on one line. The highest level half the weight reaches is the
     -- one taken, which is the median; there is no string to dispatch on and
     -- no second list that could fall out of step with this one.
-    a <- must =<< ask1 call jevLatest (situation t [])
-      (score q (  level #sound (String sound) ("sound", x)
-               .| level #thin (String thin) ("thin", y)
-               .| level #false (String false) ("false", z) ))
-    let (taken, next) = grade 0.5 a
-    aside ("weighed " <> taken <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
+    a <- must =<< ask1 sess (situation t)
+      (score q (  level #sound sound ("sound", x)
+               .| level #thin thin ("thin", y)
+               .| level #false false ("false", z) ))
+    let (landed, next) = grade 0.5 a
+    aside ("weighed " <> landed <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
       <> "; thin or worse " <> pct (massAtOrAbove #thin a) <> ")")
     next.play t
 
@@ -540,16 +556,16 @@ interpret call = \case
         turned = let n = sum [T.length u.replied | u <- t.turns] `mod` max 1 (length unused)
                  in take 3 (drop n unused ++ take n unused)
     if null unused || even (length t.turns) then next.play t else do
-      a <- must =<< ask1 call jevLatest (situation t [])
+      a <- must =<< ask1 sess (situation t)
         (choice "Which of these fits this moment at the gate, given what has happened so far?"
-          (alt #nothing "The night goes on; nothing in particular happens" () .| many (.tag) (String . (.blurb)) turned))
+          (alt #nothing "The night goes on; nothing in particular happens" () .| many #happening (.tag) (.blurb) turned))
       -- Firing an event changes the world, so it goes through a policy too.
       -- If the night reads as ambiguous, nothing in particular happens.
-      case settle routing a (#nothing (\() -> Nothing) .| onMany (\_ h -> Just h)) of
+      case settle lenient a (#nothing (\() -> Nothing) .| #happening (\_ h -> Just h)) of
         Left _ -> next.play t
-        Right Nothing -> next.play t
-        Right (Just h) -> do
-             aside ("happening " <> h.tag <> "; " <> explain routing a)
+        Right (Settled Nothing) -> next.play t
+        Right (Settled (Just h)) -> do
+             aside ("happening " <> h.tag <> "; " <> explain lenient a)
              narrate h.seen
              guard (h.said (headMay t.standing))
              let t' = t { happened = h.tag : t.happened, here = h.apply t.here }
@@ -577,21 +593,46 @@ spoken _ TurnAway = "Not tonight. Move along, and don't let me see you at this g
 spoken _ SendForCaptain = "Guards! Hold this one. Someone fetch the captain."
 
 -- What every call sees: the standing orders, the gate as the guard knows
--- it tonight, the conversation so far, the verdicts already spoken, and
--- whatever the node adds.
-situation :: Traveller -> [(Text, Value)] -> State
-situation t extra = state $ object $
-  [ "standing_orders" .= t.here.edict
-  , "gate" .= object
-      [ "city" .= ("Greyhaven" :: Text)
-      , "roads_in" .= object [Key.fromText k .= d | (k, d) <- t.here.neighbours]
-      , "places" .= object [Key.fromText k .= d | (k, d) <- t.here.places]
-      , "not_allowed_through" .= object [Key.fromText k .= d | (k, d) <- t.here.banned]
-      , "posters" .= object [Key.fromText k .= d | (k, d) <- t.here.posters] ]
-  , "conversation_so_far" .= [object ["guard" .= u.asked, "traveller" .= u.replied, "taken_as" .= u.taken] | u <- reverse t.turns]
-  , "verdicts_so_far" .= map show (reverse t.standing)
-  , "happened_so_far" .= reverse t.happened
-  ] ++ [Key.fromText k .= v | (k, v) <- extra]
+-- it tonight, the conversation so far, and the verdicts already spoken.
+-- The state keeps its Haskell values, so a question built from
+-- @st.gate.posters@ is built from what the provider was shown, and wording
+-- naming a field is checked against the field.
+type Gate = Packet
+  (  "city" ::= Text :& "roads_in" ::= [(Text, Text)] :& "places" ::= [(Text, Text)]
+  :& "not_allowed_through" ::= [(Text, Text)] :& "posters" ::= [(Text, Text)] ) Fields
+
+type Exchanged = Packet ("guard" ::= Text :& "traveller" ::= Text :& "taken_as" ::= Text) Fields
+
+type Standing =
+     "standing_orders" ::= Text
+  :& "gate" ::= Gate
+  :& "conversation_so_far" ::= [Exchanged]
+  :& "verdicts_so_far" ::= [Text]
+  :& "happened_so_far" ::= [Text]
+
+type Situation = State Standing
+type Exchange = State (Standing :& "question" ::= Text :& "reply" ::= Text)
+
+-- The node that hears a reply sends the reply too. A packet is a value and
+-- packets join, so the shared part is written once.
+theGate :: Traveller -> Packet Standing Fields
+theGate t =
+     #standing_orders := t.here.edict
+  :& #gate :=
+      (  #city := ("Greyhaven" :: Text)
+      :& #roads_in := t.here.neighbours
+      :& #places := t.here.places
+      :& #not_allowed_through := t.here.banned
+      :& #posters := t.here.posters )
+  :& #conversation_so_far := [#guard := u.asked :& #traveller := u.replied :& #taken_as := u.heardAs | u <- reverse t.turns]
+  :& #verdicts_so_far := map (T.pack . show) (reverse t.standing)
+  :& #happened_so_far := reverse t.happened
+
+situation :: Traveller -> Situation
+situation t = state (theGate t)
+
+exchange :: Traveller -> Text -> Text -> Exchange
+exchange t line reply = state (theGate t :& #question := line :& #reply := reply)
 
 -- ---------------------------------------------------------------------------
 -- The gate, the transport, and the terminal
@@ -603,11 +644,11 @@ main = getArgs >>= \case
   [] -> do
     hSetBuffering stdout NoBuffering
     calls <- newIORef (0 :: Int, 0 :: Int, 0 :: Int)
-    let node = cata (interpret (counted calls curl)) (gate world)
-    Outcome final taken <- node.play (Traveller [] [] [] [] world)
+    let node = cata (interpret (session (counted calls curl) jevLatest)) (gate world)
+    Outcome final heard <- node.play (Traveller [] [] [] [] world)
     TIO.putStrLn ""
     TIO.putStrLn ("verdict: " <> maybe "none" (T.pack . show) final)
-    mapM_ (\u -> TIO.putStrLn ("  " <> quote u.replied <> " -> " <> u.taken <> " " <> pct u.sureness)) taken
+    mapM_ (\u -> TIO.putStrLn ("  " <> quote u.replied <> " -> " <> u.heardAs <> " " <> pct u.sureness)) heard
     (n, i, o) <- readIORef calls
     TIO.putStrLn ("  " <> T.pack (show n) <> " calls, " <> T.pack (show i) <> " in / " <> T.pack (show o) <> " out tokens")
   _ -> hPutStrLn stderr "usage: jev-dsl-guard [--script]" >> exitFailure
@@ -643,12 +684,12 @@ counted :: IORef (Int, Int, Int) -> Transport -> Transport
 counted ref call body = do
   r <- call body
   case r of
-    Right v -> modifyIORef' ref (\(n, i, o) -> (n + 1, i + field "input_tokens" v, o + field "output_tokens" v))
+    Right v -> modifyIORef' ref (\(n, i, o) -> (n + 1, i + count "input_tokens" v, o + count "output_tokens" v))
     Left _ -> pure ()
   pure r
   where
-    field k (Object m) | Just (Object u) <- KeyMap.lookup "usage" m, Just (Number x) <- KeyMap.lookup (Key.fromText k) u = round x
-    field _ _ = 0
+    count k (Object m) | Just (Object u) <- KeyMap.lookup "usage" m, Just (Number x) <- KeyMap.lookup (Key.fromText k) u = round x
+    count _ _ = 0
 
 -- The transport: scripts/transport.sh holds the key and calls curl.
 curl :: Transport

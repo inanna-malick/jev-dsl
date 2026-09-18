@@ -9,7 +9,7 @@
 -- omitted where the README omits them: inference is the point.
 module Readme where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Jev.Operators
@@ -24,34 +24,34 @@ type Transport = Value -> IO (Either Text Value)
 -- The tiny use: one question, one answer, nothing declared.
 locate :: Transport -> Text -> [Line] -> IO (Either Text Int)
 locate transport source numbered = do
-  answer <- ask1 transport jevLatest (state (String source))
+  let sess = session transport jevLatest
+  answer <- ask1 sess (state (#source := source))
     (choice "Which line begins the retry-timeout branch?"
-       (alt #not_here "No line in this file begins that branch" () .| many (T.pack . show . (.lineNo)) (String . (.lineText)) numbered))
+       (alt #not_here "No line in this file begins that branch" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) numbered))
   pure $ case answer of
     Left err -> Left (T.pack (show err))
-    Right a -> case settle routing a (#not_here (\() -> Nothing) .| onMany (\_ l -> Just l.lineNo)) of
-      Right (Just n) -> Right n
-      Right Nothing -> Left "not in this file"
-      Left _ -> Left (explain routing a)
+    Right a -> case settle lenient a (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
+      Right (Settled (Just n)) -> Right n
+      Right (Settled Nothing) -> Left "not in this file"
+      Left d -> Left d.why
 
 -- A packet: the type is inferred from the questions.
 inspection edges =
      #next     := choice "Which available continuation advances the inquiry?"
                     (  alt #use_witness "The current span already answers the inquiry" (Witness "complete_request:41")
                     .| alt #ask_model "Choosing needs a design preference beyond the supplied evidence" (Handoff "preference")
-                    .| many (.edgeKey) (String . (.edgeText)) edges )
+                    .| many #edges (.edgeKey) (.edgeText) edges )
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
   :& #children := each (.edgeKey) (\e -> noul ("Is " <> e.edgeKey <> " (" <> e.edgeText <> ") relevant to the inquiry?")) edges
-  :& #evidence := (#gap := noul "Does answering require source that was not supplied?" :& Nil)
-  :& Nil
+  :& #evidence := (#gap := noul "Does answering require source that was not supplied?")
 
 -- The same thing, named. Signatures are optional; this one shows what was inferred.
-type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge
+type Routes = "use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: "edges" ::* Edge
 type Inspection = Packet
-  '[ "next" ::= Choice Routes
-   , "enough" ::= Noul
-   , "children" ::= Each Edge Noul
-   , "evidence" ::= Group (Packet '[ "gap" ::= Noul ]) ]
+  (    "next" ::= Choice Routes
+   :&  "enough" ::= Noul
+   :&  "children" ::= Each Edge Noul
+   :&  "evidence" ::= Group (Packet ("gap" ::= Noul)) )
 
 _inspectionTyped :: [Edge] -> Inspection Questions
 _inspectionTyped = inspection
@@ -59,19 +59,21 @@ _inspectionTyped = inspection
 -- Acting on answers: settle a choice, judge a Noul, explain either.
 act :: Inspection Answers -> Text
 act a =
-  case settle spawning a.next
-         (  #use_witness (\(Witness w) -> "located at " <> w)
-         .| #ask_model   (\(Handoff h) -> "hand back: " <> h)
-         .| onMany       (\k _ -> "follow " <> k) ) of
-    Right step -> step <> (if judge routing a.enough == Right True then "; evidence suffices" else "")
-    Left _ -> "stopped: " <> explain spawning a.next
+  -- Handlers are found by label, so the order here need not be the order
+  -- the alternatives were written in.
+  case settle careful a.next
+         (  #edges       (\k _ -> "follow " <> k)
+         .| #use_witness (\(Witness w) -> "located at " <> w)
+         .| #ask_model   (\(Handoff h) -> "hand back: " <> h) ) of
+    Right (Settled step) -> step <> (if judge lenient a.enough == Right (Settled True) then "; evidence suffices" else "")
+    Left d -> "stopped: " <> d.why
 
 -- Reading answers: every answer is a plain record, read by field.
 report :: Inspection Answers -> Text
 report a =
   a.next.key <> " by " <> pct a.next.margin
-    <> ", relevant: " <> T.intercalate ", " [e.edgeKey | (e, n) <- a.children, judge routing n == Right True]
-    <> (if judge routing a.evidence.gap == Right True then ", source missing" else "")
+    <> ", relevant: " <> T.intercalate ", " [e.edgeKey | (e, n) <- a.children, judge lenient n == Right (Settled True)]
+    <> (if judge lenient a.evidence.gap == Right (Settled True) then ", source missing" else "")
   where pct x = T.pack (show (round (x * 100) :: Int)) <> "%"
 
 -- A rubric is graded, not read off: the result is the level, written
@@ -80,7 +82,8 @@ data Urgency = Background | AtCheckpoint | Now deriving (Show, Eq)
 
 urgency :: Transport -> Text -> IO (Either Text Urgency)
 urgency transport situation = do
-  answer <- ask1 transport jevLatest (state (String situation))
+  let sess = session transport jevLatest
+  answer <- ask1 sess (state (#situation := situation))
     (score "What is the consequence of waiting?"
        (  level #background "No current action depends on this" Background
        .| level #checkpoint "Useful at the next ordinary checkpoint" AtCheckpoint
@@ -91,7 +94,56 @@ urgency transport situation = do
 
 -- The same handlers on every contender above a floor.
 routes :: Handlers Text Routes
-routes = #use_witness (const "witness") .| #ask_model (const "model") .| onMany (\k _ -> k)
+routes = #use_witness (const "witness") .| #ask_model (const "model") .| #edges (\k _ -> k)
 
 alive :: Inspection Answers -> [Text]
 alive a = map snd (contenders 0.25 a.next routes)
+
+-- A verdict carries the policy that reached it, so the step that cannot be
+-- taken back can demand one and nothing weaker will typecheck.
+newtype Patch = Patch Text
+newtype Receipt = Receipt Text
+
+merge :: Settled Strict Patch -> IO Receipt
+merge (Settled (Patch p)) = pure (Receipt p)
+
+-- The state is written once, keeps its Haskell types, and is what the
+-- questions draw their rows and their field names from.
+data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
+data Check = Check { checkKey :: Text, checkText :: Text }
+
+instance Field Value [Diagnostic] where
+  toField ds = toField [(d.diagnosticKey, d.diagnosticText) | d <- ds]
+instance Field Value [Check] where
+  toField cs = toField [(c.checkKey, c.checkText) | c <- cs]
+
+triage failure diagnosticRows checkRows = (world, questions)
+  where
+    world = state
+      (  #failure := (failure :: Text)
+      :& #diagnostics := [Diagnostic k t | (k, t) <- diagnosticRows]
+      :& #checks := [Check k t | (k, t) <- checkRows] )
+    questions =
+         #verify := choice "Which available check most directly verifies a fix?"
+                      (many #checks (.checkKey) (.checkText) world.checks
+                       .| alt #defer "No listed check is a direct verification" ())
+      :& #relevant := each (.checkKey) (\c -> noul ("Does the check `" <> c.checkKey <> "` exercise the code path " <> field #failure world <> " names?")) world.checks
+      :& #sufficient := noul ("Do " <> field #diagnostics world <> " alone establish the mechanism of " <> field #failure world <> "?")
+
+-- A shared set of questions is an ordinary value, because packets compose.
+common :: Packet ("enough" ::= Noul) Questions
+common = #enough := noul "Does the supplied evidence answer the inquiry?"
+
+withCommon :: Packet ("enough" ::= Noul :& "gap" ::= Noul) Questions
+withCommon = common :& #gap := noul "Does answering require source that was not supplied?"
+
+-- Sorting free-form input into branches the program wrote: the answer is
+-- the dispatch, because each branch carries what to do next.
+data Account = Account { accountId :: Text, accountSummary :: Text }
+
+sortReply :: Text -> Text -> [Account] -> Offers ("refund" ::> Text :|: "status" ::> Text :|: "other" ::> Text :|: "accounts" ::* Account)
+sortReply refundFlow statusFlow knownAccounts =
+     alt #refund "Asks for money back, in any words" refundFlow
+  .| alt #status "Asks where an existing order is" statusFlow
+  .| alt #other  "Anything the two above do not cover" "hand back"
+  .| many #accounts (.accountId) (.accountSummary) knownAccounts

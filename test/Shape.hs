@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 -- | Build an 'Exact' schema from any captured request, so every recorded
 -- success can be re-rendered and decoded generically. Questions whose typed
 -- form the replay module does not admit (an unknown Noul criteria member, an
@@ -11,12 +13,12 @@ import Data.Aeson (Value (..))
 import Data.Text (Text)
 import Fixtures
 import qualified Jev.Core as Core
-import Jev.Operators
+import Jev.Operators hiding (alt, level, many)
 import Replay
 
 data Shaped = Shaped
   { shapedModel :: Model
-  , shapedState :: State
+  , shapedState :: State ()
   , shapedQuestions :: Exact Questions
   , shapedRawCount :: Int
   }
@@ -24,7 +26,7 @@ data Shaped = Shaped
 shapeRequest :: Value -> Shaped
 shapeRequest req =
   let qs = [(k, shapeQuestion q) | (k, q) <- requestQuestions req]
-  in Shaped (Core.Model (requestModel req)) (state (requestState req)) (exact [(k, q) | (k, (q, _)) <- qs]) (length [() | (_, (_, True)) <- qs])
+  in Shaped (Core.Model (requestModel req)) (rawState (requestState req)) (exact [(k, q) | (k, (q, _)) <- qs]) (length [() | (_, (_, True)) <- qs])
 
 presence :: Text -> Value -> Presence Value
 presence k q = maybe Omitted Present (lookup k (objectPairs q))
@@ -46,7 +48,7 @@ shapeQuestion q
           (someQ (noulWith (instructionsOf q) (Present (Just (Criteria (presence "true" c) (presence "false" c))))), False)
     _ -> raw
   Just (String "choice") -> case lookup "criteria" (objectPairs q) of
-    Just c@(Object _) -> (someQ (choiceWith @(Many (Text, Value)) (instructionsOf q) (many fst snd (objectPairs c))), False)
+    Just c@(Object _) -> (someQ (choiceWith @("row" ::* (Text, Value)) (instructionsOf q) (many #row fst snd (objectPairs c))), False)
     _ -> raw
   Just (String "score") -> case lookup "criteria" (objectPairs q) of
     Just (Array ls) -> (someQ (scale (instructionsOf q) (foldr (:) [] ls)), False)

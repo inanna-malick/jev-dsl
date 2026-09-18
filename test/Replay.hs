@@ -22,6 +22,12 @@ module Replay
   , Exact, exact, exactAnswers, SomeQ (..), SomeA (..), someQ
   , noulWith, choiceWith, scoreWith
   , Instructions, Presence (..), Criteria (..), question
+    -- * Core's raw, unwrapped builders: wording is @v@, not 'Text', and a
+    -- state sent exactly as given. For the wire shapes the authoring
+    -- surface leaves out; "Jev.Operators" has its own 'Jev.Operators.alt',
+    -- 'Jev.Operators.many' and 'Jev.Operators.level' that wrap wording in
+    -- 'Text', so a module wanting these instead hides those three.
+  , alt, many, level, rawState
   ) where
 
 import Data.Aeson (Value)

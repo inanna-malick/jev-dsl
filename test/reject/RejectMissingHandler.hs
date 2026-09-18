@@ -5,10 +5,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
--- expect: #rerun stands alone where the disjunction continues; chain handlers with .|
+-- expect: no handler for #ask_model
 module RejectMissingHandler where
 
-import Data.Aeson (Value (..))
 import Jev.Operators
 
 -- Every alternative needs a handler; a lone handler cannot stand for two.

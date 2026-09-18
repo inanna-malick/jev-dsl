@@ -18,7 +18,7 @@
 module Main (main) where
 
 import qualified Data.Aeson as Aeson
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString.Lazy as BL
 import Data.String (fromString)
@@ -35,21 +35,32 @@ import System.IO (hPutStrLn, stderr)
 -- The packet: a failing check, triaged in one call
 -- ---------------------------------------------------------------------------
 
--- Local payloads. None of these are serialized; the model sees wording.
+-- The rows the state carries and the questions offer. A row renders as the
+-- provider sees it and stays a Haskell value for the program.
 data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
 data Check = Check { checkKey :: Text, checkText :: Text }
 newtype Handoff = Handoff Text
 
+-- A row renders as the provider reads it: the whole list is one object
+-- keyed the way the questions key their candidates.
+instance Field Value [Diagnostic] where
+  toField ds = object [Key.fromText d.diagnosticKey .= d.diagnosticText | d <- ds]
+instance Field Value [Check] where
+  toField cs = object [Key.fromText c.checkKey .= c.checkText | c <- cs]
+
 type Next = "rerun" ::> () :|: "read_source" ::> Text :|: "ask_model" ::> Handoff
 
 type Triage = Packet
-  '[ "explains" ::= Choice ("no_match" ::> () :|: Many Diagnostic)
-   , "next" ::= Choice Next
-   , "verify" ::= Choice (Many Check :|: "defer" ::> ())
-   , "relevant" ::= Each Check Noul
-   , "sufficient" ::= Noul
-   , "breadth" ::= Score Text ("localized" :|: "adjacent" :|: "contract")
-   ]
+  (    "explains" ::= Choice ("no_match" ::> () :|: "diagnostics" ::* Diagnostic)
+   :&  "next" ::= Choice Next
+   :&  "verify" ::= Choice ("checks" ::* Check :|: "defer" ::> ())
+   :&  "relevant" ::= Each Check Noul
+   :&  "sufficient" ::= Noul
+   :&  "breadth" ::= Score Text ("localized" :|: "adjacent" :|: "contract") )
+
+-- The state's fields keep their Haskell types, so the rows a question is
+-- built from are the rows the provider was shown.
+type World = State ("failure" ::= Text :& "diagnostics" ::= [Diagnostic] :& "checks" ::= [Check])
 
 data Inputs = Inputs
   { failure :: Text
@@ -58,34 +69,30 @@ data Inputs = Inputs
   , model :: Text
   }
 
-triage :: Inputs -> (State, Triage Questions)
+triage :: Inputs -> (World, Triage Questions)
 triage inputs = (world, questions)
   where
-    world = state (object
-      [ "failure" .= inputs.failure
-      , "diagnostics" .= object [Key.fromText k .= t | (k, t) <- inputs.diagnosticLines]
-      , "checks" .= object [Key.fromText k .= t | (k, t) <- inputs.checks]
-      ])
-    diagnostics' = [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
-    available = [Check k t | (k, t) <- inputs.checks]
+    world = state
+      (  #failure := inputs.failure
+      :& #diagnostics := [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+      :& #checks := [Check k t | (k, t) <- inputs.checks] )
     questions =
          #explains := choice "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"
-                        (alt #no_match "No listed diagnostic explains the failure" () .| many (.diagnosticKey) (String . (.diagnosticText)) diagnostics')
+                        (alt #no_match "No listed diagnostic explains the failure" () .| many #diagnostics (.diagnosticKey) (.diagnosticText) world.diagnostics)
       :& #next := choice "What is the most useful next step given only the supplied evidence?"
                     (  alt #rerun "Rerun the single most relevant check to confirm the failure is stable" ()
                     .| alt #read_source "Read the source at the location the explaining diagnostic names" "read"
                     .| alt #ask_model "Deciding needs judgment beyond the supplied diagnostics and checks" (Handoff "needs judgment") )
       :& #verify := choice "Which available check most directly verifies a fix for the explaining diagnostic?"
-                      (many (.checkKey) (String . (.checkText)) available .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
-      :& #relevant := each (.checkKey) (\c -> noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path `failure` names?")) available
-      :& #sufficient := noul "Do `diagnostics` alone establish the mechanism of `failure`?"
+                      (many #checks (.checkKey) (.checkText) world.checks .| alt #defer "No listed check is a direct verification; choosing needs a design preference" ())
+      :& #relevant := each (.checkKey) (\c -> noul ("Does the check `" <> c.checkKey <> "` (" <> c.checkText <> ") exercise the code path " <> field #failure world <> " names?")) world.checks
+      :& #sufficient := noul ("Do " <> field #diagnostics world <> " alone establish the mechanism of " <> field #failure world <> "?")
       -- Each level carries the line the report prints for it, so what the
       -- provider is shown and what the program does sit on the same line.
       :& #breadth := score "How broadly would fixing the explaining diagnostic alter established behavior?"
                        (  level #localized "Localized to the failing check" "localized to the failing check"
                        .| level #adjacent "May affect adjacent callers of the same code" "may affect adjacent callers"
                        .| level #contract "Crosses a contract other components rely on" "crosses a contract others rely on" )
-      :& Nil
 
 -- ---------------------------------------------------------------------------
 -- Command line
@@ -139,25 +146,25 @@ report r = do
   mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics r)
   -- Each choice is settled under a policy: a result only through a handler
   -- per alternative, or a doubt with the numbers behind it.
-  line "explains" (explain routing r.explains) $ settle routing r.explains
+  line "explains" (explain lenient r.explains) $ settle lenient r.explains
     (  #no_match (\() -> "<no listed diagnostic>")
-    .| onMany (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") )
-  line "next" (explain spawning r.next) $ settle spawning r.next
+    .| #diagnostics (\_ d -> d.diagnosticKey <> "  \"" <> d.diagnosticText <> "\"") )
+  line "next" (explain careful r.next) $ settle careful r.next
     (  #rerun (\() -> "rerun the most relevant check")
     .| #read_source (\what -> what <> " the implicated source")
     .| #ask_model (\(Handoff why) -> "hand back to the model (" <> why <> ")") )
-  line "verify" (explain spawning r.verify) $ settle spawning r.verify
-    (onMany (\_ c -> "run " <> c.checkKey) .| #defer (\() -> "<defer to the model>"))
+  line "verify" (explain careful r.verify) $ settle careful r.verify
+    (#checks (\_ c -> "run " <> c.checkKey) .| #defer (\() -> "<defer to the model>"))
   -- Nouls are judged under the same policies.
-  TIO.putStrLn ("relevant: " <> T.intercalate ", " [c.checkKey <> "=" <> verdict (judge routing n) | (c, n) <- r.relevant])
-  line "sufficient" (explain merging r.sufficient) $ fmap (\b -> if b then "yes" else "no") (judge merging r.sufficient)
+  TIO.putStrLn ("relevant: " <> T.intercalate ", " [c.checkKey <> "=" <> verdict (judge lenient n) | (c, n) <- r.relevant])
+  line "sufficient" (explain strict r.sufficient) $ fmap (fmap (\b -> if b then "yes" else "no")) (judge strict r.sufficient)
   -- A rubric is graded, not read off: the level half the weight reaches,
   -- and the line it carries is the one written beside its wording.
   TIO.putStrLn ("breadth: " <> grade 0.5 r.breadth
     <> "\n  expectation " <> showT r.breadth.expectation
     <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent r.breadth))
   where
-    line name why outcome = TIO.putStrLn (name <> ": " <> either (const "doubted") id outcome <> "\n  " <> why)
-    verdict = either (const "?") (\b -> if b then "yes" else "no")
+    line name why outcome = TIO.putStrLn (name <> ": " <> either (.why) (\(Settled t) -> t) outcome <> "\n  " <> why)
+    verdict = either (const "?") (\(Settled b) -> if b then "yes" else "no")
     showT :: Show x => x -> Text
     showT = T.pack . show

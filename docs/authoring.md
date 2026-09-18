@@ -10,10 +10,10 @@ Import `Jev.Operators` with `DataKinds`, `OverloadedLabels`,
 `OverloadedRecordDot`, `OverloadedStrings`, and `TypeOperators`. That is the
 whole surface; `Jev.Core` exists only to build a facade over another JSON
 type. The JSON type here is aeson's `Value`, and it appears in your code
-only where you build a state or structured wording by hand. A bare string
-literal in wording position is wording: `alt #rerun "Rerun the focused
-check" c` sends the string. Structured wording is any `Value` the provider
-admits: an object, an array, or `Null`.
+only where you write a `Field Value a` instance for a state field's own
+type, or reach for `rawState`. Wording is plain `Text` everywhere it is
+written — `alt`, `many`, `level`, `noul`, `choice`, `score` all take it with
+no wrapper: `alt #rerun "Rerun the focused check" c` sends the string.
 
 ## The three questions
 
@@ -28,19 +28,23 @@ answer is a distribution over the levels and its expectation.
 ## One question
 
 ```haskell
-answer <- ask1 transport jevLatest (state source)
+sess = session transport jevLatest
+answer <- ask1 sess (state (#source := source))
   (choice "Which line begins the retry-timeout branch?"
-     (alt #not_here "The branch is not in this file" () .| many (T.pack . show . (.lineNo)) (String . (.lineText)) lines))
+     (alt #not_here "The branch is not in this file" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) lines))
 case answer of
-  Right a -> settle routing a (#not_here (\() -> handBack) .| onMany (\_ l -> editAt l.lineNo l.revision))
+  Right a -> case settle lenient a (#not_here (\() -> handBack) .| #lines (\_ l -> editAt l.lineNo l.revision)) of
+    Right (Settled result) -> result
+    Left d -> stop d.why
   Left err -> ...
 ```
 
 `ask1` is a whole packet with one question under the label `value`.
-`transport :: Value -> m (Either Text Value)` is anything that posts JSON
-and hands the body back. The alternative type was inferred from the offer:
-`"not_here" ::> () :|: Many Line`. The payload is what the program acts on;
-the model only ever sees the wording.
+`session transport jevLatest` is the session `ask1` takes; `transport ::
+Value -> m (Either Text Value)` is anything that posts JSON and hands the
+body back. The alternative type was inferred from the offer: `"not_here"
+::> () :|: "lines" ::* Line`. The payload is what the program acts on; the
+model only ever sees the wording.
 
 ## Packets
 
@@ -49,12 +53,17 @@ packet =
      #next     := choice "Which continuation advances the inquiry?" offers
   :& #enough   := noul "Does the supplied evidence answer the inquiry?"
   :& #urgency  := score "What is the consequence of waiting?" urgency
-  :& #children := each (.key) (\e -> #useful := noul ("Is " <> e.key <> " (" <> e.text <> ") relevant?") :& Nil) edges
-  :& #evidence := (#gap := noul "Is source missing?" :& Nil)
-  :& Nil
+  :& #children := each (.key) (\e -> noul ("Is " <> e.key <> " (" <> e.text <> ") relevant?")) edges
+  :& #evidence := (#gap := noul "Is source missing?")
 ```
 
-A cell holds a question or a nested packet. Under a `let` in a session,
+A cell holds a question or a nested packet, and a cell is already a packet
+of one, so two of them join with the same `:&` and nothing terminates the
+list — there is no `Nil`. That also makes a shared set of questions an
+ordinary value: `common :& #next := choice …` sends both. A packet's *type*
+is written the same way its value is, a chain rather than a list:
+`Packet ("next" ::= Choice Alts :& "enough" ::= Noul)`; nobody writes this
+by hand, but a helper's signature can name it. Under a `let` in a session,
 keep `:&` at the start of each continuation line and indent every line past
 the first, as above; a `:&` left at the end of a line, or a continuation
 line starting in the same column as the binding, ends the expression early.
@@ -62,7 +71,7 @@ Labels are the wire keys; nested packets flatten to dotted paths with dots
 in keys escaped, so a label may be anything. A duplicate label is a compile
 error naming it.
 
-`ask transport model state packet` returns a `Response`. It has no record
+`ask sess state packet` returns a `Response`. It has no record
 fields of its own: `answers`, `usage`, `resolvedModel` and `diagnostics` are
 plain functions over it, and a response reads by its packet's own labels
 directly, with no need to project out the packet first: `r.next`,
@@ -75,6 +84,54 @@ labels it has. `usage` is a `Usage { inputTokens, outputTokens }`;
 `diagnostics` is a list of log lines, such as a distribution that did not
 sum to one.
 
+## State
+
+`state` takes a field packet, written the same way a question packet is,
+and keeps each field's own Haskell type:
+
+```haskell
+world = state
+  (  #failure := inputs.failure
+  :& #diagnostics := [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+  :& #checks := [Check k t | (k, t) <- inputs.checks] )
+```
+
+A field may be `Text`, `Bool`, `Int`, `Double`, a list, a list of
+`(Text, a)` (renders as an object), a `Maybe`, a nested state packet, a raw
+`Value`, or any type with a `Field Value a` instance you write. A list of a
+row type of your own needs the instance on the list itself:
+
+```haskell
+instance Field Value [Diagnostic] where
+  toField ds = object [Key.fromText d.diagnosticKey .= d.diagnosticText | d <- ds]
+```
+
+Read a field back with record dot — `world.checks :: [Check]`, nested as
+`world.gate.posters` — and build the rows a `many` or `each` offers from
+the state itself, so the rows the program acts on are the rows the
+provider was shown:
+
+```haskell
+many #checks (.checkKey) (.checkText) world.checks
+```
+
+Wording that names a field goes through `field`, not a string that happens
+to match:
+
+```haskell
+noul ("Do " <> field #diagnostics world <> " alone establish the mechanism of " <> field #failure world <> "?")
+```
+
+`field #k st` renders the key in backticks the way the provider reads it —
+`` `diagnostics` `` — and a name the state does not have is a compile
+error listing the names it does. Nested states read back with record dot
+(`world.gate.posters`); only a top-level name can be checked with `field`
+so far.
+
+For a state shape the surface leaves out — a bare string, say — `Jev.Core`
+still has `rawState :: v -> State v ()`, whose fields cannot be named by
+`field` or record dot. Reach for it only when nothing above fits.
+
 ## Acting on answers
 
 Every answer is consumed under a policy. A policy is three floors, and
@@ -82,37 +139,52 @@ three are named for how bad it is to be wrong:
 
 | Policy | For | mass | margin | confidence |
 |---|---|---|---|---|
-| `routing` | read-only choices: which file, which skill | 0.40 | 0.08 | 0.50 |
-| `spawning` | starting a worker, choosing an approach | 0.55 | 0.20 | 0.70 |
-| `merging` | merging, stopping, anything with a receipt | 0.70 | 0.40 | 0.85 |
+| `lenient` | read-only choices: which file, which skill | 0.40 | 0.08 | 0.50 |
+| `careful` | starting a worker, or choosing an approach | 0.55 | 0.20 | 0.70 |
+| `strict` | merging, stopping, anything with a receipt | 0.70 | 0.40 | 0.85 |
 
-`settle policy answer handlers` consumes a choice. It
-returns either the result of the handler for the alternative that won, or a
-`Doubt`: `NearTie`, `Underweight`, or `Unconfident`.
+`settle policy answer handlers` consumes a choice, returning
+`Either Doubt (Settled p r)`: `Right (Settled r)` through the handler for
+the alternative that won, or `Left` a `Doubt`.
 
 ```haskell
-case settle spawning a.next
+case settle careful a.next
        (  #rerun (\c -> run c)
        .| #ask_model (\h -> handBack h)
-       .| onMany (\_ e -> follow e) ) of
-  Right action -> action
-  Left doubt -> stop (explain spawning a.next) doubt
+       .| #edges (\_ e -> follow e) ) of
+  Right (Settled action) -> action
+  Left d -> stop d.why
 ```
 
-There is no way to reach a result without a handler for every alternative.
-That matters more than it looks: a confident answer that means "none of
-these" or "the evidence is missing" runs its own handler, and cannot be
-mistaken for approval by a caller that only checked for success.
+There is no way to reach a result without a handler for every alternative,
+including a runtime group, which is handled through its own label like any
+other. That matters more than it looks: a confident answer that means
+"none of these" or "the evidence is missing" runs its own handler, and
+cannot be mistaken for approval by a caller that only checked for success.
 
-`judge policy answer` does the same for a Noul, returning `Right True`,
-`Right False`, or a `Doubt`. A Noul weighs yes against no, so the same
-three policies apply; there is no confidence on the wire for a Noul, so
-that floor is not consulted.
+The verdict carries the policy that reached it, so a function that must not
+be handed a lightly-settled answer can demand one in its own signature:
+
+```haskell
+merge :: Settled Strict Patch -> IO ()     -- a careful verdict will not typecheck here
+```
+
+`Doubt` is a record, `Doubt { cause :: Cause, why :: Text }`, where `Cause`
+is `NearTie`, `Underweight`, or `Unconfident`. `why` is the same line
+`explain` prints for a doubt, so a doubt branch does not need to call
+`explain` again — read it straight off: `Left d -> stop d.why`. Matching on
+the reason itself reads `Left Doubt { cause = NearTie {} } -> ...`.
+
+`judge policy answer` does the same for a Noul: `Either Doubt (Settled p
+Bool)`, so `Right (Settled True)`, `Right (Settled False)`, or `Left`
+a `Doubt`. A Noul weighs yes against no, so the same three policies apply;
+there is no confidence on the wire for a Noul, so that floor is not
+consulted.
 
 `explain policy answer` says in one line which check settled or doubted the
-answer and the numbers behind it. It works on a choice or a Noul. This is
-the line a log, a notification, or a planner reads, and it is usually worth
-recording next to whatever the program did.
+answer and the numbers behind it, on a *settled* answer — a `Chosen` or a
+`Yes`, not a verdict. It works on a choice or a Noul, and it is usually
+worth recording next to whatever the program did.
 
 ```
 settled on rerun: confidence 0.72 ≥ 0.70, mass 0.82 ≥ 0.55, margin 0.65 ≥ 0.20
@@ -126,6 +198,12 @@ alternative at or above a mass floor, best first, each already through those
 handlers. All three take the answer and the branches, so there is nothing to
 thread between them, and a handler list is an ordinary value you bind once
 and use on the winner and on every contender.
+
+When every alternative carries the same type — the usual case when the
+payload is what to do next — there is no handler list to write at all:
+`taken answer` reads out the winner's payload directly. Having every
+alternative is exhaustiveness by construction, so nothing is left to
+dispatch on.
 
 The rest of an answer is fields, read with record dot:
 
@@ -153,11 +231,13 @@ play, usually a sign the alternatives were not really rivals.
 
 Record dot needs the field selectors in scope, so importing `Jev.Operators`
 unqualified takes some short names for itself. The fields: `key`, `mass`,
-`margin`, `confidence`, `masses`, `yes`, `expectation`. The
-verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `settle`,
-`judge`, `grade`, `handle`, `explain`. Under `-Wall` a local binding with any of
-these names shadows; name your own `tag`, `weight`, `askLine`, or import
-qualified.
+`margin`, `confidence`, `masses`, `yes`, `expectation`, `cause`, `why`. The
+verbs: `ask`, `ask1`, `alt`, `many`, `level`, `each`, `state`, `field`,
+`session`, `settle`, `judge`, `grade`, `handle`, `explain`, `taken`,
+`offered`, `uniform`, `lenient`, `careful`, `strict`. Under `-Wall` a local
+binding with any of these names shadows; name your own `tag`, `weight`,
+`askLine`, or import qualified. `field` and `taken` are the likeliest
+collisions — a record of your own is likely to want either name.
 
 ## Writing questions
 
@@ -191,24 +271,36 @@ the provider, and its payload for the program:
 ```haskell
 offers = alt #use_witness "The current span already answers the inquiry" (Witness "complete_request:41")
       .| alt #ask_model "Choosing needs a design preference beyond the evidence" (Handoff "preference")
-      .| many (.edgeKey) (String . (.edgeText)) edges
+      .| many #edges (.edgeKey) (.edgeText) edges
 ```
 
-`many key wording rows` is a runtime group: a wire key and a wording per
-row, and the row itself is the payload the handler receives. Use it for
-candidates computed at runtime: lines, edges, hypotheses, table rows. There
-is nothing to dereference afterwards, because the handler already has the
-row.
+`many label key wording rows` is a runtime group: a label, then a wire key
+and a wording per row, and the row itself is the payload the handler
+receives. Use it for candidates computed at runtime: lines, edges,
+hypotheses, table rows. There is nothing to dereference afterwards, because
+the handler already has the row.
 
-The chain's type is `"use_witness" ::> Witness :|: "ask_model" ::> Handoff :|: Many Edge`.
-Give it a name when a helper wants to mention it in a signature; never for
-the compiler's sake. `Handles hs alts` bundles the constraints `settle`,
-`handle` and `contenders` need between a handler list and the alternatives
-it answers, for a helper that wants to take either as a parameter.
+The chain's type is `"use_witness" ::> Witness :|: "ask_model" ::> Handoff
+:|: "edges" ::* Edge`. Give it a name when a helper wants to mention it in
+a signature; never for the compiler's sake. `Handles hs alts` bundles the
+constraints `settle`, `handle` and `contenders` need between a handler list
+and the alternatives it answers, for a helper that wants to take either as
+a parameter.
 
-Handlers follow declaration order. A label out of order, a handler missing
-or extra, a label where `Many` stands, or parentheses inside a chain each
-produce a compile error that says which label was expected.
+Handlers are found by their label, not by position, so they may be written
+in any order and a group is handled through its label exactly as any other
+alternative is — `onMany` is gone:
+
+```haskell
+settle careful a.next
+  (  #edges       (\k _ -> "follow " <> k)
+  .| #use_witness (\(Witness w) -> "located at " <> w)
+  .| #ask_model   (\(Handoff h) -> "hand back: " <> h) )
+```
+
+Adding an alternative in the middle of a chain breaks nothing that already
+handles the others by label. A missing handler, an extra one, or a
+duplicate is a compile error naming the label.
 
 ## Rubrics
 
@@ -276,7 +368,7 @@ question waves through.
 ## What is checked where
 
 At compile time: label uniqueness and presence, handler lists against
-alternatives, rubric label uniqueness, cell contents.
+alternatives, rubric label uniqueness, cell contents, state field names.
 
 When the request is built, with a named `PrepError` inside `JevError`:
 empty offers, duplicate or colliding runtime keys, wording and state shapes
@@ -299,6 +391,9 @@ replay module renders them so recorded exchanges still round-trip.
   produce.
 - The provider's distinction between an omitted and a null criteria block
   or instruction.
+- Structured, non-`Text` wording: an object, array, or `Null` sent where a
+  question or an alternative's wording goes. `Jev.Core` still carries it,
+  and `test/Replay.hs` renders it for the recorded exchanges that need it.
 
 Each returns when a program in `test/Corpus.hs` needs it.
 
@@ -307,9 +402,16 @@ Each returns when a program in `test/Corpus.hs` needs it.
 Each of these is used in `examples/Guard.hs`, a dialogue tree folded by a
 catamorphism whose algebra is Jev.
 
-- **The continuation is the payload.** When the program's next step depends
-  on the branch, offer the branches with their continuations as payloads
-  and let the handler run the winner. No dispatch table.
+- **The continuation is the payload.** When every branch carries the same
+  type — usually the next step to take — offer them with their
+  continuations as payloads and read the winner with `taken`, which needs
+  no handler list at all. No dispatch table.
+- **`Uniform` is for a node type that is itself a functor over such
+  payloads.** `examples/Guard.hs`'s `GuardF` holds its branches in
+  `Uniform Value r`; `uniform` builds one from a chain of alternatives,
+  `mapUniform` is its `fmap`, and `mapCarried`/`carriedRows` reach the
+  wording and the children underneath when a fold needs to see them
+  directly, as `render` and `branches` do there.
 - **A choice picks one; a Noul each says how many.** A choice's
   distribution is uncertainty about which single alternative fits, not
   evidence that several apply. When things can be true at the same time,
@@ -327,7 +429,7 @@ catamorphism whose algebra is Jev.
   does.
 - **Two questions, one call, reconciled in code.** A branch choice and a
   Noul such as "does this reply admit to something the rules forbid" go in
-  the same packet; the program takes the Noul's route when `judge merging`
+  the same packet; the program takes the Noul's route when `judge careful`
   says yes and the chosen branch otherwise. Give the Noul a route only
   where there is somewhere to send the case; a tripwire with nowhere to go
   steals branches that mean something.

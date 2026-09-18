@@ -13,4 +13,4 @@ import Jev.Operators
 
 -- Two alternatives with one label would share one wire key.
 bad :: Q Value (Choice ("rerun" ::> () :|: "rerun" ::> ()))
-bad = choice "?" (alt #rerun Null () .| alt #rerun Null ())
+bad = choice "?" (alt #rerun "a" () .| alt #rerun "b" ())

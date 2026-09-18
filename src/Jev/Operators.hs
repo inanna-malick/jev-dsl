@@ -17,108 +17,132 @@
 
 -- | The authoring surface, over aeson's 'Value'. One import.
 --
--- A packet is written once from its questions and its type is inferred:
+-- A packet is written once from its questions and its type is inferred. A
+-- cell is a packet of one and two packets join, so there is nothing to
+-- terminate and a shared set of questions is an ordinary value:
 --
--- > r <- ask transport jevLatest world
+-- > r <- ask sess world
 -- >    ( #next    := choice "Most useful next step?"
--- >                    (alt #rerun "Rerun the focused check" c .| alt #ask_model "Needs judgment" h .| many edgeKey edgeText edges)
+-- >                    (alt #rerun "Rerun the focused check" c .| alt #ask_model "Needs judgment" h .| many #edges edgeKey edgeText edges)
 -- >   :& #enough  := noul "Do the diagnostics establish the mechanism?"
--- >   :& #breadth := score "How far would the fix reach?" (level #local "One check" here .| level #wide "Other callers" there)
--- >   :& Nil )
+-- >   :& #breadth := score "How far would the fix reach?" (level #local "One check" here .| level #wide "Other callers" there) )
 --
 -- The response reads by the same labels, and a policy turns an answer into
--- an action or a doubt:
+-- a verdict or a doubt:
 --
--- > settle spawning r.next (#rerun (\c -> …) .| #ask_model (\h -> …) .| onMany (\k e -> …))
--- > judge merging r.enough
+-- > settle careful r.next (#rerun (\c -> …) .| #ask_model (\h -> …) .| #edges (\k e -> …))
+-- > judge strict r.enough
 -- > grade 0.5 r.breadth            -- the result written beside the level's wording
--- > explain spawning r.next        -- the line a log or a planner reads
+-- > explain careful r.next         -- the line a log or a planner reads
 -- > r.next.key, r.next.margin, r.enough.yes
 --
--- Labels are wire ids verbatim. Duplicate labels, a missing label on
--- access, and a handler list that does not match its alternatives are
--- compile errors in these words. Wording, runtime candidates and level
+-- Handlers are matched by label, so they may be written in any order and
+-- an alternative added in the middle breaks nothing. Labels are wire ids
+-- verbatim. A duplicate label, a missing label on access, a missing or
+-- extra handler, and a state field that wording names but the state lacks
+-- are compile errors in these words. Wording, runtime candidates and level
 -- counts are checked when the request is built.
 --
--- No network: 'ask' and 'ask1' take a transport. 'request' and 'decode'
+-- No network: 'ask' and 'ask1' take a 'Session'. 'request' and 'decode'
 -- are the same operation split, for recording and replay.
 module Jev.Operators
   ( -- * Packets
-    Cell ((:=)), Packet ((:&), Nil)
+    Packet ((:=), (:&))
     -- * Questions
   , noul, choice, score, each
     -- * Alternatives
-  , alt, many, (.|), onMany
+  , alt, many, (.|), offered
     -- * Rubrics
   , level, massAtOrAbove
+    -- * State
+  , state, field, State, Field (toField)
     -- * Answers, as fields: @a.next.key@, @a.enough.yes@. The fields are
     -- all there is: an answer cannot be built or matched, and what it
-    -- decides is reached through 'settle', 'judge' and 'grade'.
+    -- decides is reached through 'settle', 'judge', 'grade' and 'taken'.
   , Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Acting on answers
-  , settle, judge, grade, explain, handle, contenders
-  , Policy (..), routing, spawning, merging, Doubt (..), Weighed
+  , settle, judge, grade, explain, handle, contenders, taken
+  , Policy (..), lenient, careful, strict, Lenient, Careful, Strict
+  , Settled (..), Doubt (..), Cause (..), Weighed
+    -- * Uniform payloads: the continuation is the payload
+  , Carries (mapCarried, carriedRows), Retarget, Uniform (..), uniform, mapUniform
     -- * Asking
-  , ask, ask1, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics
+  , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics
   , JevError (..), PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..)
     -- * Recording and replay: the same operation split
   , request, decode
     -- * Types, for signatures only
-  , type (::=), type (::>), type (:|:), Many, Offers, Handlers, Handles, Rubric
+  , type (::=), type (:&), type (::>), type (::*), type (:|:), Offers, Handlers, Handles, Rubric
   , Noul, Choice, Score, Each, Group
-  , Q, Questions, Answers, type (:-), State, state, Model, Response
-  , Schema
+  , Q, Questions, Answers, Fields, type (:-), Model, Response
+  , Schema, Unique, Label
   ) where
 
-import Data.Aeson (Value, ToJSON (..))
+import Data.Aeson (Value (String), ToJSON (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
-  ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, Handles, JevError (..), Label, Many, Model, Noul, Weighed
-  , Packet (..), Cell (..), PrepError (..), Q, Score, type (:-), type (::=), type (::>), type (:|:), Policy (..)
+  ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
+  , Alternatives, Carries (mapCarried, carriedRows), Cause (..), Choice, DecodeError (..), Doubt (..), Each, Field, Group
+  , Handles, JevError (..), Label, Lenient, Careful, Strict, Model, Noul, Packet (..), Retarget, Schema, Settled (..)
+  , Uniform (..), uniform, mapUniform
+  , PrepError (..), Q, Score, Unique, Weighed, type (:-), type (::=), type (:&), type (::>), type (::*), type (:|:), Policy (..)
   , Rejection (..), ValidationIssue (..)
   )
 
 type Questions = Core.Questions Value
 type Answers = Core.Answers Value
-type State = Core.State Value
-type Response = Core.Response Value
+type Fields = Core.Fields Value
+type State t = Core.State Value t
+type Response s = Core.Response Value s
+type Session m = Core.Session m Value
 
--- | Offers for a disjunction: @alt #k wording payload .| many key wording rows@.
+-- | Offers for a disjunction: @alt #k wording payload .| many #g key wording rows@.
 type Offers alts = Core.Alts (Core.Offer Value) alts
--- | Handlers for a disjunction, in declaration order, each taking its
--- alternative's payload: @#k (\p -> …) .| onMany (\key p -> …)@.
-type Handlers r alts = Core.Alts (Core.Handler Value r) alts
+
+-- | Handlers for a disjunction, one per alternative, each taking that
+-- alternative's payload. A signature names them in declaration order; a
+-- list written inline may be in any order, because each is found by its
+-- label.
+type Handlers r alts = Core.Alts Core.HandlerT (HandlersFor alts r)
+type family HandlersFor (alts :: Type) (r :: Type) :: Type where
+  HandlersFor (k ::> p) r = k Core.:-> (p -> r)
+  HandlersFor (k ::* p) r = k Core.:-> (Text -> p -> r)
+  HandlersFor (a :|: b) r = HandlersFor a r :|: HandlersFor b r
+
 -- | A rubric: its levels in order, each with the wording the score sends
 -- and the result 'grade' returns when the score lands on it.
 type Rubric p levels = Core.Alts (Core.Level Value p) levels
-type Schema s = Core.Schema Value s
 
-(.|) :: Core.Single x => Core.Alts f x -> Core.Alts f rest -> Core.Alts f (x :|: rest)
+(.|) :: Core.Alts f x -> Core.Alts f rest -> Core.Alts f (x :|: rest)
 (.|) = (Core..|)
 infixr 4 .|
 
-alt :: KnownSymbol k => Label k -> Value -> p -> Offers (k ::> p)
-alt = Core.alt
+-- | One alternative: its label, its wording for the provider, its payload
+-- for the program.
+alt :: KnownSymbol k => Label k -> Text -> p -> Offers (k ::> p)
+alt l w p = Core.alt l (String w) p
 
--- | A runtime group: a wire key and a wording per row; the row is the
--- payload the handler receives.
-many :: (a -> Text) -> (a -> Value) -> [a] -> Offers (Many a)
-many = Core.many
+-- | A runtime group: its label, then a wire key and a wording per row. The
+-- row is the payload the handler receives.
+many :: KnownSymbol k => Label k -> (a -> Text) -> (a -> Text) -> [a] -> Offers (k ::* a)
+many l key wording rows = Core.many l key (String . wording) rows
 
-onMany :: (Text -> p -> r) -> Handlers r (Many p)
-onMany = Core.onMany
+-- | The keys and wording an offer would send, without building a request.
+offered :: Alternatives alts => Offers alts -> [(Text, Text)]
+offered o = [(k, w) | (k, String w) <- Core.offered o]
 
 -- | One level: its label, its wording for the provider, and the result
 -- 'grade' returns when the score lands on it. What 'alt' takes, in the same
 -- order.
-level :: KnownSymbol l => Label l -> Value -> p -> Rubric p l
-level = Core.level
+level :: KnownSymbol l => Label l -> Text -> p -> Rubric p l
+level l w p = Core.level l (String w) p
 
 -- Questions
 noul :: Text -> Q Value Noul
@@ -133,23 +157,37 @@ score = Core.score
 -- | One question per row, keyed at runtime: the per-item battery, written
 -- as 'many' is. Each row comes back beside its answer, so there is nothing
 -- to look up. Takes a question or a nested packet, exactly as a cell does.
-each :: (Core.ToQ x, Core.CellJson x ~ Value) => (a -> Text) -> (a -> x) -> [a] -> Q Value (Each a (Core.CellKind x))
+each :: (Core.ToQ x, Core.NestedQ x Value, Core.QJson x ~ Value) => (a -> Text) -> (a -> x) -> [a] -> Q Value (Each a (Core.QKind x))
 each = Core.each
 
-state :: Value -> State
+-- | The shared input to every question, written the way a packet is. Its
+-- fields keep their Haskell types, so a row the state carries is the row a
+-- question is built from: @each fst (…) st.posters@.
+state :: Unique t => Packet t Fields -> State t
 state = Core.state
+
+-- | The name of a state field, as wording refers to it, in backticks. A
+-- name the state does not have is a compile error listing the names it has.
+field :: (KnownSymbol k, Core.StateHas k t) => Label k -> State t -> Text
+field = Core.field
 
 -- Acting on answers
 
--- | The winner under a policy through a handler per alternative, or
+-- | The winner under a policy through the handler its label names, or a
 -- structured doubt. A choice gives no result without a handler for every
--- alternative.
-settle :: Handles hs alts => Policy -> Chosen alts -> Handlers r hs -> Either Doubt r
+-- alternative, and the verdict carries the policy that reached it.
+settle :: Handles hs alts r => Policy p -> Chosen alts -> Handlers' hs -> Either Doubt (Settled p r)
 settle = Core.settle
 
 -- | A proposition under a policy: yes, no, or doubt.
-judge :: Policy -> Yes -> Either Doubt Bool
+judge :: Policy p -> Yes -> Either Doubt (Settled p Bool)
 judge = Core.judge
+
+-- | The payload the winner was offered with, when every alternative
+-- carries the same kind of thing. Having them all is exhaustiveness by
+-- construction, so there is no handler list to write.
+taken :: Carries alts r => Chosen alts -> r
+taken = Core.taken
 
 -- | The result for the level a score landed on: the highest level whose
 -- mass at or above it clears the floor, or the lowest when none does. At a
@@ -159,32 +197,35 @@ judge = Core.judge
 grade :: Double -> Scored p levels -> p
 grade = Core.grade
 
--- | One line saying why the policy settled or doubted the answer, with the
--- numbers behind it. Works on a choice or a Noul.
-explain :: Weighed a => Policy -> a -> Text
+-- | One line saying why the policy settled the answer, with the numbers
+-- behind it. A doubt already carries its own line as @why@.
+explain :: Weighed a => Policy p -> a -> Text
 explain = Core.explain
 
--- | The winner through a handler per alternative, with no policy: for when
--- the program follows whatever came back.
-handle :: Handles hs alts => Chosen alts -> Handlers r hs -> r
+-- | The winner through the handler its label names, with no policy: for
+-- when the program follows whatever came back.
+handle :: Handles hs alts r => Chosen alts -> Handlers' hs -> r
 handle = Core.handle
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers.
-contenders :: Handles hs alts => Double -> Chosen alts -> Handlers r hs -> [(Double, r)]
+contenders :: Handles hs alts r => Double -> Chosen alts -> Handlers' hs -> [(Double, r)]
 contenders = Core.contenders
 
+-- A handler list as written: found by label, so its own order is its type.
+type Handlers' hs = Core.Alts Core.HandlerT hs
+
 -- | Read-only choices: which file, which skill.
-routing :: Policy
-routing = Policy 0.40 0.08 0.50
+lenient :: Policy Lenient
+lenient = Policy 0.40 0.08 0.50
 
 -- | Starting a worker, or choosing an approach.
-spawning :: Policy
-spawning = Policy 0.55 0.20 0.70
+careful :: Policy Careful
+careful = Policy 0.55 0.20 0.70
 
 -- | Merging, stopping, anything with a receipt.
-merging :: Policy
-merging = Policy 0.70 0.40 0.85
+strict :: Policy Strict
+strict = Policy 0.70 0.40 0.85
 
 massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> Scored p levels -> Double
 massAtOrAbove = Core.massAtOrAbove
@@ -198,29 +239,33 @@ preview :: Core.Endpoint Value e => Core.A Value e -> Value
 preview = Core.previewA
 
 -- | A whole answers packet is a ledger row too: @toJSON (answers resp)@.
-instance (Core.Unique fs, Core.PacketSchema Value fs) => ToJSON (Packet fs Answers) where
+instance (Unique t, Schema Value (Packet t)) => ToJSON (Packet t Answers) where
   toJSON = Core.previewSchema
 
 -- The operation
 jevLatest :: Model
 jevLatest = Core.jevLatest
 
--- | Send a packet through a transport and read back its typed 'Response'.
+-- | A transport and the model it is asked for, bound once.
 -- @transport :: Value -> m (Either Text Value)@ is anything that posts JSON
 -- and hands the body back.
-ask :: (Monad m, Schema s) => (Value -> m (Either Text Value)) -> Model -> State -> s Questions -> m (Either JevError (Response s))
+session :: (Value -> m (Either Text Value)) -> Model -> Session m
+session = Core.session
+
+-- | Send a packet through a session and read back its typed 'Response'.
+ask :: (Monad m, Schema Value s) => Session m -> State t -> s Questions -> m (Either JevError (Response s))
 ask = Core.roundTrip
 
 -- | One question, one answer, under the label @value@.
-ask1 :: (Monad m, Core.Endpoint Value e) => (Value -> m (Either Text Value)) -> Model -> State -> Q Value e -> m (Either JevError (Answers :- e))
+ask1 :: (Monad m, Core.Endpoint Value e) => Session m -> State t -> Q Value e -> m (Either JevError (Answers :- e))
 ask1 = Core.jev1
 
 -- | The request body, without sending it.
-request :: Schema s => Model -> State -> s Questions -> Either JevError Value
+request :: Schema Value s => Model -> State t -> s Questions -> Either JevError Value
 request = Core.request
 
 -- | A response body against the packet that produced the request.
-decode :: Schema s => s Questions -> Value -> Either JevError (Response s)
+decode :: Schema Value s => s Questions -> Value -> Either JevError (Response s)
 decode = Core.decode
 
 -- | The packet, under 'Answers'. A response already reads by its packet's
@@ -232,10 +277,10 @@ answers = Core.answers
 data Usage = Usage { inputTokens :: Int, outputTokens :: Int } deriving (Show, Eq)
 
 usage :: Response s -> Usage
-usage r = Usage (field "input_tokens") (field "output_tokens")
+usage r = Usage (field' "input_tokens") (field' "output_tokens")
   where
-    field :: Text -> Int
-    field k = case Core.usage r of
+    field' :: Text -> Int
+    field' k = case Core.usage r of
       Aeson.Object o -> case KeyMap.lookup (Key.fromText k) o of
         Just (Aeson.Number n) -> round n
         _ -> 0

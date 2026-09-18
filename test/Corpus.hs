@@ -12,8 +12,6 @@
 module Corpus (corpusChecks) where
 
 import Check
-import Data.Aeson (Value (..), object, (.=))
-import qualified Data.Aeson.Key as Key
 import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,14 +28,15 @@ data Line = Line { lineNo :: Int, lineText :: Text, revision :: Text }
 data Edit = EditAt Int Text | HandBack deriving (Show, Eq)
 
 locate transport source numbered = do
-  r <- ask1 transport jevLatest (state (String source))
+  let sess = session transport jevLatest
+  r <- ask1 sess (state (#source := (source :: Text)))
     (choice "Which line begins the retry-timeout branch?"
-       (alt #not_here "The branch is not in this file" () .| many (T.pack . show . (.lineNo)) (String . (.lineText)) numbered))
+       (alt #not_here "The branch is not in this file" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) numbered))
   pure $ case r of
     Left _ -> (HandBack, [])
     Right a ->
-      let edit = #not_here (\() -> HandBack) .| onMany (\_ l -> EditAt l.lineNo l.revision)
-          winner = either (const HandBack) id (settle (Policy 0.3 0.1 0.5) a edit)
+      let edit = #not_here (\() -> HandBack) .| #lines (\_ l -> EditAt l.lineNo l.revision)
+          winner = either (const HandBack) (\(Settled x) -> x) (settle (Policy 0.3 0.1 0.5) a edit)
           alsoPlausible = map snd (contenders 0.2 a edit)
       in (winner, alsoPlausible)
 
@@ -51,22 +50,22 @@ data Hypothesis = Hypothesis { hKey :: Text, hText :: Text, probe :: Text } deri
 data Diagnosis = Supported Hypothesis | Neither | Undecided [Hypothesis] deriving (Show, Eq)
 
 diagnose transport inquiry hypotheses = do
-  let offers = alt #neither "None of these explains the evidence" () .| many (.hKey) (String . (.hText)) hypotheses
-      hypothesisOf = #neither (\() -> Nothing) .| onMany (\_ h -> Just h)
+  let sess = session transport jevLatest
+      offers = alt #neither "None of these explains the evidence" () .| many #hypotheses (.hKey) (.hText) hypotheses
+      hypothesisOf = #neither (\() -> Nothing) .| #hypotheses (\_ h -> Just h)
       first = #mechanism := choice "Which mechanism explains the failure?" offers
            :& #probes := each (.hKey) (\h -> noul ("Supposing the mechanism is " <> h.hText <> ": would running " <> h.probe <> " discriminate?")) hypotheses
-           :& Nil
-  r1 <- ask transport jevLatest (state (String inquiry)) first
+  r1 <- ask sess (state (#inquiry := (inquiry :: Text))) first
   case r1 of
     Left e -> pure (Left e)
     Right resp -> do
       let a = answers resp
           live = [h | (_, Just h) <- contenders 0.3 a.mechanism hypothesisOf]
-          worthProbing = [h | h <- live, Just n <- [lookup h a.probes], judge routing n == Right True]
-          observations = [(h.hKey, String ("ran " <> h.probe)) | h <- worthProbing]
-      r2 <- ask1 transport jevLatest (state (object ["inquiry" .= inquiry, "observations" .= object [(Key.fromText k, v) | (k, v) <- observations]]))
+          worthProbing = [h | h <- live, Just n <- [lookup h a.probes], judge lenient n == Right (Settled True)]
+          observations = [(h.hKey, "ran " <> h.probe) | h <- worthProbing]
+      r2 <- ask1 sess (state (#inquiry := inquiry :& #observations := observations))
               (choice "Which mechanism do the observations support?" offers)
-      pure $ fmap (\final -> either (const (Undecided live)) (maybe Neither Supported) (settle (Policy 0.6 0.2 0.5) final hypothesisOf)) r2
+      pure $ fmap (\final -> either (const (Undecided live)) (\(Settled mh) -> maybe Neither Supported mh) (settle (Policy 0.6 0.2 0.5) final hypothesisOf)) r2
 
 -- ---------------------------------------------------------------------------
 -- 3. The per-item battery: a Noul per edge with its own wording, and a
@@ -76,14 +75,14 @@ diagnose transport inquiry hypotheses = do
 data Edge = Edge { edgeKey :: Text, edgeText :: Text, command :: Text }
 
 expand transport inquiry edges = do
-  let packet = #relevant := each (.edgeKey) (\e -> noul ("Does following " <> e.edgeKey <> " (" <> e.edgeText <> ") bear on the inquiry?")) edges
-            :& #next := choice "Which edge should be followed first?" (many (.edgeKey) (String . (.edgeText)) edges .| alt #stop "No edge is worth following" ())
-            :& Nil
-  r <- ask transport jevLatest (state (String inquiry)) packet
+  let sess = session transport jevLatest
+      packet = #relevant := each (.edgeKey) (\e -> noul ("Does following " <> e.edgeKey <> " (" <> e.edgeText <> ") bear on the inquiry?")) edges
+            :& #next := choice "Which edge should be followed first?" (many #edges (.edgeKey) (.edgeText) edges .| alt #stop "No edge is worth following" ())
+  r <- ask sess (state (#inquiry := (inquiry :: Text))) packet
   pure $ fmap (\resp ->
     let a = answers resp
-    in ( [e.edgeKey | (e, n) <- a.relevant, judge routing n == Right True]
-       , settle routing a.next (onMany (\_ e -> Just e.command) .| #stop (\() -> Nothing)) )) r
+    in ( [e.edgeKey | (e, n) <- a.relevant, judge lenient n == Right (Settled True)]
+       , settle lenient a.next (#edges (\_ e -> Just e.command) .| #stop (\() -> Nothing)) )) r
 
 -- ---------------------------------------------------------------------------
 -- 4. An ordered ladder with a threshold.
@@ -92,7 +91,8 @@ expand transport inquiry edges = do
 data Disposition = WakeNow | NextCheckpoint | Background deriving (Show, Eq)
 
 attention transport message = do
-  r <- ask1 transport jevLatest (state (String message))
+  let sess = session transport jevLatest
+  r <- ask1 sess (state (#message := (message :: Text)))
     (score "What is the consequence of waiting to act on this message?"
        (  level #background "No current action depends on it" Background
        .| level #checkpoint "Useful at the next ordinary checkpoint" NextCheckpoint
@@ -124,7 +124,7 @@ corpusChecks c = do
   checkEq c "corpus 2: a clear winner is supported with its payload" (Right (Supported (Hypothesis "retry" "retry redelivered the message" "retry-fixture"))) d2
   -- 3
   e <- expand (stub "gate") "where is the reply dropped?" [Edge "gate" "gates publication" "sed -n 30,60p gate.rs", Edge "telemetry" "records latency" "sed -n 1,20p telemetry.rs"]
-  checkEq c "corpus 3: a battery per entry and a choice over the same entries with an exit" (Right (["gate", "telemetry"], Right (Just "sed -n 30,60p gate.rs"))) (fmap (\(ks, cmd) -> (sort ks, cmd)) e)
+  checkEq c "corpus 3: a battery per entry and a choice over the same entries with an exit" (Right (["gate", "telemetry"], Right (Settled (Just "sed -n 30,60p gate.rs")))) (fmap (\(ks, cmd) -> (sort ks, cmd)) e)
   -- 4
   att <- attention (stub "") "The build is red on main."
   checkEq c "corpus 4: a ladder threshold decides the disposition" (Right WakeNow) att

@@ -12,8 +12,6 @@ module Jev.Core.Contract
   , Instructions (..)
   , question
   , Criteria (..)
-  , State (..)
-  , state
   , checkState
   , checkInstructions
   , checkDescription
@@ -69,16 +67,11 @@ data Criteria v = Criteria
   , noWhen :: Presence v
   }
 
--- | The shared input to every question, sent as given.
-newtype State v = State { stateValue :: v }
-
--- | Total; the outer shape (string, object, or array) is checked at
--- preparation.
-state :: v -> State v
-state = State
-
-checkState :: JsonValue v => State v -> Either PrepError ()
-checkState st = case jView (stateValue st) of
+-- | The outer shape of a state (string, object, or array), checked at
+-- preparation. A state written as a packet always passes; a raw one may
+-- not.
+checkState :: JsonValue v => v -> Either PrepError ()
+checkState v = case jView v of
   VString _ -> Right ()
   VObject _ -> Right ()
   VArray _ -> Right ()

@@ -21,42 +21,57 @@
 -- 'key', 'mass' and 'margin' are answer fields, and this module binds all
 -- three as ordinary locals; the shadowing is deliberate and local.
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+-- A handler is written as a bare label applied to a function, so the
+-- instance that builds one is headed by a function type and counts as an
+-- orphan wherever it lives.
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | The agent-facing form: an anonymous, type-indexed packet of questions,
 -- alternatives and rubric levels as type-level chains of labels.
 -- Polymorphic over the JSON value through "Jev.Core.Json";
 -- "Jev.Operators" fixes it.
 --
--- The packet's type is inferred from the questions written. Labels
--- and handler completeness are checked at compile time with messages in
--- the author's vocabulary; wording, runtime candidates and level counts
--- are checked at preparation.
+-- The packet's type is inferred from the questions written, and mirrors
+-- the way they were written: a cell is a packet of one, and two packets
+-- join with the same operator, so packets compose and there is no empty
+-- packet to write. Labels, handler completeness and state field names are
+-- checked at compile time with messages in the author's vocabulary;
+-- wording, runtime candidates and level counts are checked at preparation.
 module Jev.Core.Schema
   ( -- * Modes
-    Questions, Answers, type (:-)
+    Questions, Answers, Fields, type (:-)
     -- * Packets
-  , type (::=), Label (..), Cell (..), CellKind, CellJson, ToQ, Packet (..)
-  , Unique, Get
+  , type (::=), type (:&), Label (..), Cell (..), Packet (..)
+  , QKind, QJson, ToQ (..), ToCell (..), CellOk, Nested, NestedQ
+  , Unique, Get, PacketLabels
+    -- * State
+  , State, state, rawState, stateValue, field, StateHas
+  , Field (..)
     -- * Endpoints
   , Noul, Choice, Score, Each, Group
   , Q (..), A (..), Yes (..), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Alternatives and rubric levels
-  , type (::>), type (:|:), Many, Offer, Handler, Level, Interp
-  , Alts (..), Single, (.|), alt, many, onMany, level
-  , Alternatives, AltsOk, Match, Handles, Levels, RubricOk, Index, Selected
+  , type (::>), type (::*), type (:->), type (:|:), Offer, HandlerT, Level, Interp
+  , Alts (..), (.|), alt, many, level, offered
+    -- * Handlers, by label
+  , Alternatives, AltsOk, Handles, Covers, Fits, HandlersOk, Fetch (..), Dispatch (..)
+  , Levels, RubricOk, Index, Selected
+    -- * Uniform payloads
+  , Carries (..), Retarget, Dict (..), taken, Uniform (..), uniform, mapUniform
     -- * Builders
   , noul, choice, score, each
     -- * Results
-  , Weighed (..), Weight (..), Doubt (..), Policy (..)
+  , Weighed (..), Weight (..), Doubt (..), Cause (..), Policy (..), Settled (..)
+  , Lenient, Careful, Strict
   , settle, judge, explain, contenders, handle
   , grade, massAtOrAbove
     -- * The operation
-  , Schema (..), PacketSchema, Model (..), jevLatest
+  , Schema (..), Model (..), jevLatest, Session, session
   , request, decode, Response, answers, responseModel, usage, diagnostics
   , JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
   , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
-  , checkLegend, checkExpectation
+  , checkLegend, checkExpectation, labelText
   ) where
 
 import Data.Kind (Constraint, Type)
@@ -67,7 +82,6 @@ import Data.Proxy (Proxy (..))
 import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Type.Equality (type (==), type (~~))
 import GHC.OverloadedLabels (IsLabel (..))
 import GHC.Records (HasField (..))
 import GHC.TypeLits
@@ -81,9 +95,11 @@ import Numeric (showFFloat)
 
 data Questions (v :: Type)
 data Answers (v :: Type)
+data Fields (v :: Type)
 
 -- | How a cell of endpoint @e@ reads under a mode. Questions are always the
--- leaf; answers are transparent for nesting.
+-- leaf; answers are transparent for nesting; a state field keeps the
+-- Haskell type it was written with.
 type family mode :- (e :: Type) :: Type where
   Questions v :- e = Q v e
   Answers v :- Noul = Yes
@@ -92,6 +108,7 @@ type family mode :- (e :: Type) :: Type where
   Answers v :- Group s = s (Answers v)
   Answers v :- Each a e = [(a, Answers v :- e)]
   Answers v :- e = A v e
+  Fields v :- a = a
 infixr 0 :-
 
 -- ---------------------------------------------------------------------------
@@ -107,54 +124,54 @@ data Group (s :: Type -> Type)
 data family Q (v :: Type) (e :: Type)
 data family A (v :: Type) (e :: Type)
 
--- ---------------------------------------------------------------------------
--- Alternatives and levels: one chain, three shapes
--- ---------------------------------------------------------------------------
-
--- | A labeled alternative with a local payload; wording is supplied with
--- the payload by 'alt'.
-data (k :: Symbol) ::> (p :: Type)
--- | A chain. Alternatives are @label ::> payload@ or @Many payload@; rubric
--- levels are bare labels.
-data (a :: ka) :|: (b :: kb)
--- | A runtime group of alternatives sharing a payload type; keys and
--- wording per element at the value level.
-data Many (p :: Type)
-infix 6 ::>
-infixr 4 :|:
-
 data Label (k :: Symbol) = Label
 instance k ~ k' => IsLabel k (Label k') where fromLabel = Label
 
+labelText :: forall k. KnownSymbol k => Text
+labelText = T.pack (symbolVal (Proxy @k))
+
+labelOf :: forall k. KnownSymbol k => Label k -> Text
+labelOf _ = labelText @k
+
+-- ---------------------------------------------------------------------------
+-- Alternatives, rubric levels and handlers: one chain, four shapes
+-- ---------------------------------------------------------------------------
+
+-- | One alternative: a label and the payload it carries.
+data (k :: Symbol) ::> (p :: Type)
+-- | A runtime group: a label, and one row of type @p@ per candidate.
+data (k :: Symbol) ::* (p :: Type)
+-- | One handler: a label and the function written for it.
+data (k :: Symbol) :-> (x :: Type)
+-- | A chain. It associates to the right and a chain may stand where one
+-- element does, so chains compose.
+data (a :: ka) :|: (b :: kb)
+infix 6 ::>, ::*, :->
+infixr 4 :|:
+
 -- | Interpretations of an alternative: what an offer supplies, what a
--- handler receives, what a level carries.
+-- level carries.
 data Offer (v :: Type)
-data Handler (v :: Type) (r :: Type)
+data HandlerT
 data Level (v :: Type) (p :: Type)
 
 type family Interp (f :: Type) (x :: Type) :: Type where
   Interp (Offer v) (k ::> p) = (v, p)
-  Interp (Offer v) (Many p) = [(Text, v, p)]
-  Interp (Handler v r) (k ::> p) = p -> r
-  Interp (Handler v r) (Many p) = Text -> p -> r
+  Interp (Offer v) (k ::* p) = [(Text, v, p)]
 
 -- | Offers, handlers, or levels for a whole chain.
 type Alts :: Type -> forall k. k -> Type
 data Alts f alts where
   One :: KnownSymbol k => Interp f (k ::> p) -> Alts f (k ::> p)
-  Grp :: Interp f (Many p) -> Alts f (Many p)
+  Grp :: KnownSymbol k => Interp f (k ::* p) -> Alts f (k ::* p)
+  Hnd :: KnownSymbol k => x -> Alts HandlerT (k :-> x)
   Lvl :: KnownSymbol l => v -> p -> Alts (Level v p) (l :: Symbol)
   (:|) :: Alts f x -> Alts f rest -> Alts f (x :|: rest)
 infixr 4 :|
 
--- | The left of a chain is one element; the chain associates to the
--- right, so no parentheses are needed and none are accepted.
-type Single :: forall k. k -> Constraint
-type family Single x where
-  Single @Type (a :|: b) = TypeError ('Text "a parenthesised group stands where one alternative or level is expected; .| associates to the right, so write a .| b .| c without parentheses")
-  Single x = ()
-
-(.|) :: Single x => Alts f x -> Alts f rest -> Alts f (x :|: rest)
+-- | Join two chains. Either side may itself be a chain, so a program can
+-- keep a set of alternatives as a value and compose it.
+(.|) :: Alts f x -> Alts f rest -> Alts f (x :|: rest)
 (.|) = (:|)
 infixr 4 .|
 
@@ -163,131 +180,260 @@ infixr 4 .|
 alt :: KnownSymbol k => Label k -> v -> p -> Alts (Offer v) (k ::> p)
 alt _ d p = One (d, p)
 
--- | A runtime group: one wire key and one wording per row, and the row
--- itself is the payload the handler receives.
-many :: (a -> Text) -> (a -> v) -> [a] -> Alts (Offer v) (Many a)
-many key wording rows = Grp [(key x, wording x, x) | x <- rows]
-
-onMany :: (Text -> p -> r) -> Alts (Handler v r) (Many p)
-onMany = Grp
+-- | A runtime group: its label, then a wire key and a wording per row. The
+-- row itself is the payload the handler receives.
+many :: KnownSymbol k => Label k -> (a -> Text) -> (a -> v) -> [a] -> Alts (Offer v) (k ::* a)
+many _ key wording rows = Grp [(key x, wording x, x) | x <- rows]
 
 -- | One rubric level: its label, its wording for the provider, and the
 -- result 'grade' returns when the score lands on it. The same three things
--- an alternative carries, in the same order.
+-- an alternative carries.
 level :: KnownSymbol l => Label l -> v -> p -> Alts (Level v p) l
 level _ = Lvl
 
--- Handlers are written with labels; the label and the function fix the
--- alternative, so a handler list is an ordinary value with an inferred
--- type. 'handle' checks it against the alternatives in declaration order,
--- with messages that name both.
+-- | The keys and wording an offer would send, without building a request.
+offered :: Alternatives alts => Alts (Offer v) alts -> [(Text, v)]
+offered = altOffered
+
+-- Handlers are written with a label and a function. The label fixes which
+-- alternative is answered and the function's own type is the chain's, so a
+-- handler list is an ordinary value with an inferred type and no order.
 type family HandlerShape (k :: Symbol) (x :: Type) :: Constraint where
-  HandlerShape k (p -> r) = ()
+  HandlerShape k (a -> b) = ()
   HandlerShape k (a, b) = TypeError ('Text "offers are written alt #" ':<>: 'Text k ':<>: 'Text " wording payload; #" ':<>: 'Text k ':<>: 'Text " alone builds a handler")
   HandlerShape k x = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " takes a handler: a function of the payload")
-type family ArgOf (x :: Type) :: Type where ArgOf (p -> r) = p
-type family ResOf (x :: Type) :: Type where ResOf (p -> r) = r
 
--- When the alternative is already known from context, its label is checked
--- here, with the same messages 'handle' gives when it is inferred first.
-type LabelFits :: Symbol -> forall ka. ka -> Constraint
-type family LabelFits k alt where
-  LabelFits k @Type (k ::> p) = ()
-  LabelFits k @Type (Many p) = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " is written where the runtime group (Many) of this disjunction stands; use onMany")
-  LabelFits k @Type (k' ::> p) = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " is written where the alternative #" ':<>: 'Text k' ':<>: 'Text " stands (handlers follow declaration order)")
-  LabelFits k @Type (a :|: b) = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " stands alone where the disjunction continues; chain handlers with .| (right-associated, without parentheses)")
-  LabelFits k alt = ()
+instance (KnownSymbol k, HandlerShape k x, res ~ Alts HandlerT (k :-> x))
+  => IsLabel k (x -> res) where
+  fromLabel = Hnd
 
-instance (KnownSymbol k, HandlerShape k x, LabelFits k alt, x ~ (ArgOf x -> ResOf x), f ~ Handler v (ResOf x), alt ~~ (k ::> ArgOf x)) => IsLabel k (x -> Alts f alt) where
-  fromLabel = One
-
--- | Handlers against alternatives, position by position.
-type family Match (hs :: Type) (alts :: Type) :: Constraint where
-  Match (k ::> p) (k ::> p') = p ~ p'
-  Match (Many p) (Many p') = p ~ p'
-  Match (h :|: hs) (a :|: as) = (Match h a, Match hs as)
-  Match (k ::> p) (Many p') = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " is written where the runtime group (Many) of this disjunction stands; use onMany")
-  Match (Many p) (k ::> p') = TypeError ('Text "onMany is written where the alternative #" ':<>: 'Text k ':<>: 'Text " stands (handlers follow declaration order)")
-  Match (k ::> p) (k' ::> p') = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " is written where the alternative #" ':<>: 'Text k' ':<>: 'Text " stands (handlers follow declaration order)")
-  Match (h :|: hs) a = TypeError ('Text "handlers continue past the end of the disjunction: " ':<>: Describe hs ':<>: 'Text " has no alternative")
-  Match h (a :|: as) = TypeError ('Text "handlers stop after " ':<>: Describe h ':<>: 'Text "; " ':<>: Describe as ':<>: 'Text " still needs a handler; chain handlers with .|")
-type family Describe (x :: Type) :: ErrorMessage where
-  Describe (k ::> p) = 'Text "#" ':<>: 'Text k
-  Describe (Many p) = 'Text "the runtime group (Many)"
-  Describe (h :|: hs) = Describe h
-
--- | Handlers that fit a disjunction: one per alternative, in declaration
--- order, each taking that alternative's payload.
-type Handles hs alts = (Alternatives alts, Match hs alts, hs ~ alts)
-
--- | The selected alternative, carrying the payload it was offered with. A
--- selection has no key of its own: it is consumed by 'handle', and the
--- answer it came from carries the key for logs.
-data Selected alts where
-  SelOne :: p -> Selected (k ::> p)
-  SelMany :: Text -> p -> Selected (Many p)
-  SelLeft :: Selected x -> Selected (x :|: rest)
-  SelRight :: Selected rest -> Selected (x :|: rest)
-
--- | Static labels unique, checked at compile time; counts at preparation.
-type family AltsOk (alts :: Type) :: Constraint where
-  AltsOk alts = UniqueLabels (AltLabels alts)
-type family AltLabels (alts :: Type) :: [Symbol] where
-  AltLabels (k ::> p) = '[k]
-  AltLabels (Many p) = '[]
-  AltLabels (x :|: rest) = AltLabels x ++ AltLabels rest
-type family UniqueLabels (ls :: [Symbol]) :: Constraint where
-  UniqueLabels '[] = ()
-  UniqueLabels (l ': ls) = (SymbolAbsent l ls, UniqueLabels ls)
-type family SymbolAbsent (l :: Symbol) (ls :: [Symbol]) :: Constraint where
-  SymbolAbsent l '[] = ()
-  SymbolAbsent l (l ': ls) = TypeError ('Text "Jev: duplicate label #" ':<>: 'Text l)
-  SymbolAbsent l (j ': ls) = SymbolAbsent l ls
+-- ---------------------------------------------------------------------------
+-- Labels
+-- ---------------------------------------------------------------------------
 
 type family (++) (a :: [k]) (b :: [k]) :: [k] where
   '[] ++ b = b
   (x ': a) ++ b = x ': (a ++ b)
 
--- | Compile, decode, and eliminate a disjunction shape by shape.
+type family (||) (a :: Bool) (b :: Bool) :: Bool where
+  'True || b = 'True
+  'False || b = b
+
+type family SameLabel (a :: Symbol) (b :: Symbol) :: Bool where
+  SameLabel a a = 'True
+  SameLabel a b = 'False
+
+type family AltLabels (alts :: Type) :: [Symbol] where
+  AltLabels (k ::> p) = '[k]
+  AltLabels (k ::* p) = '[k]
+  AltLabels (a :|: b) = AltLabels a ++ AltLabels b
+
+type family HsLabels (hs :: Type) :: [Symbol] where
+  HsLabels (k :-> x) = '[k]
+  HsLabels (a :|: b) = HsLabels a ++ HsLabels b
+
+type family ShowLabels (ls :: [Symbol]) :: ErrorMessage where
+  ShowLabels '[] = 'Text "nothing"
+  ShowLabels '[l] = 'Text "#" ':<>: 'Text l
+  ShowLabels (l ': ls) = 'Text "#" ':<>: 'Text l ':<>: 'Text ", " ':<>: ShowLabels ls
+
+type family NoRepeats (ls :: [Symbol]) (what :: ErrorMessage) :: Constraint where
+  NoRepeats '[] what = ()
+  NoRepeats (l ': ls) what = (NotIn l ls what, NoRepeats ls what)
+type family NotIn (l :: Symbol) (ls :: [Symbol]) (what :: ErrorMessage) :: Constraint where
+  NotIn l '[] what = ()
+  NotIn l (l ': ls) what = TypeError (what ':<>: 'Text " #" ':<>: 'Text l)
+  NotIn l (j ': ls) what = NotIn l ls what
+
+-- | Static labels unique, checked at compile time; counts at preparation.
+type AltsOk alts = NoRepeats (AltLabels alts) ('Text "Jev: duplicate label")
+
+-- ---------------------------------------------------------------------------
+-- Handlers against alternatives, by label
+-- ---------------------------------------------------------------------------
+
+-- | Whether a chain contains a label, used to walk to the side that has it.
+type family HasLabel (k :: Symbol) (hs :: Type) :: Bool where
+  HasLabel k (k :-> x) = 'True
+  HasLabel k (j :-> y) = 'False
+  HasLabel k (a :|: b) = HasLabel k a || HasLabel k b
+
+-- | The handler written for a label, or the error that names it.
+type HandlerAt :: Symbol -> Type -> Type -> Type
+type family HandlerAt k hs all where
+  HandlerAt k (k :-> x) all = x
+  HandlerAt k (j :-> y) all = TypeError ('Text "no handler for #" ':<>: 'Text k)
+  HandlerAt k (a :|: b) all = HandlerAt' (HasLabel k a) k a b all
+type family HandlerAt' (hit :: Bool) k a b all where
+  HandlerAt' 'True k a b all = HandlerAt k a all
+  HandlerAt' 'False k a b all = HandlerAt k b all
+
+-- | Every alternative has a handler, of the shape that alternative needs.
+type Covers :: Type -> Type -> Type -> Constraint
+type family Covers alts hs r where
+  Covers (k ::> p) hs r = HandlerAt k hs hs ~ (p -> r)
+  Covers (k ::* p) hs r = HandlerAt k hs hs ~ (Text -> p -> r)
+  Covers (a :|: b) hs r = (Covers a hs r, Covers b hs r)
+
+-- | Every handler answers an alternative.
+type Fits :: Type -> Type -> Constraint
+type family Fits hs alts where
+  Fits (k :-> x) alts = Known k (AltLabels alts) alts
+  Fits (a :|: b) alts = (Fits a alts, Fits b alts)
+type family Known (k :: Symbol) (ls :: [Symbol]) alts :: Constraint where
+  Known k '[] alts = TypeError ('Text "#" ':<>: 'Text k ':<>: 'Text " has no alternative; the alternatives are " ':<>: ShowLabels (AltLabels alts))
+  Known k (k ': ls) alts = ()
+  Known k (j ': ls) alts = Known k ls alts
+
+-- | No alternative is answered twice.
+type HandlersOk hs = NoRepeats (HsLabels hs) ('Text "duplicate handler")
+
+-- | Handlers that fit a disjunction: one per alternative, by label, in any
+-- order, each taking that alternative's payload.
+type Handles hs alts r =
+  (Alternatives alts, Dispatch hs alts r, Covers alts hs r, Fits hs alts, HandlersOk hs)
+
+-- | Pull the handler written for one label out of the chain.
+class Fetch (k :: Symbol) (hs :: Type) (x :: Type) | k hs -> x where
+  fetch :: Alts HandlerT hs -> x
+
+instance Fetch k (k :-> x) x where
+  fetch (Hnd h) = h
+
+instance FetchStep (HasLabel k a) k a b x => Fetch k (a :|: b) x where
+  fetch (c :| rest) = fetchStep @(HasLabel k a) @k @a @b c rest
+
+class FetchStep (hit :: Bool) (k :: Symbol) (a :: Type) (b :: Type) (x :: Type) | hit k a b -> x where
+  fetchStep :: Alts HandlerT a -> Alts HandlerT b -> x
+
+instance Fetch k a x => FetchStep 'True k a b x where
+  fetchStep c _ = fetch @k c
+
+instance Fetch k b x => FetchStep 'False k a b x where
+  fetchStep _ rest = fetch @k rest
+
+-- | Run the handler the winner's label names.
+class Dispatch (hs :: Type) (alts :: Type) (r :: Type) where
+  dispatch :: Alts HandlerT hs -> Selected alts -> r
+
+instance Fetch k hs (p -> r) => Dispatch hs (k ::> p) r where
+  dispatch hs (SelOne p) = fetch @k hs p
+
+instance Fetch k hs (Text -> p -> r) => Dispatch hs (k ::* p) r where
+  dispatch hs (SelRow k p) = fetch @k hs k p
+
+instance (Dispatch hs x r, Dispatch hs rest r) => Dispatch hs (x :|: rest) r where
+  dispatch hs = \case
+    SelLeft s -> dispatch hs s
+    SelRight s -> dispatch hs s
+
+-- ---------------------------------------------------------------------------
+-- Alternatives: compile, decode, and eliminate a disjunction shape by shape
+-- ---------------------------------------------------------------------------
+
+-- | The selected alternative, carrying the payload it was offered with.
+data Selected alts where
+  SelOne :: p -> Selected (k ::> p)
+  SelRow :: Text -> p -> Selected (k ::* p)
+  SelLeft :: Selected x -> Selected (x :|: rest)
+  SelRight :: Selected rest -> Selected (x :|: rest)
+
 class Alternatives (alts :: Type) where
   altWire :: JsonValue v => Text -> Alts (Offer v) alts -> Either PrepError [(Text, v)]
+  altOffered :: Alts (Offer v) alts -> [(Text, v)]
   altSelect :: Alts (Offer v) alts -> Text -> Maybe (Selected alts)
-  altHandle :: Alts (Handler v r) alts -> Selected alts -> r
   altKeyOf :: Selected alts -> Text
 
 instance KnownSymbol k => Alternatives (k ::> p) where
-  altWire key (One (d, _)) = checkDescription key (label @k) d >> Right [(label @k, d)]
-  altSelect (One (_, p)) sel = if sel == label @k then Just (SelOne p) else Nothing
-  altHandle (One h) (SelOne p) = h p
-  altKeyOf _ = label @k
+  altWire key (One (d, _)) = checkDescription key (labelText @k) d >> Right [(labelText @k, d)]
+  altOffered (One (d, _)) = [(labelText @k, d)]
+  altSelect (One (_, p)) sel = if sel == labelText @k then Just (SelOne p) else Nothing
+  altKeyOf _ = labelText @k
 
-instance Alternatives (Many p) where
+instance KnownSymbol k => Alternatives (k ::* p) where
   altWire key (Grp es) = do
     let keys = [k | (k, _, _) <- es]
     if length keys /= length (nub keys) then Left (DuplicateKeys key [k | k <- nub keys, length (filter (== k) keys) > 1]) else Right ()
     mapM_ (\(k, d, _) -> checkDescription key k d) es
     Right [(k, d) | (k, d, _) <- es]
+  altOffered (Grp es) = [(k, d) | (k, d, _) <- es]
   altSelect (Grp es) sel =
-    case [SelMany k p | (k, _, p) <- es, k == sel] of
+    case [SelRow k p | (k, _, p) <- es, k == sel] of
       e : _ -> Just e
       [] -> Nothing
-  altHandle (Grp h) (SelMany k p) = h k p
-  altKeyOf (SelMany k _) = k
+  altKeyOf (SelRow k _) = k
 
 instance (Alternatives x, Alternatives rest) => Alternatives (x :|: rest) where
   altWire key (c :| rest) = (++) <$> altWire key c <*> altWire key rest
+  altOffered (c :| rest) = altOffered c ++ altOffered rest
   altSelect (c :| rest) sel = case altSelect c sel of
     Just s -> Just (SelLeft s)
     Nothing -> SelRight <$> altSelect rest sel
-  altHandle (c :| rest) = \case
-    SelLeft s -> altHandle c s
-    SelRight s -> altHandle rest s
   altKeyOf = \case
     SelLeft s -> altKeyOf s
     SelRight s -> altKeyOf s
 
-label :: forall k. KnownSymbol k => Text
-label = T.pack (symbolVal (Proxy @k))
+-- ---------------------------------------------------------------------------
+-- Uniform payloads: the continuation is the payload
+-- ---------------------------------------------------------------------------
+
+-- | The same chain with every payload replaced.
+type family Retarget (q :: Type) (alts :: Type) :: Type where
+  Retarget q (k ::> p) = k ::> q
+  Retarget q (k ::* p) = k ::* q
+  Retarget q (a :|: b) = Retarget q a :|: Retarget q b
+
+data Dict c where Dict :: c => Dict c
+
+-- | A disjunction whose alternatives all carry the same kind of thing. The
+-- payload is then the answer, and there is no handler list to write.
+class Alternatives alts => Carries (alts :: Type) (p :: Type) where
+  carriedOf :: Selected alts -> p
+  -- | Every alternative: its key, its wording, and what it carries.
+  carriedRows :: Alts (Offer v) alts -> [(Text, v, p)]
+  -- | Map every payload, as a functor over a node type does.
+  mapCarried :: (p -> q) -> Alts (Offer v) alts -> Alts (Offer v) (Retarget q alts)
+  -- | Mapping the payloads keeps the labels, so the mapped chain is a
+  -- disjunction carrying the mapped payload, and is still unique.
+  carriedDict :: forall q. Dict
+    ( AltLabels (Retarget q alts) ~ AltLabels alts
+    , Alternatives (Retarget q alts), Carries (Retarget q alts) q )
+
+instance KnownSymbol k => Carries (k ::> p) p where
+  carriedOf (SelOne p) = p
+  carriedRows (One (d, p)) = [(labelText @k, d, p)]
+  mapCarried f (One (d, p)) = One (d, f p)
+  carriedDict = Dict
+
+instance KnownSymbol k => Carries (k ::* p) p where
+  carriedOf (SelRow _ p) = p
+  carriedRows (Grp es) = es
+  mapCarried f (Grp es) = Grp [(k, d, f p) | (k, d, p) <- es]
+  carriedDict = Dict
+
+instance (Carries x p, Carries rest p) => Carries (x :|: rest) p where
+  carriedOf = \case
+    SelLeft s -> carriedOf s
+    SelRight s -> carriedOf s
+  carriedRows (c :| rest) = carriedRows c ++ carriedRows rest
+  mapCarried f (c :| rest) = mapCarried f c :| mapCarried f rest
+  carriedDict :: forall q. Dict
+    ( AltLabels (Retarget q (x :|: rest)) ~ AltLabels (x :|: rest)
+    , Alternatives (Retarget q (x :|: rest)), Carries (Retarget q (x :|: rest)) q )
+  carriedDict = case (carriedDict @x @p @q, carriedDict @rest @p @q) of (Dict, Dict) -> Dict
+
+-- | A disjunction whose payloads are all the same, with what it needs kept
+-- alongside. A node type that carries its continuations as payloads holds
+-- one of these and is a functor over them.
+data Uniform (v :: Type) (r :: Type) where
+  Uniform :: (AltsOk alts, Carries alts r) => Alts (Offer v) alts -> Uniform v r
+
+uniform :: (AltsOk alts, Carries alts r) => Alts (Offer v) alts -> Uniform v r
+uniform = Uniform
+
+mapUniform :: forall v r s. (r -> s) -> Uniform v r -> Uniform v s
+mapUniform f (Uniform (o :: Alts (Offer v) alts)) =
+  case carriedDict @alts @r @s of Dict -> Uniform (mapCarried f o)
 
 -- ---------------------------------------------------------------------------
 -- Rubrics: a chain of bare labels
@@ -300,7 +446,7 @@ class Levels (levels :: k) where
   levelEntries :: Alts (Level v p) levels -> NonEmpty (Text, v, p)
 
 instance KnownSymbol l => Levels (l :: Symbol) where
-  levelEntries (Lvl d p) = (label @l, d, p) NE.:| []
+  levelEntries (Lvl d p) = (labelText @l, d, p) NE.:| []
 
 instance (Levels x, Levels rest) => Levels ((x :: kx) :|: (rest :: kr)) where
   levelEntries (x :| rest) = levelEntries x <> levelEntries rest
@@ -312,7 +458,7 @@ type family RubricLabels levels where
   RubricLabels x = TypeError ('Text "Jev: a rubric is a chain of bare labels, such as \"low\" :|: \"high\"; found " ':<>: 'ShowType x)
 
 type family RubricOk (levels :: k) :: Constraint where
-  RubricOk levels = UniqueLabels (RubricLabels levels)
+  RubricOk levels = NoRepeats (RubricLabels levels) ('Text "Jev: duplicate label")
 
 type family Index (l :: Symbol) (levels :: k) :: Nat where
   Index l levels = IndexIn l (RubricLabels levels)
@@ -335,9 +481,9 @@ data instance Q v (Choice alts) = ChoiceQ (Instructions v) (Alts (Offer v) alts)
 
 -- | What the provider chose, with everything a caller judges it by:
 -- @a.next.key@, @a.next.margin@. The fields are all there is to read; the
--- alternative that won is reached only through 'settle', 'handle' or
--- 'contenders', each of which takes a handler per alternative, so a
--- program cannot hold a selection it has not written a branch for.
+-- alternative that won is reached only through 'settle', 'handle',
+-- 'contenders' or 'taken', so a program cannot hold a selection it has not
+-- written a branch for.
 data Chosen alts = Chosen
   { key :: Text                          -- ^ the winner's wire key
   , mass :: Double                       -- ^ the winner's probability
@@ -419,9 +565,8 @@ score t = ScoreQ (question t)
 -- | One question per row, keyed at runtime: the per-item battery. Written
 -- as 'many' is, a wire key and a question per row, and the row itself comes
 -- back beside its answer, so there is nothing to look up afterwards. A cell
--- holds a question or a nested packet, and so does this, so one question per
--- row needs no packet around it and several is the same call with a packet.
-each :: ToQ x => (a -> Text) -> (a -> x) -> [a] -> Q (CellJson x) (Each a (CellKind x))
+-- holds a question or a nested packet, and so does this.
+each :: (ToQ x, NestedQ x (QJson x)) => (a -> Text) -> (a -> x) -> [a] -> Q (QJson x) (Each a (QKind x))
 each key q rows = EachQ [(key r, r, toQ (q r)) | r <- rows]
 
 -- ---------------------------------------------------------------------------
@@ -455,49 +600,74 @@ instance Weighed Yes where
     | y >= 0.5 = Weight "yes" y (Just ("no", 1 - y)) Nothing
     | otherwise = Weight "no" (1 - y) (Just ("yes", y)) Nothing
 
-data Doubt
+-- | Which floor the answer failed.
+data Cause
   = NearTie (Text, Double) (Text, Double)  -- ^ winner and runner-up too close
   | Underweight Double                     -- ^ the winner's mass is below the floor
   | Unconfident Double                     -- ^ the provider's confidence is below the floor
   deriving (Show, Eq)
 
-data Policy = Policy
+-- | An answer the policy would not stand behind, and the line that says
+-- why. The line is the one a log, a notification or a planner reads, so
+-- nothing has to be rebuilt from the policy and the answer.
+data Doubt = Doubt { cause :: Cause, why :: Text } deriving (Show, Eq)
+
+-- | Three floors. The tag records which policy weighed an answer, so a
+-- step that must not be taken lightly can demand a verdict from the policy
+-- that suits it.
+data Policy (p :: Type) = Policy
   { minMass :: Double
   , minMargin :: Double
   , minConfidence :: Double
   } deriving (Show, Eq)
 
-doubt :: Weighed a => Policy -> a -> Maybe Doubt
+data Lenient
+data Careful
+data Strict
+
+-- | A verdict, carrying the policy that reached it. A function that merges,
+-- stops or files a receipt takes @Settled Strict r@ and no lesser verdict
+-- will do.
+newtype Settled (p :: Type) (r :: Type) = Settled r deriving (Show, Eq)
+
+instance Functor (Settled p) where
+  fmap f (Settled r) = Settled (f r)
+
+doubt :: Weighed a => Policy p -> a -> Maybe Doubt
 doubt policy a =
   let w = weigh a
+      out c = Just (Doubt c (say policy a (Just c)))
   in case winnerConfidence w of
-    Just c | c < minConfidence policy -> Just (Unconfident c)
-    _ | winnerMass w < minMass policy -> Just (Underweight (winnerMass w))
-    _ | Just (k2, m2) <- runnerUp w, winnerMass w - m2 < minMargin policy -> Just (NearTie (winner w, winnerMass w) (k2, m2))
+    Just c | c < minConfidence policy -> out (Unconfident c)
+    _ | winnerMass w < minMass policy -> out (Underweight (winnerMass w))
+    _ | Just (k2, m2) <- runnerUp w, winnerMass w - m2 < minMargin policy -> out (NearTie (winner w, winnerMass w) (k2, m2))
     _ -> Nothing
 
--- | The winner under a policy, or structured doubt. There is no way to get
--- a result without a handler for every alternative, so a confident answer
--- that means "no" or "missing" runs its own handler and never reads as a
--- pass.
-settle :: forall alts hs v r. Handles hs alts => Policy -> Chosen alts -> Alts (Handler v r) hs -> Either Doubt r
-settle policy a hs = maybe (Right (handle a hs)) Left (doubt policy a)
+-- | The winner under a policy, or a structured doubt. There is no way to
+-- get a result without a handler for every alternative, so a confident
+-- answer that means "no" or "missing" runs its own handler and never reads
+-- as a pass.
+settle :: forall alts hs r p. Handles hs alts r => Policy p -> Chosen alts -> Alts HandlerT hs -> Either Doubt (Settled p r)
+settle policy a hs = maybe (Right (Settled (handle a hs))) Left (doubt policy a)
 
--- | A proposition under a policy: yes, no, or structured doubt when the
+-- | A proposition under a policy: yes, no, or a structured doubt when the
 -- provider was not clear either way.
-judge :: Policy -> Yes -> Either Doubt Bool
-judge policy a = maybe (Right (yes a >= 0.5)) Left (doubt policy a)
+judge :: Policy p -> Yes -> Either Doubt (Settled p Bool)
+judge policy a = maybe (Right (Settled (yes a >= 0.5))) Left (doubt policy a)
 
 -- | One line saying why the policy settled or doubted the answer, with the
--- numbers behind it. Two-decimal formatting. This is the line a log or a
--- planner reads.
-explain :: Weighed a => Policy -> a -> Text
-explain policy a =
+-- numbers behind it. A doubt already carries this line as its @why@; this
+-- is how to get it for an answer that settled.
+explain :: Weighed a => Policy p -> a -> Text
+explain policy a = say policy a (fmap cause (doubt policy a))
+
+say :: Weighed a => Policy p -> a -> Maybe Cause -> Text
+say policy a mc =
   let w = weigh a
       margin = maybe (winnerMass w) (\(_, m2) -> winnerMass w - m2) (runnerUp w)
       items = [("confidence" :: Text, c, minConfidence policy) | Just c <- [winnerConfidence w]]
            ++ [("mass", winnerMass w, minMass policy), ("margin", margin, minMargin policy)]
-  in case doubt policy a of
+  in case mc of
     Nothing -> "settled on " <> winner w <> ": " <> T.intercalate ", " [n <> " " <> fmt2 v <> " \8805 " <> fmt2 t | (n, v, t) <- items]
     Just d ->
       let (ctor, failedName, failedValue, floorValue) = case d of
@@ -508,16 +678,22 @@ explain policy a =
           rest = [n <> " " <> fmt2 v | (n, v, _) <- items, n /= failedName]
       in "doubted " <> winner w <> " (" <> ctor <> "): " <> floorLine <> "; " <> T.intercalate ", " rest
 
--- | The winner against a handler per alternative in declaration order, with
--- no policy: for when the program follows whatever came back. A missing,
--- extra, or misordered handler is a type error naming the labels.
-handle :: forall alts hs v r. Handles hs alts => Chosen alts -> Alts (Handler v r) hs -> r
-handle a hs = altHandle hs (won a)
+-- | The winner against the handler its label names, with no policy: for
+-- when the program follows whatever came back. A missing, extra or
+-- duplicated handler is a type error naming the label.
+handle :: forall alts hs r. Handles hs alts r => Chosen alts -> Alts HandlerT hs -> r
+handle a hs = dispatch hs (won a)
+
+-- | The payload the winner was offered with, when every alternative carries
+-- the same kind of thing. Having them all is exhaustiveness by
+-- construction, so there is no handler list to write.
+taken :: Carries alts r => Chosen alts -> r
+taken a = carriedOf (won a)
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers. The one way to act on a runner-up.
-contenders :: forall alts hs v r. Handles hs alts => Double -> Chosen alts -> Alts (Handler v r) hs -> [(Double, r)]
-contenders floor' a hs = [(m, altHandle hs s) | (m, s) <- ranked a, m >= floor']
+contenders :: forall alts hs r. Handles hs alts r => Double -> Chosen alts -> Alts HandlerT hs -> [(Double, r)]
+contenders floor' a hs = [(m, dispatch hs s) | (m, s) <- ranked a, m >= floor']
 
 -- | Run the result for the level the score landed on. Levels run lowest to
 -- highest, so this walks from the highest down and takes the first whose
@@ -531,9 +707,6 @@ contenders floor' a hs = [(m, altHandle hs s) | (m, s) <- ranked a, m >= floor']
 grade :: Double -> Scored p levels -> p
 grade floor' a =
   let rs = results a
-      -- Mass at or above each level, aligned with the levels past the lowest.
-      -- It falls as the level rises, so the last one to clear the floor is the
-      -- highest that clears it, and the lowest level stands when none does.
       atOrAbove = drop 1 (scanr (+) 0 (map snd (scoreMasses a)))
   in foldl (\taken (r, m) -> if m >= floor' then r else taken) (NE.head rs) (zip (NE.tail rs) atOrAbove)
 
@@ -690,88 +863,187 @@ instance Schema v s => Endpoint v (Group s) where
   previewA (GroupA x) = previewSchema x
 
 -- ---------------------------------------------------------------------------
--- Packets
+-- Packets: a cell is a packet of one, and two packets join
 -- ---------------------------------------------------------------------------
 
+-- | A labeled cell.
 data (k :: Symbol) ::= (e :: Type)
+-- | Two packets joined. The type mirrors the value, so a lookup walks the
+-- shape the author wrote and packets compose.
+data (a :: Type) :& (b :: Type)
+infix 6 ::=
 
--- | A cell: a labeled question under 'Questions', a decoded answer under
--- 'Answers'.
-data Cell (k :: Symbol) (e :: Type) mode where
-  (:=) :: ToQ x => Label k -> x -> Cell k (CellKind x) (Questions (CellJson x))
-  Answered :: Endpoint v e => A v e -> Cell k e (Answers v)
+-- | What a cell holds under each mode: a question or a nested packet, an
+-- answer, or a state field at its own Haskell type.
+data Cell (e :: Type) (mode :: Type) where
+  Asked :: Q v e -> Cell e (Questions v)
+  Answered :: A v e -> Cell e (Answers v)
+  Given :: Field v a => a -> Cell a (Fields v)
+
+class ToCell (x :: Type) (mode :: Type) where
+  type CellOf x mode :: Type
+  toCell :: x -> Cell (CellOf x mode) mode
+
+instance (ToQ x, QJson x ~ v) => ToCell x (Questions v) where
+  type CellOf x (Questions v) = QKind x
+  toCell = Asked . toQ
+
+instance ToCell (A v e) (Answers v) where
+  type CellOf (A v e) (Answers v) = e
+  toCell = Answered
+
+instance Field v a => ToCell a (Fields v) where
+  type CellOf a (Fields v) = a
+  toCell = Given
+
+-- | What a cell needs to be sent, read back, or rendered.
+type family CellOk (mode :: Type) (e :: Type) :: Constraint where
+  CellOk (Questions v) e = Endpoint v e
+  CellOk (Answers v) e = Endpoint v e
+  CellOk (Fields v) a = Field v a
+
+-- | A nested packet is written in the mode of the packet that holds it, so
+-- the mode travels inward and nothing needs annotating.
+type family Nested (x :: Type) (mode :: Type) :: Constraint where
+  Nested (Packet t m) mode = (m ~ mode)
+  Nested x mode = ()
+
+-- | A nested packet inside a battery is in the questions mode too, so one
+-- written there needs no annotation either.
+type family NestedQ (x :: Type) (v :: Type) :: Constraint where
+  NestedQ (Packet t m) v = (m ~ Questions v)
+  NestedQ x v = ()
+
+data Packet (t :: Type) (mode :: Type) where
+  (:=) :: (KnownSymbol k, Nested x mode, ToCell x mode, CellOk mode (CellOf x mode))
+       => Label k -> x -> Packet (k ::= CellOf x mode) mode
+  (:&) :: Packet a mode -> Packet b mode -> Packet (a :& b) mode
 infix 6 :=
-
--- | What a cell may hold: a question, or a nested packet.
-type family CellKind (x :: Type) :: Type where
-  CellKind (Q v e) = e
-  CellKind (Packet fs (Questions v)) = Group (Packet fs)
-  CellKind x = TypeError ('Text "Jev: a cell holds a question or a nested packet; this is " ':<>: 'ShowType x)
-
-type family CellJson (x :: Type) :: Type where
-  CellJson (Q v e) = v
-  CellJson (Packet fs (Questions v)) = v
-
-class ToQ (x :: Type) where
-  toQ :: x -> Q (CellJson x) (CellKind x)
-instance ToQ (Q v e) where toQ = id
-instance ToQ (Packet fs (Questions v)) where toQ = GroupQ
-
-data Packet (fs :: [Type]) mode where
-  Nil :: Packet '[] mode
-  (:&) :: Cell k e mode -> Packet fs mode -> Packet (k ::= e ': fs) mode
 infixr 5 :&
 
-type family Labels (fs :: [Type]) :: ErrorMessage where
-  Labels '[] = 'Text "nothing"
-  Labels '[k ::= e] = 'Text "#" ':<>: 'Text k
-  Labels (k ::= e ': fs) = 'Text "#" ':<>: 'Text k ':<>: 'Text ", " ':<>: Labels fs
+type family PacketLabels (t :: Type) :: [Symbol] where
+  PacketLabels (k ::= e) = '[k]
+  PacketLabels (a :& b) = PacketLabels a ++ PacketLabels b
 
-type family Unique (fs :: [Type]) :: Constraint where
-  Unique '[] = ()
-  Unique (k ::= e ': fs) = (Absent k fs, Unique fs)
-type family Absent (k :: Symbol) (fs :: [Type]) :: Constraint where
-  Absent k '[] = ()
-  Absent k (k ::= e ': fs) = TypeError ('Text "Jev: duplicate packet label #" ':<>: 'Text k)
-  Absent k (j ::= e ': fs) = Absent k fs
+type family HasCell (k :: Symbol) (t :: Type) :: Bool where
+  HasCell k (k ::= e) = 'True
+  HasCell k (j ::= e) = 'False
+  HasCell k (a :& b) = HasCell k a || HasCell k b
 
--- | Field access on an answers packet, carrying the full label list for
--- the error message.
-class Get (k :: Symbol) (fs :: [Type]) (all :: [Type]) (e :: Type) | k fs all -> e where
-  get :: Packet fs (Answers v) -> Answers v :- e
-instance (TypeError ('Text "Jev: this packet has no #" ':<>: 'Text k ':<>: 'Text "; it has " ':<>: Labels all), e ~ ())
-  => Get k '[] all e where
-  get = undefined
-instance (flag ~ (k == j), Get' flag k (j ::= e' ': fs) all e) => Get k (j ::= e' ': fs) all e where
-  get = get' @flag @k @(j ::= e' ': fs) @all
-class Get' (flag :: Bool) (k :: Symbol) (fs :: [Type]) (all :: [Type]) (e :: Type) | flag k fs all -> e where
-  get' :: Packet fs (Answers v) -> Answers v :- e
-instance Get' 'True k (k ::= e ': fs) all e where
-  get' (Answered a :& _) = unwrapA a
-instance Get k fs all e => Get' 'False k (j ::= e' ': fs) all e where
-  get' (_ :& p) = get @k @fs @all p
+-- | Every label in a packet is written once.
+type Unique t = NoRepeats (PacketLabels t) ('Text "Jev: duplicate packet label")
 
-instance (Get k fs fs e, r ~ (Answers v :- e)) => HasField k (Packet fs (Answers v)) r where
-  getField = get @k @fs @fs
+-- | Field access on a packet, carrying the full label list for the error.
+class Get (k :: Symbol) (t :: Type) (all :: Type) (e :: Type) | k t all -> e where
+  getCell :: Packet t mode -> Cell e mode
 
--- | The packet traversal, by induction over the labels.
-class JsonValue v => PacketSchema v (fs :: [Type]) where
-  packetCompile :: Path -> Packet fs (Questions v) -> Either PrepError [(Text, WireQuestion v)]
-  packetDecode :: Path -> Packet fs (Questions v) -> [(Text, v)] -> Either DecodeError (Packet fs (Answers v))
-  packetPreview :: Packet fs (Answers v) -> [(Text, v)]
+instance GetLeaf (SameLabel k j) k j e' all e => Get k (j ::= e') all e where
+  getCell = getLeaf @(SameLabel k j) @k @j @e' @all
 
-instance JsonValue v => PacketSchema v '[] where
-  packetCompile _ Nil = Right []
-  packetDecode _ Nil _ = Right Nil
-  packetPreview Nil = []
+instance GetSide (HasCell k a) k a b all e => Get k (a :& b) all e where
+  getCell (x :& y) = getSide @(HasCell k a) @k @a @b @all x y
 
-instance (KnownSymbol k, Endpoint v e, PacketSchema v fs) => PacketSchema v (k ::= e ': fs) where
-  packetCompile p (_ := x :& rest) = (++) <$> compileQ (extend p (label @k)) (toQ x) <*> packetCompile p rest
-  packetDecode p (_ := x :& rest) ws = (:&) <$> (Answered <$> decodeA (extend p (label @k)) (toQ x) ws) <*> packetDecode p rest ws
-  packetPreview (Answered a :& rest) = (label @k, previewA a) : packetPreview rest
+class GetLeaf (hit :: Bool) (k :: Symbol) (j :: Symbol) (e' :: Type) (all :: Type) (e :: Type) | hit k j e' all -> e where
+  getLeaf :: Packet (j ::= e') mode -> Cell e mode
+instance e ~ e' => GetLeaf 'True k j e' all e where
+  getLeaf ((_ :: Label j) := (x :: x)) = toCell @x x
+instance (TypeError ('Text "Jev: this packet has no #" ':<>: 'Text k ':<>: 'Text "; it has " ':<>: ShowLabels (PacketLabels all)), e ~ ())
+  => GetLeaf 'False k j e' all e where
+  getLeaf = undefined
 
-instance (Show v, PacketSchema v fs) => Show (Packet fs (Answers v)) where
-  show p = show (jObject (packetPreview p))
+class GetSide (left :: Bool) (k :: Symbol) (a :: Type) (b :: Type) (all :: Type) (e :: Type) | left k a b all -> e where
+  getSide :: Packet a mode -> Packet b mode -> Cell e mode
+instance Get k a all e => GetSide 'True k a b all e where
+  getSide x _ = getCell @k @a @all x
+instance Get k b all e => GetSide 'False k a b all e where
+  getSide _ y = getCell @k @b @all y
+
+-- | A response reads by its packet's labels, and so does a state.
+instance (Get k t t e, r ~ (Answers v :- e), Endpoint v e) => HasField k (Packet t (Answers v)) r where
+  getField p = case getCell @k @t @t p of Answered a -> unwrapA a
+  {-# INLINE getField #-}
+
+-- ---------------------------------------------------------------------------
+-- Questions, as cell contents
+-- ---------------------------------------------------------------------------
+
+type family QKind (x :: Type) :: Type where
+  QKind (Q v e) = e
+  QKind (Packet t (Questions v)) = Group (Packet t)
+  QKind x = TypeError ('Text "Jev: a cell holds a question or a nested packet; this is " ':<>: 'ShowType x)
+
+type family QJson (x :: Type) :: Type where
+  QJson (Q v e) = v
+  QJson (Packet t (Questions v)) = v
+
+class ToQ (x :: Type) where
+  toQ :: x -> Q (QJson x) (QKind x)
+instance ToQ (Q v e) where toQ = id
+instance ToQ (Packet t (Questions v)) where toQ = GroupQ
+
+-- ---------------------------------------------------------------------------
+-- State: the shared input, with its fields kept
+-- ---------------------------------------------------------------------------
+
+-- | How a Haskell value becomes a state field. A nested state is a field,
+-- so a state's shape is written the way a packet is.
+class JsonValue v => Field v a where
+  toField :: a -> v
+
+instance JsonValue v => Field v Text where toField = jString
+instance JsonValue v => Field v Bool where toField = jBool
+instance JsonValue v => Field v Int where toField = jNumber . fromIntegral
+instance JsonValue v => Field v Double where toField = jNumber
+instance {-# OVERLAPPABLE #-} Field v a => Field v [a] where toField = jArray . map toField
+-- A list of keyed things is an object; pairs have no other reading here.
+instance {-# OVERLAPPING #-} Field v a => Field v [(Text, a)] where
+  toField xs = jObject [(k, toField x) | (k, x) <- xs]
+instance Field v a => Field v (Maybe a) where
+  toField = maybe jNull toField
+instance (JsonValue v, Unique t) => Field v (Packet t (Fields v)) where
+  toField = jObject . fieldPairs
+
+-- | The shared input to every question. Its fields keep their Haskell
+-- types, so a row the state carries is the row a question is built from.
+data State (v :: Type) (t :: Type) = State (Packet t (Fields v)) v
+
+-- | A state written the way a packet is.
+state :: (JsonValue v, Unique t) => Packet t (Fields v) -> State v t
+state p = State p (jObject (fieldPairs p))
+
+-- | A state sent as given, for a shape the authoring surface leaves out.
+-- The fields of such a state cannot be referenced.
+rawState :: v -> State v ()
+rawState = State (error "rawState: no fields")
+
+stateValue :: State v t -> v
+stateValue (State _ v) = v
+
+instance (Get k t t a, r ~ a) => HasField k (State v t) r where
+  getField (State p _) = case getCell @k @t @t p of Given a -> a
+
+instance (Get k t t a, r ~ a) => HasField k (Packet t (Fields v)) r where
+  getField p = case getCell @k @t @t p of Given a -> a
+
+-- | The name of a state field, as wording refers to it. A name the state
+-- does not have is a compile error listing the names it does. Only the
+-- name is checked, never the field's type: wording refers to a name.
+field :: forall k v t. (KnownSymbol k, StateHas k t) => Label k -> State v t -> Text
+field _ _ = "`" <> labelText @k <> "`"
+
+type StateHas k t = StateHas' (HasCell k t) k t
+type family StateHas' (there :: Bool) (k :: Symbol) (t :: Type) :: Constraint where
+  StateHas' 'True k t = ()
+  StateHas' 'False k t =
+    TypeError ('Text "Jev: this state has no #" ':<>: 'Text k ':<>: 'Text "; it has " ':<>: ShowLabels (PacketLabels t))
+
+fieldPairs :: forall v t. JsonValue v => Packet t (Fields v) -> [(Text, v)]
+fieldPairs = \case
+  (l :: Label k) := (x :: x) -> [(labelOf l, render (toCell @x @(Fields v) x))]
+  a :& b -> fieldPairs a ++ fieldPairs b
+  where
+    render :: Cell e (Fields v) -> v
+    render (Given a) = toField a
 
 -- ---------------------------------------------------------------------------
 -- Schemas
@@ -782,10 +1054,31 @@ class JsonValue v => Schema v (s :: Type -> Type) where
   decodeSchema :: Path -> s (Questions v) -> [(Text, v)] -> Either DecodeError (s (Answers v))
   previewSchema :: s (Answers v) -> v
 
-instance (JsonValue v, Unique fs, PacketSchema v fs) => Schema v (Packet fs) where
+instance (JsonValue v, Unique t) => Schema v (Packet t) where
   compileSchema = packetCompile
   decodeSchema = packetDecode
   previewSchema = jObject . packetPreview
+
+packetCompile :: forall v t. JsonValue v => Path -> Packet t (Questions v) -> Either PrepError [(Text, WireQuestion v)]
+packetCompile p = \case
+  (l :: Label k) := (x :: x) -> case toCell @x @(Questions v) x of
+    Asked q -> compileQ (extend p (labelOf l)) q
+  a :& b -> (++) <$> packetCompile p a <*> packetCompile p b
+
+packetDecode :: forall v t. JsonValue v => Path -> Packet t (Questions v) -> [(Text, v)] -> Either DecodeError (Packet t (Answers v))
+packetDecode p q ws = case q of
+  (l :: Label k) := (x :: x) -> case toCell @x @(Questions v) x of
+    Asked qq -> (l :=) <$> decodeA (extend p (labelOf l)) qq ws
+  a :& b -> (:&) <$> packetDecode p a ws <*> packetDecode p b ws
+
+packetPreview :: forall v t. JsonValue v => Packet t (Answers v) -> [(Text, v)]
+packetPreview = \case
+  (l :: Label k) := (x :: x) -> case toCell @x @(Answers v) x of
+    Answered a -> [(labelOf l, previewA a)]
+  a :& b -> packetPreview a ++ packetPreview b
+
+instance (JsonValue v, Show v, Unique t) => Show (Packet t (Answers v)) where
+  show p = show (jObject (packetPreview p))
 
 -- ---------------------------------------------------------------------------
 -- The operation: request, decode
@@ -796,6 +1089,12 @@ instance IsString Model where fromString = Model . T.pack
 
 jevLatest :: Model
 jevLatest = Model "jev-latest"
+
+-- | A transport and the model it is asked for, bound once.
+data Session (m :: Type -> Type) (v :: Type) = Session (v -> m (Either Text v)) Model
+
+session :: (v -> m (Either Text v)) -> Model -> Session m v
+session = Session
 
 -- | The flattened questions, with every preparation check applied.
 prepareWire :: Schema v s => s (Questions v) -> Either PrepError [(Text, WireQuestion v)]
@@ -812,9 +1111,9 @@ prepareWire q = do
   Right qs
 
 -- | The request body a transport sends.
-request :: Schema v s => Model -> State v -> s (Questions v) -> Either JevError v
+request :: Schema v s => Model -> State v t -> s (Questions v) -> Either JevError v
 request (Model m) st q = either (Left . Prepare) Right $ do
-  checkState st
+  checkState (stateValue st)
   qs <- prepareWire q
   Right (jObject
     [ ("model", jString m)
@@ -878,9 +1177,9 @@ data JevError = Prepare PrepError | Transport Text | Decode DecodeError
 
 roundTrip
   :: (Monad m, Schema v s)
-  => (v -> m (Either Text v)) -> Model -> State v -> s (Questions v)
+  => Session m v -> State v t -> s (Questions v)
   -> m (Either JevError (Response v s))
-roundTrip transport model st q = case request model st q of
+roundTrip (Session transport model) st q = case request model st q of
   Left e -> pure (Left e)
   Right body -> transport body >>= \case
     Left t -> pure (Left (Transport t))
@@ -888,7 +1187,10 @@ roundTrip transport model st q = case request model st q of
 
 -- | The tiny use: one question, one answer.
 jev1
-  :: (Monad m, Endpoint v e)
-  => (v -> m (Either Text v)) -> Model -> State v -> Q v e
+  :: forall m v e t. (Monad m, Endpoint v e)
+  => Session m v -> State v t -> Q v e
   -> m (Either JevError (Answers v :- e))
-jev1 transport model st q = fmap (fmap (\r -> case answers r of Answered a :& Nil -> unwrapA a)) (roundTrip transport model st ((Label :: Label "value") := q :& Nil))
+jev1 sess st q = fmap (fmap only) (roundTrip sess st ((Label :: Label "value") := q))
+  where
+    only r = case answers r of
+      (_ :: Label k) := (a :: a) -> case toCell @a @(Answers v) a of Answered x -> unwrapA x

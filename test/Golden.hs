@@ -19,7 +19,7 @@ import Data.Text (Text)
 import qualified Data.Vector as V
 import Fixtures
 import qualified Jev.Core as Core
-import Jev.Operators
+import Jev.Operators hiding (alt, level, many)
 import Replay
 import Shape
 import System.Directory (doesDirectoryExist, listDirectory)
@@ -31,8 +31,8 @@ import qualified Data.Aeson as Aeson
 -- Packets for the probe family that shares one state and one Noul
 -- ---------------------------------------------------------------------------
 
-probeState :: State
-probeState = state (object
+probeState :: State ()
+probeState = rawState (object
   [ "message" .= ("The worker cannot proceed until the missing configuration is supplied." :: Text)
   , "context" .= object ["active" .= True, "pending" .= (2 :: Int), "previous" .= Null]
   ])
@@ -45,20 +45,20 @@ wakeCriteria = Present (Just (Criteria
   (Present (object ["means" .= ("Current work cannot proceed" :: Text), "examples" .= ["Missing required input" :: Text]]))
   (Present (object ["means" .= ("Work can proceed without this message" :: Text)]))))
 
-wake :: Q Value Noul -> Packet '["wake" ::= Noul] Questions
-wake q = #wake := q :& Nil
+wake :: Q Value Noul -> Packet ("wake" ::= Noul) Questions
+wake q = #wake := q
 
-route :: [(Text, Value)] -> Packet '["route" ::= Choice (Many (Text, Value))] Questions
-route cs = #route := choice "Who owns configuration?" (many fst snd cs) :& Nil
+route :: [(Text, Value)] -> Packet ("route" ::= Choice ("row" ::* (Text, Value))) Questions
+route cs = #route := choice "Who owns configuration?" (many #row fst snd cs)
 
-count :: [Value] -> Packet '["count" ::= Scale] Questions
-count ls = #count := scale (question "How many messages are pending in `context.pending`?") ls :& Nil
+count :: [Value] -> Packet ("count" ::= Scale) Questions
+count ls = #count := scale (question "How many messages are pending in `context.pending`?") ls
 
 -- structured-001: the canonical mixed packet, on the authoring surface.
 type Owners = "configuration_owner" ::> Text :|: "reviewer" ::> Text :|: "neither" ::> ()
 type UrgencyLevels = "informational" :|: "blocking"
 
-triage :: Packet '[ "route" ::= Choice Owners, "urgency" ::= Score () UrgencyLevels, "wake" ::= Noul ] Questions
+triage :: Packet ( "route" ::= Choice Owners :& "urgency" ::= Score () UrgencyLevels :& "wake" ::= Noul ) Questions
 triage =
      #route := choiceWith (Core.Instructions (object ["question" .= ("Who can resolve the missing configuration?" :: Text), "focus" .= ["Current blocker" :: Text]]))
                  (  alt #configuration_owner (object ["handles" .= object ["configuration" .= ["missing values" :: Text, "invalid values"]]]) "config"
@@ -68,7 +68,6 @@ triage =
                  (  level #informational (object ["means" .= ("Useful information, work can continue" :: Text)]) ()
                  .| level #blocking (object ["means" .= ("Work cannot continue until someone responds" :: Text)]) () )
   :& #wake := noulWith wakeInstructions wakeCriteria
-  :& Nil
 
 -- world-conflict-001: Each, two nested packets, static and runtime choices,
 -- static levels. Rebuilt from the fixture's own wording, since it is long;
@@ -78,15 +77,15 @@ type Readiness = "unresolved_issue" :|: "partial_evidence" :|: "current_applicab
 type Kinds = "shared_decision" ::> () :|: "local_repair" ::> () :|: "ship" ::> () :|: "unknown" ::> ()
 type Pairs = "o1_o2" ::> () :|: "o3_o4" ::> () :|: "o4_o5" ::> ()
 
-type Branch = Packet '[ "action" ::= Choice Actions, "affected" ::= Noul, "readiness" ::= Score () Readiness ]
-type Decision = Packet '[ "owner" ::= Choice (Many (Text, Value)), "kind" ::= Choice Kinds, "witness" ::= Choice Pairs ]
-type Evidence = Packet '[ "old_review_applies" ::= Noul, "opinion_overrides" ::= Noul ]
-type World = Packet '[ "decision" ::= Group Decision, "branches" ::= Each Text (Group Branch), "evidence" ::= Group Evidence ]
+type Branch = Packet ( "action" ::= Choice Actions :& "affected" ::= Noul :& "readiness" ::= Score () Readiness )
+type Decision = Packet ( "owner" ::= Choice ("row" ::* (Text, Value)) :& "kind" ::= Choice Kinds :& "witness" ::= Choice Pairs )
+type Evidence = Packet ( "old_review_applies" ::= Noul :& "opinion_overrides" ::= Noul )
+type World = Packet ( "decision" ::= Group Decision :& "branches" ::= Each Text (Group Branch) :& "evidence" ::= Group Evidence )
 
 world :: Value -> World Questions
 world req =
      #decision :=
-       (  #owner := choiceWith (instr "decision.owner") (many fst snd (crit "decision.owner"))
+       (  #owner := choiceWith (instr "decision.owner") (many #row fst snd (crit "decision.owner"))
        :& #kind := choiceWith (instr "decision.kind")
             (  alt #shared_decision (descr "decision.kind" "shared_decision") ()
             .| alt #local_repair (descr "decision.kind" "local_repair") ()
@@ -95,14 +94,11 @@ world req =
        :& #witness := choiceWith (instr "decision.witness")
             (  alt #o1_o2 (descr "decision.witness" "o1_o2") ()
             .| alt #o3_o4 (descr "decision.witness" "o3_o4") ()
-            .| alt #o4_o5 (descr "decision.witness" "o4_o5") () )
-       :& Nil)
+            .| alt #o4_o5 (descr "decision.witness" "o4_o5") () ) )
   :& #branches := each id branch ["delivery", "search", "ui"]
   :& #evidence :=
        (  #old_review_applies := noulWith (instr "evidence.old_review_applies") Omitted
-       :& #opinion_overrides := noulWith (instr "evidence.opinion_overrides") Omitted
-       :& Nil)
-  :& Nil
+       :& #opinion_overrides := noulWith (instr "evidence.opinion_overrides") Omitted )
   where
     branch b =
          #action := choiceWith (instr ("branches." <> b <> ".action"))
@@ -114,7 +110,6 @@ world req =
             (  level #unresolved_issue (lvl ("branches." <> b <> ".readiness") 0) ()
             .| level #partial_evidence (lvl ("branches." <> b <> ".readiness") 1) ()
             .| level #current_applicable (lvl ("branches." <> b <> ".readiness") 2) () )
-      :& Nil
     q k = maybe Null id (lookup k (requestQuestions req))
     instr k = instructionsOf (q k)
     crit k = maybe [] objectPairs (lookup "criteria" (objectPairs (q k)))
@@ -125,7 +120,7 @@ world req =
 
 -- ---------------------------------------------------------------------------
 
-golden :: Schema s => Checks -> String -> State -> s Questions -> (Response s -> IO ()) -> IO ()
+golden :: Schema Value s => Checks -> String -> State () -> s Questions -> (Response s -> IO ()) -> IO ()
 golden c name st q inspectAnswers = do
   fx <- loadFixture name
   case request (Core.Model (requestModel (fixtureRequest fx))) st q of
@@ -177,10 +172,10 @@ goldenChecks c = do
   instrGolden "instructions-empty-string" (Core.Instructions "")
 
   -- state forms
-  golden c "state-array" (state (toJSON [object ["message" .= ("Waiting for configuration" :: Text)], Bool True, Number 2, Null])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-string" (state "") (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-object" (state (object [])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
-  golden c "state-empty-array" (state (Array V.empty)) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-array" (rawState (toJSON [object ["message" .= ("Waiting for configuration" :: Text)], Bool True, Number 2, Null])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-string" (rawState "") (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-object" (rawState (object [])) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
+  golden c "state-empty-array" (rawState (Array V.empty)) (wake (noulWith wakeInstructions wakeCriteria)) (\_ -> pure ())
 
   -- runtime choices and description forms
   let routeGolden name cs inspectPick = golden c name probeState (route cs) inspectPick
@@ -194,10 +189,10 @@ goldenChecks c = do
     [("owner", object ["rules" .= [Bool True, Bool False, Null, Number 3.5, object ["nested" .= ["configuration" :: Text]]]]), ("reviewer", "Reviews completed work")] (\_ -> pure ())
   fx255 <- loadFixture "choice255"
   golden c "choice255" probeState (route (maybe [] objectPairs (lookup "criteria" (objectPairs (maybe Null id (lookup "route" (requestQuestions (fixtureRequest fx255)))))))) $ \resp ->
-    checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route (onMany (\k _ -> k))))
+    checkEq c "choice255: all 255 ranked" 255 (length (contenders 0 (answers resp).route (#row (\k _ -> k))))
 
   -- exact keys at the root
-  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many fst snd
+  golden c "escaped-keys" probeState (exact [("route/~. λ", someQ (choice "Who owns configuration?" (many #row fst snd
     [("configuration / ~ λ", object ["owns" .= ("configuration" :: Text)]), ("reviewer\n\"quoted\"", Null)])))]) $ \resp ->
     check c "escaped-keys: picked payload through an exact key" (case exactAnswers (answers resp) of
       [(_, SomeA _ _)] -> True
@@ -208,11 +203,11 @@ goldenChecks c = do
     checkEq c "score-ten: expectation" 2.0 (scaleExpectation (answers resp).count)
     checkEq c "score-ten: ten levels back in order" 10 (length (scaleMasses (answers resp).count))
   golden c "score-one" probeState (count [object ["pending_messages" .= (0 :: Int)]]) (\_ -> pure ())
-  golden c "score-array-level" probeState (#urgency := scale (question "How urgent is the message?") [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]] :& Nil) (\_ -> pure ())
+  golden c "score-array-level" probeState (#urgency := scale (question "How urgent is the message?") [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]]) (\_ -> pure ())
 
   -- the large mixed program
   fxWorld <- loadFixture "world-conflict"
-  golden c "world-conflict" (state (requestState (fixtureRequest fxWorld))) (world (fixtureRequest fxWorld)) $ \resp -> do
+  golden c "world-conflict" (rawState (requestState (fixtureRequest fxWorld))) (world (fixtureRequest fxWorld)) $ \resp -> do
     let a = answers resp
     checkEq c "world-conflict: three branches rebuilt" ["delivery", "search", "ui"] (map fst a.branches)
     checkEq c "world-conflict: delivery action" (Just "hold_for_contract")
