@@ -14,5 +14,5 @@ import Jev.Operators
 -- Every alternative needs a handler; a lone handler cannot stand for two.
 type Next = "rerun" ::> () :|: "ask_model" ::> ()
 
-bad :: A Value (Choice Next) -> String
+bad :: Chosen Next -> String
 bad a = handle a (#rerun (\() -> "rerun"))

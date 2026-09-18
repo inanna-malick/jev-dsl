@@ -39,11 +39,11 @@ module Jev.Core.Schema
   , Unique, Get
     -- * Endpoints
   , Noul, Choice, Score, Each, Group
-  , Q (..), A (..)
+  , Q (..), A (..), Yes (..), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Alternatives and rubric levels
   , type (::>), type (:|:), Many, Offer, Handler, Level, Interp
   , Alts (..), Single, (.|), alt, many, onMany, level
-  , Alternatives, AltsOk, Match, Handles, Levels, RubricOk, Index, Selected, Ranked
+  , Alternatives, AltsOk, Match, Handles, Levels, RubricOk, Index, Selected
     -- * Builders
   , noul, choice, score, each
     -- * Results
@@ -86,6 +86,9 @@ data Answers (v :: Type)
 -- leaf; answers are transparent for nesting.
 type family mode :- (e :: Type) :: Type where
   Questions v :- e = Q v e
+  Answers v :- Noul = Yes
+  Answers v :- Choice alts = Chosen alts
+  Answers v :- Score p levels = Scored p levels
   Answers v :- Group s = s (Answers v)
   Answers v :- Each a e = [(a, Answers v :- e)]
   Answers v :- e = A v e
@@ -219,12 +222,12 @@ type Handles hs alts = (Alternatives alts, Match hs alts, hs ~ alts)
 
 -- | The selected alternative, carrying the payload it was offered with. A
 -- selection has no key of its own: it is consumed by 'handle', and the
--- answer record it came from carries the key for logs.
-data Selected v alts where
-  SelOne :: p -> Selected v (k ::> p)
-  SelMany :: Text -> v -> p -> Selected v (Many p)
-  SelLeft :: Selected v x -> Selected v (x :|: rest)
-  SelRight :: Selected v rest -> Selected v (x :|: rest)
+-- answer it came from carries the key for logs.
+data Selected alts where
+  SelOne :: p -> Selected (k ::> p)
+  SelMany :: Text -> p -> Selected (Many p)
+  SelLeft :: Selected x -> Selected (x :|: rest)
+  SelRight :: Selected rest -> Selected (x :|: rest)
 
 -- | Static labels unique, checked at compile time; counts at preparation.
 type family AltsOk (alts :: Type) :: Constraint where
@@ -248,9 +251,9 @@ type family (++) (a :: [k]) (b :: [k]) :: [k] where
 -- | Compile, decode, and eliminate a disjunction shape by shape.
 class Alternatives (alts :: Type) where
   altWire :: JsonValue v => Text -> Alts (Offer v) alts -> Either PrepError [(Text, v)]
-  altSelect :: Alts (Offer v) alts -> Text -> Maybe (Selected v alts)
-  altHandle :: Alts (Handler v r) alts -> Selected v alts -> r
-  altKeyOf :: Selected v alts -> Text
+  altSelect :: Alts (Offer v) alts -> Text -> Maybe (Selected alts)
+  altHandle :: Alts (Handler v r) alts -> Selected alts -> r
+  altKeyOf :: Selected alts -> Text
 
 instance KnownSymbol k => Alternatives (k ::> p) where
   altWire key (One (d, _)) = checkDescription key (label @k) d >> Right [(label @k, d)]
@@ -265,11 +268,11 @@ instance Alternatives (Many p) where
     mapM_ (\(k, d, _) -> checkDescription key k d) es
     Right [(k, d) | (k, d, _) <- es]
   altSelect (Grp es) sel =
-    case [SelMany k d p | (k, d, p) <- es, k == sel] of
+    case [SelMany k p | (k, _, p) <- es, k == sel] of
       e : _ -> Just e
       [] -> Nothing
-  altHandle (Grp h) (SelMany k _ p) = h k p
-  altKeyOf (SelMany k _ _) = k
+  altHandle (Grp h) (SelMany k p) = h k p
+  altKeyOf (SelMany k _) = k
 
 instance (Alternatives x, Alternatives rest) => Alternatives (x :|: rest) where
   altWire key (c :| rest) = (++) <$> altWire key c <*> altWire key rest
@@ -324,40 +327,40 @@ type family IndexIn (l :: Symbol) (ls :: [Symbol]) :: Nat where
 
 data instance Q v Noul = NoulQ (Instructions v) (Presence (Maybe (Criteria v)))
 
--- | What the provider said about a proposition, in one field.
-newtype instance A v Noul = NoulA { yes :: Double }
+-- | What the provider said about a proposition: @a.enough.yes@.
+newtype Yes = Yes { yes :: Double }
+newtype instance A v Noul = NoulA Yes
 
 data instance Q v (Choice alts) = ChoiceQ (Instructions v) (Alts (Offer v) alts)
 
--- | What the provider chose, with everything a caller judges it by. Read
--- the fields with record dot: @a.next.key@, @a.next.margin@.
-data instance A v (Choice alts) = Chosen
+-- | What the provider chose, with everything a caller judges it by:
+-- @a.next.key@, @a.next.margin@. The fields are all there is to read; the
+-- alternative that won is reached only through 'settle', 'handle' or
+-- 'contenders', each of which takes a handler per alternative, so a
+-- program cannot hold a selection it has not written a branch for.
+data Chosen alts = Chosen
   { key :: Text                          -- ^ the winner's wire key
   , mass :: Double                       -- ^ the winner's probability
   , margin :: Double                     -- ^ winner minus runner-up; the mass when it stands alone
   , confidence :: Double                 -- ^ the provider's own confidence
   , masses :: [(Text, Double)]           -- ^ the full distribution, best first
-  , ranked :: Ranked v alts              -- ^ opaque: what 'settle', 'handle' and 'contenders' read
+  , won :: Selected alts                 -- the alternative that won
+  , ranked :: [(Double, Selected alts)]  -- every alternative by mass, best first
   }
-
--- | The alternative that won, and every alternative by mass, best first.
--- Abstract: the constructor is not exported, so the only way to reach a
--- selection is 'settle', 'handle' or 'contenders', each of which takes a
--- handler per alternative. A program cannot hold one it has not written a
--- branch for.
-data Ranked v alts = Ranked (Selected v alts) [(Double, Selected v alts)]
+newtype instance A v (Choice alts) = ChoiceA (Chosen alts)
 
 data instance Q v (Score p levels) = ScoreQ (Instructions v) (Alts (Level v p) levels)
 
--- | Where on the rubric the provider landed. Read with record dot:
--- @a.urgency.expectation@, @a.urgency.masses@; 'grade' picks one of the
--- results the rubric was written with.
-data instance A v (Score p levels) = Scored
+-- | Where on the rubric the provider landed: @a.urgency.expectation@,
+-- @a.urgency.masses@. The results the rubric was written with are reached
+-- only through 'grade'.
+data Scored (p :: Type) (levels :: k) = Scored
   { expectation :: Double        -- ^ the expected level index
   , confidence :: Double         -- ^ the provider's own confidence
   , masses :: [(Text, Double)]   -- ^ the distribution, by level label, in level order
-  , results :: NonEmpty p        -- ^ every level's result, in level order
+  , results :: NonEmpty p        -- every level's result, in level order
   }
+newtype instance A v (Score p levels) = ScoreA (Scored p levels)
 
 newtype instance Q v (Each a e) = EachQ [(Text, a, Q v e)]
 newtype instance A v (Each a e) = EachA [(Text, a, A v e)]
@@ -367,29 +370,29 @@ newtype instance A v (Group s) = GroupA (s (Answers v))
 
 -- Internal readers: 'confidence' and 'masses' are fields of two records, so
 -- the module names them by pattern rather than by an ambiguous selector.
-chosenMasses :: A v (Choice alts) -> [(Text, Double)]
+chosenMasses :: Chosen alts -> [(Text, Double)]
 chosenMasses Chosen { masses = ms } = ms
 
-chosenConfidence :: A v (Choice alts) -> Double
+chosenConfidence :: Chosen alts -> Double
 chosenConfidence Chosen { confidence = c } = c
 
-scoreMasses :: A v (Score p levels) -> [(Text, Double)]
+scoreMasses :: Scored p levels -> [(Text, Double)]
 scoreMasses Scored { masses = ms } = ms
 
-scoreConfidence :: A v (Score p levels) -> Double
+scoreConfidence :: Scored p levels -> Double
 scoreConfidence Scored { confidence = c } = c
 
 -- | Answers print as their own fields. Probabilities are shown to two
 -- decimals: they are a provider's judgment, not an exact quantity.
-instance Show (A v Noul) where
+instance Show Yes where
   show a = "Noul {yes = " <> T.unpack (fmt2 (yes a)) <> "}"
 
-instance Show (A v (Choice alts)) where
+instance Show (Chosen alts) where
   show a@Chosen { key = k, mass = m, margin = g } =
     "Choice {key = " <> show k <> ", mass = " <> T.unpack (fmt2 m) <> ", margin = " <> T.unpack (fmt2 g)
       <> ", confidence = " <> T.unpack (fmt2 (chosenConfidence a)) <> ", masses = " <> T.unpack (showMasses (chosenMasses a)) <> "}"
 
-instance Show (A v (Score p levels)) where
+instance Show (Scored p levels) where
   show a@Scored { expectation = e } =
     "Score {expectation = " <> T.unpack (fmt2 e)
       <> ", confidence = " <> T.unpack (fmt2 (scoreConfidence a)) <> ", masses = " <> T.unpack (showMasses (scoreMasses a)) <> "}"
@@ -436,10 +439,10 @@ data Weight = Weight
 
 -- | Answers a 'Policy' can weigh. A choice weighs its distribution; a Noul
 -- weighs yes against no, with no confidence to consult.
-class Weighed e where
-  weigh :: A v e -> Weight
+class Weighed a where
+  weigh :: a -> Weight
 
-instance Weighed (Choice alts) where
+instance Weighed (Chosen alts) where
   weigh a@Chosen { key = k, mass = m } = Weight
     { winner = k
     , winnerMass = m
@@ -447,8 +450,8 @@ instance Weighed (Choice alts) where
     , winnerConfidence = Just (chosenConfidence a)
     }
 
-instance Weighed Noul where
-  weigh (NoulA y)
+instance Weighed Yes where
+  weigh (Yes y)
     | y >= 0.5 = Weight "yes" y (Just ("no", 1 - y)) Nothing
     | otherwise = Weight "no" (1 - y) (Just ("yes", y)) Nothing
 
@@ -464,7 +467,7 @@ data Policy = Policy
   , minConfidence :: Double
   } deriving (Show, Eq)
 
-doubt :: Weighed e => Policy -> A v e -> Maybe Doubt
+doubt :: Weighed a => Policy -> a -> Maybe Doubt
 doubt policy a =
   let w = weigh a
   in case winnerConfidence w of
@@ -477,18 +480,18 @@ doubt policy a =
 -- a result without a handler for every alternative, so a confident answer
 -- that means "no" or "missing" runs its own handler and never reads as a
 -- pass.
-settle :: forall alts hs v r. Handles hs alts => Policy -> A v (Choice alts) -> Alts (Handler v r) hs -> Either Doubt r
+settle :: forall alts hs v r. Handles hs alts => Policy -> Chosen alts -> Alts (Handler v r) hs -> Either Doubt r
 settle policy a hs = maybe (Right (handle a hs)) Left (doubt policy a)
 
 -- | A proposition under a policy: yes, no, or structured doubt when the
 -- provider was not clear either way.
-judge :: Policy -> A v Noul -> Either Doubt Bool
+judge :: Policy -> Yes -> Either Doubt Bool
 judge policy a = maybe (Right (yes a >= 0.5)) Left (doubt policy a)
 
 -- | One line saying why the policy settled or doubted the answer, with the
 -- numbers behind it. Two-decimal formatting. This is the line a log or a
 -- planner reads.
-explain :: Weighed e => Policy -> A v e -> Text
+explain :: Weighed a => Policy -> a -> Text
 explain policy a =
   let w = weigh a
       margin = maybe (winnerMass w) (\(_, m2) -> winnerMass w - m2) (runnerUp w)
@@ -508,13 +511,13 @@ explain policy a =
 -- | The winner against a handler per alternative in declaration order, with
 -- no policy: for when the program follows whatever came back. A missing,
 -- extra, or misordered handler is a type error naming the labels.
-handle :: forall alts hs v r. Handles hs alts => A v (Choice alts) -> Alts (Handler v r) hs -> r
-handle a hs = case ranked a of Ranked sel _ -> altHandle hs sel
+handle :: forall alts hs v r. Handles hs alts => Chosen alts -> Alts (Handler v r) hs -> r
+handle a hs = altHandle hs (won a)
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers. The one way to act on a runner-up.
-contenders :: forall alts hs v r. Handles hs alts => Double -> A v (Choice alts) -> Alts (Handler v r) hs -> [(Double, r)]
-contenders floor' a hs = case ranked a of Ranked _ rs -> [(m, altHandle hs s) | (m, s) <- rs, m >= floor']
+contenders :: forall alts hs v r. Handles hs alts => Double -> Chosen alts -> Alts (Handler v r) hs -> [(Double, r)]
+contenders floor' a hs = [(m, altHandle hs s) | (m, s) <- ranked a, m >= floor']
 
 -- | Run the result for the level the score landed on. Levels run lowest to
 -- highest, so this walks from the highest down and takes the first whose
@@ -525,7 +528,7 @@ contenders floor' a hs = case ranked a of Ranked _ rs -> [(m, altHandle hs s) | 
 -- distribution is flat, which is why this gives no 'Doubt'. Every level
 -- carries its result from the moment it is written, so there is no list to
 -- check and no label string to dispatch on.
-grade :: Double -> A v (Score p levels) -> p
+grade :: Double -> Scored p levels -> p
 grade floor' a =
   let rs = results a
       -- Mass at or above each level, aligned with the levels past the lowest.
@@ -535,7 +538,7 @@ grade floor' a =
   in foldl (\taken (r, m) -> if m >= floor' then r else taken) (NE.head rs) (zip (NE.tail rs) atOrAbove)
 
 -- | Mass at or beyond a level, by label.
-massAtOrAbove :: forall l levels p v. KnownNat (Index l levels) => Label l -> A v (Score p levels) -> Double
+massAtOrAbove :: forall l levels p. KnownNat (Index l levels) => Label l -> Scored p levels -> Double
 massAtOrAbove _ a = sum [m | (i, m) <- zip [0 :: Integer ..] (map snd (scoreMasses a)), i >= natVal (Proxy @(Index l levels))]
 
 -- ---------------------------------------------------------------------------
@@ -589,9 +592,9 @@ instance JsonValue v => Endpoint v Noul where
     Right (leaf key (WNoul i c))
   decodeA p _ ws = lookupAnswer p ws >>= \v -> do
     NoulAnswer x <- parseNoul (encodePath p) v
-    Right (NoulA x)
-  unwrapA = id
-  previewA a = jObject [("yes", jNumber (yes a))]
+    Right (NoulA (Yes x))
+  unwrapA (NoulA a) = a
+  previewA (NoulA a) = jObject [("yes", jNumber (yes a))]
 
 instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
   compileQ p (ChoiceQ i offer) = do
@@ -616,16 +619,17 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
         pickedMass = maybe 0 id (lookup pickedKey best)
         beaten = [m | (k, m) <- best, k /= pickedKey]
         pickedMargin = case beaten of { m : _ -> pickedMass - m; [] -> pickedMass }
-    Right Chosen
+    Right (ChoiceA Chosen
       { key = pickedKey
       , mass = pickedMass
       , margin = pickedMargin
       , confidence = conf
       , masses = best
-      , ranked = Ranked picked everyAlt
-      }
-  unwrapA = id
-  previewA a@Chosen { key = k, mass = m, margin = g } = jObject
+      , won = picked
+      , ranked = everyAlt
+      })
+  unwrapA (ChoiceA a) = a
+  previewA (ChoiceA a@Chosen { key = k, mass = m, margin = g }) = jObject
     [ ("key", jString k)
     , ("mass", jNumber m)
     , ("margin", jNumber g)
@@ -654,9 +658,9 @@ instance (JsonValue v, Levels levels) => Endpoint v (Score p levels) where
     checkLegend key [w | (_, w, _) <- NE.toList entries] lg
     checkExpectation key (length labels) e
     let byIndex = [(l, maybe 0 id (lookup i ms)) | (i, l) <- zip indices labels]
-    Right Scored { expectation = e, confidence = conf, masses = byIndex, results = fmap (\(_, _, r) -> r) entries }
-  unwrapA = id
-  previewA a@Scored { expectation = e } = jObject
+    Right (ScoreA Scored { expectation = e, confidence = conf, masses = byIndex, results = fmap (\(_, _, r) -> r) entries })
+  unwrapA (ScoreA a) = a
+  previewA (ScoreA a@Scored { expectation = e }) = jObject
     [ ("expectation", jNumber e)
     , ("confidence", jNumber (scoreConfidence a))
     , ("masses", jObject [(ml, jNumber m) | (ml, m) <- scoreMasses a])

@@ -26,9 +26,13 @@ Breaking, since the first cut:
   `(Alternatives alts, Match hs alts, hs ~ alts)`, for a helper's own
   signature over a handler list. It replaces `Alternatives` on the
   authoring surface, which is no longer exported from `Jev.Operators`.
-- A selection is abstract. `Selected` and `Ranked` no longer export their
-  constructors, so the only way to reach the alternative that won is
-  `settle`, `handle` or `contenders`, each of which takes a handler for
-  every alternative.
+- Answers are abstract. The answer to a choice is a `Chosen alts`, to a
+  Noul a `Yes`, to a score a `Scored p levels`, each exporting its fields
+  and nothing else: an answer cannot be built or matched, the alternative
+  that won is reached only through `settle`, `handle` or `contenders`,
+  and a level's result only through `grade`. `A` is no longer on the
+  authoring surface; a helper's signature reads `Chosen Routes -> Text`
+  where it read `A Value (Choice Routes) -> Text`, and `explain` takes
+  any answer a policy can weigh.
 - An optional question is a battery of none or one: an empty `each`
   renders to nothing on the wire and decodes back to `[]`.

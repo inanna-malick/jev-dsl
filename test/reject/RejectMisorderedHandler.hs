@@ -14,5 +14,5 @@ import Jev.Operators
 -- Handlers follow declaration order, so a reader can check them against the type.
 type Next = "rerun" ::> () :|: "ask_model" ::> ()
 
-bad :: A Value (Choice Next) -> String
+bad :: Chosen Next -> String
 bad a = handle a (#ask_model (\() -> "ask") .| #rerun (\() -> "rerun"))

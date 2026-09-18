@@ -14,5 +14,5 @@ import Jev.Operators
 -- A runtime group has no static label to handle by.
 type Next = "rerun" ::> () :|: Many Int
 
-bad :: A Value (Choice Next) -> String
+bad :: Chosen Next -> String
 bad a = handle a (#rerun (\() -> "rerun") .| #edge (\(_ :: Int) -> "edge"))

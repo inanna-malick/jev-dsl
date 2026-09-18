@@ -143,7 +143,7 @@ golden c name st q inspectAnswers = do
           checkEq c (name ++ ": usage verbatim") (Usage (usageField "input_tokens") (usageField "output_tokens")) (usage resp)
           inspectAnswers resp
 
-manyKey :: A Value (Choice alts) -> Text
+manyKey :: Chosen alts -> Text
 manyKey = (.key)
 
 goldenChecks :: Checks -> IO ()

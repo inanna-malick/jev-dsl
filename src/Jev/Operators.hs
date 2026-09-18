@@ -51,11 +51,10 @@ module Jev.Operators
   , alt, many, (.|), onMany
     -- * Rubrics
   , level, massAtOrAbove
-    -- * Answers, as fields: @a.next.key@, @a.enough.yes@
-    -- (a Noul carries @yes@; a choice @key@, @mass@, @margin@,
-    -- @confidence@, @masses@; a score @expectation@, @confidence@,
-    -- @masses@.)
-  , A (..)
+    -- * Answers, as fields: @a.next.key@, @a.enough.yes@. The fields are
+    -- all there is: an answer cannot be built or matched, and what it
+    -- decides is reached through 'settle', 'judge' and 'grade'.
+  , Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Acting on answers
   , settle, judge, grade, explain, handle, contenders
   , Policy (..), routing, spawning, merging, Doubt (..), Weighed
@@ -80,7 +79,7 @@ import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
 import qualified Jev.Core as Core
 import Jev.Core
-  ( A (..), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, Handles, JevError (..), Label, Many, Model, Noul, Weighed
+  ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses), Alternatives, Choice, DecodeError (..), Doubt (..), Each, Group, Handles, JevError (..), Label, Many, Model, Noul, Weighed
   , Packet (..), Cell (..), PrepError (..), Q, Score, type (:-), type (::=), type (::>), type (:|:), Policy (..)
   , Rejection (..), ValidationIssue (..)
   )
@@ -145,11 +144,11 @@ state = Core.state
 -- | The winner under a policy through a handler per alternative, or
 -- structured doubt. A choice gives no result without a handler for every
 -- alternative.
-settle :: Handles hs alts => Policy -> A Value (Choice alts) -> Handlers r hs -> Either Doubt r
+settle :: Handles hs alts => Policy -> Chosen alts -> Handlers r hs -> Either Doubt r
 settle = Core.settle
 
 -- | A proposition under a policy: yes, no, or doubt.
-judge :: Policy -> A Value Noul -> Either Doubt Bool
+judge :: Policy -> Yes -> Either Doubt Bool
 judge = Core.judge
 
 -- | The result for the level a score landed on: the highest level whose
@@ -157,22 +156,22 @@ judge = Core.judge
 -- floor of 0.5 that is the median level. The result was written beside the
 -- level's wording, so a rubric is never dispatched on by its label strings
 -- and there is no list to keep in step.
-grade :: Double -> A Value (Score p levels) -> p
+grade :: Double -> Scored p levels -> p
 grade = Core.grade
 
 -- | One line saying why the policy settled or doubted the answer, with the
 -- numbers behind it. Works on a choice or a Noul.
-explain :: Weighed e => Policy -> A Value e -> Text
+explain :: Weighed a => Policy -> a -> Text
 explain = Core.explain
 
 -- | The winner through a handler per alternative, with no policy: for when
 -- the program follows whatever came back.
-handle :: Handles hs alts => A Value (Choice alts) -> Handlers r hs -> r
+handle :: Handles hs alts => Chosen alts -> Handlers r hs -> r
 handle = Core.handle
 
 -- | Every alternative at or above a mass floor, best first, each already
 -- through the same handlers.
-contenders :: Handles hs alts => Double -> A Value (Choice alts) -> Handlers r hs -> [(Double, r)]
+contenders :: Handles hs alts => Double -> Chosen alts -> Handlers r hs -> [(Double, r)]
 contenders = Core.contenders
 
 -- | Read-only choices: which file, which skill.
@@ -187,13 +186,16 @@ spawning = Policy 0.55 0.20 0.70
 merging :: Policy
 merging = Policy 0.70 0.40 0.85
 
-massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> A Value (Score p levels) -> Double
+massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> Scored p levels -> Double
 massAtOrAbove = Core.massAtOrAbove
 
 -- | An answer is a ledger row: @toJSON a.next@.
-instance ToJSON (A Value Noul) where toJSON = Core.previewA
-instance Alternatives alts => ToJSON (A Value (Choice alts)) where toJSON = Core.previewA
-instance Core.Levels levels => ToJSON (A Value (Score p levels)) where toJSON = Core.previewA
+instance ToJSON Yes where toJSON = preview . Core.NoulA
+instance Alternatives alts => ToJSON (Chosen alts) where toJSON = preview . Core.ChoiceA
+instance Core.Levels levels => ToJSON (Scored p levels) where toJSON = preview . Core.ScoreA
+
+preview :: Core.Endpoint Value e => Core.A Value e -> Value
+preview = Core.previewA
 
 -- | A whole answers packet is a ledger row too: @toJSON (answers resp)@.
 instance (Core.Unique fs, Core.PacketSchema Value fs) => ToJSON (Packet fs Answers) where

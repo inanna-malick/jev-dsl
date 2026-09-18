@@ -135,6 +135,10 @@ The rest of an answer is fields, read with record dot:
 | `noul` | `yes` |
 | `score` | `expectation`, `confidence`, `masses` (by level, in order) |
 
+Those are all there is to read. An answer cannot be built or matched, and
+its type is what a helper's signature names: `Chosen alts` for a choice,
+`Yes` for a Noul, `Scored p levels` for a score.
+
 Each kind has one typed consumer: `settle` for a choice, `judge` for a Noul,
 `grade` for a score. `settle` and `handle` take a handler list as a value and
 so cannot hand back a result the program did not write a case for. `grade`

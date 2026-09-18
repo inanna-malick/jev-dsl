@@ -14,5 +14,5 @@ import Jev.Operators
 -- A handler for an alternative that was never offered is a mistake, not dead code.
 type Next = "rerun" ::> () :|: "ask_model" ::> ()
 
-bad :: A Value (Choice Next) -> String
+bad :: Chosen Next -> String
 bad a = handle a (#rerun (\() -> "rerun") .| #ask_model (\() -> "ask") .| #more (\() -> "more"))

@@ -15,5 +15,5 @@ import Jev.Operators
 -- "missing" cannot read as a pass by omission.
 type Next = "rerun" ::> () :|: "missing" ::> ()
 
-bad :: A Value (Choice Next) -> Either Doubt String
+bad :: Chosen Next -> Either Doubt String
 bad a = settle routing a (#rerun (\() -> "rerun"))
