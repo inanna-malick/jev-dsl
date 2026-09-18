@@ -18,10 +18,55 @@ polymorphic over the JSON type, for an environment that cannot load aeson.
 Every example below is compiled, by `test/Readme.hs` or as part of
 `examples/Guard.hs`.
 
-Jev answers three kinds of question. A **Noul** is a proposition, answered
-with one probability. A **choice** picks one of a set of labelled
-alternatives. A **score** grades something on an ordered rubric. Nothing
-else is generated: the model never writes a string your program runs.
+## What Jev is
+
+[Jev](https://docs.typesafe.ai) is a hosted judgment model from TypeSafe.
+It is not a chat model and there is no prompt. You send it a **state** —
+whatever the situation is, as JSON — and a **map of labelled questions**
+about that state, and it answers all of them in one call, as probabilities
+rather than prose.
+
+There are three kinds of question and nothing else:
+
+| Kind | Asks | Comes back as |
+|---|---|---|
+| **Noul** | a proposition | one probability that it holds |
+| **choice** | which one of these labelled alternatives applies | the winner, a mass for every alternative, and a confidence |
+| **score** | where this falls on an ordered rubric of one to ten levels | a mass per level and an expectation |
+
+That is the whole vocabulary. It is a system-1 shape: fast judgment over a
+situation you supply, with no generation step. Three things follow, and
+they are why a typed DSL is worth building over it rather than over a chat
+completion.
+
+**Nothing comes back to parse.** The answer to a choice is one of the keys
+you sent, and no answer is free text, so there is no format to coax and no
+retry loop for malformed output. It does not make the state trustworthy —
+text in the state can still steer which alternative wins — but it bounds
+the damage: a hostile state can move the answer among the branches you
+wrote, never introduce one you did not.
+
+**The numbers are the product, not a by-product.** A choice at 0.78 with a
+runner-up at 0.17 is a different situation from the same winner at 0.78
+with a runner-up at 0.74, and a program can act on that difference. This is
+what the policies in this library are: three named floors over mass,
+margin and confidence, so "the model said yes" becomes "the model said yes
+strongly enough for a step this expensive".
+
+**One call answers many questions about one situation.** The state is sent
+once and every question sees it, so asking twenty per-item questions beside
+a summary question costs one round trip, not twenty-one. That changes which
+questions are worth asking: per-item batteries stop being expensive, and
+they are where most of the value turns out to be.
+
+What Jev will not do is also the point. It will not write your code,
+summarize a document, plan a task, or produce anything you would have to
+read and trust. It judges what you put in front of it, against options you
+wrote. Everything else stays in your program.
+
+Requests here go to `jev-latest`, which resolved to `jev-1.13.0` when this
+was built; see [Contract pin](#contract-pin) for exactly what was observed
+and when.
 
 ## Who this is shaped for
 
