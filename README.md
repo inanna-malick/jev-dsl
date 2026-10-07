@@ -280,7 +280,7 @@ A state is written the way a packet is, and keeps its Haskell types:
 ```haskell
 world = state
   (  #failure := inputs.failure
-  :& #diagnostics := [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+  :& #diagnostics := [CheckDiagnostic k t | (k, t) <- inputs.diagnosticLines]
   :& #checks := [Check k t | (k, t) <- inputs.checks] )
 ```
 

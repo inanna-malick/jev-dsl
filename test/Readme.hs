@@ -125,10 +125,10 @@ merge verdict = case settledValue verdict of Patch p -> pure (Receipt p)
 
 -- The state is written once, keeps its Haskell types, and is what the
 -- questions draw their rows and their field names from.
-data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
+data CheckDiagnostic = CheckDiagnostic { diagnosticKey :: Text, diagnosticText :: Text }
 data Check = Check { checkKey :: Text, checkText :: Text }
 
-instance Field Value [Diagnostic] where
+instance Field Value [CheckDiagnostic] where
   toField ds = toField [(d.diagnosticKey, d.diagnosticText) | d <- ds]
 instance Field Value [Check] where
   toField cs = toField [(c.checkKey, c.checkText) | c <- cs]
@@ -137,7 +137,7 @@ triage failure diagnosticRows checkRows = (world, questions)
   where
     world = state
       (  #failure := (failure :: Text)
-      :& #diagnostics := [Diagnostic k t | (k, t) <- diagnosticRows]
+      :& #diagnostics := [CheckDiagnostic k t | (k, t) <- diagnosticRows]
       :& #checks := [Check k t | (k, t) <- checkRows] )
     questions =
          #verify := choice "Which available check most directly verifies a fix?"

@@ -37,13 +37,13 @@ import System.IO (hPutStrLn, stderr)
 
 -- The rows the state carries and the questions offer. A row renders as the
 -- provider sees it and stays a Haskell value for the program.
-data Diagnostic = Diagnostic { diagnosticKey :: Text, diagnosticText :: Text }
+data CheckDiagnostic = CheckDiagnostic { diagnosticKey :: Text, diagnosticText :: Text }
 data Check = Check { checkKey :: Text, checkText :: Text }
 newtype Handoff = Handoff Text
 
 -- A row renders as the provider reads it: the whole list is one object
 -- keyed the way the questions key their candidates.
-instance Field Value [Diagnostic] where
+instance Field Value [CheckDiagnostic] where
   toField ds = object [Key.fromText d.diagnosticKey .= d.diagnosticText | d <- ds]
 instance Field Value [Check] where
   toField cs = object [Key.fromText c.checkKey .= c.checkText | c <- cs]
@@ -51,7 +51,7 @@ instance Field Value [Check] where
 type Next = "rerun" ::> () :|: "read_source" ::> Text :|: "ask_model" ::> Handoff
 
 type Triage = Packet
-  (    "explains" ::= Choice ("no_match" ::> () :|: "diagnostics" ::* Diagnostic)
+  (    "explains" ::= Choice ("no_match" ::> () :|: "diagnostics" ::* CheckDiagnostic)
    :&  "next" ::= Choice Next
    :&  "verify" ::= Choice ("checks" ::* Check :|: "defer" ::> ())
    :&  "relevant" ::= Each Check Noul
@@ -60,7 +60,7 @@ type Triage = Packet
 
 -- The state's fields keep their Haskell types, so the rows a question is
 -- built from are the rows the provider was shown.
-type World = State ("failure" ::= Text :& "diagnostics" ::= [Diagnostic] :& "checks" ::= [Check])
+type World = State ("failure" ::= Text :& "diagnostics" ::= [CheckDiagnostic] :& "checks" ::= [Check])
 
 data Inputs = Inputs
   { failure :: Text
@@ -74,7 +74,7 @@ triage inputs = (world, questions)
   where
     world = state
       (  #failure := inputs.failure
-      :& #diagnostics := [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+      :& #diagnostics := [CheckDiagnostic k t | (k, t) <- inputs.diagnosticLines]
       :& #checks := [Check k t | (k, t) <- inputs.checks] )
     questions =
          #explains := choice "Which diagnostic identifies the behavior to investigate, rather than a warning or a downstream consequence?"

@@ -118,7 +118,7 @@ and keeps each field's own Haskell type:
 ```haskell
 world = state
   (  #failure := inputs.failure
-  :& #diagnostics := [Diagnostic k t | (k, t) <- inputs.diagnosticLines]
+  :& #diagnostics := [CheckDiagnostic k t | (k, t) <- inputs.diagnosticLines]
   :& #checks := [Check k t | (k, t) <- inputs.checks] )
 ```
 
@@ -128,7 +128,7 @@ A field may be `Text`, `Bool`, `Int`, `Double`, a list, a list of
 row type of your own needs the instance on the list itself:
 
 ```haskell
-instance Field Value [Diagnostic] where
+instance Field Value [CheckDiagnostic] where
   toField ds = object [Key.fromText d.diagnosticKey .= d.diagnosticText | d <- ds]
 ```
 
