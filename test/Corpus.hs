@@ -18,6 +18,9 @@ import qualified Data.Text as T
 import Jev.Operators
 import Proto (stub, stubSplit)
 
+custom :: Double -> Double -> Double -> Policy Custom
+custom m d c = either (error . show) id (customPolicy m d c)
+
 -- ---------------------------------------------------------------------------
 -- 1. Locate, then edit: a runtime group over numbered lines with the row
 --    as payload, an exit, a policy, exhaustive handlers, and the same
@@ -36,7 +39,7 @@ locate transport source numbered = do
     Left _ -> (HandBack, [])
     Right a ->
       let edit = #not_here (\() -> HandBack) .| #lines (\_ l -> EditAt l.lineNo l.revision)
-          winner = either (const HandBack) (\(Settled x) -> x) (settle (Policy 0.3 0.1 0.5) a edit)
+          winner = either (const HandBack) settledValue (settle (custom 0.3 0.1 0.5) a edit)
           alsoPlausible = map snd (contenders 0.2 a edit)
       in (winner, alsoPlausible)
 
@@ -65,7 +68,7 @@ diagnose transport inquiry hypotheses = do
           observations = [(h.hKey, "ran " <> h.probe) | h <- worthProbing]
       r2 <- ask1 sess (state (#inquiry := inquiry :& #observations := observations))
               (choice "Which mechanism do the observations support?" offers)
-      pure $ fmap (\final -> either (const (Undecided live)) (\(Settled mh) -> maybe Neither Supported mh) (settle (Policy 0.6 0.2 0.5) final hypothesisOf)) r2
+      pure $ fmap (\final -> either (const (Undecided live)) (maybe Neither Supported . settledValue) (settle (custom 0.6 0.2 0.5) final hypothesisOf)) r2
 
 -- ---------------------------------------------------------------------------
 -- 3. The per-item battery: a Noul per edge with its own wording, and a
@@ -82,7 +85,7 @@ expand transport inquiry edges = do
   pure $ fmap (\resp ->
     let a = answers resp
     in ( [e.edgeKey | (e, n) <- a.relevant, holds lenient n]
-       , settle lenient a.next (#edges (\_ e -> Just e.command) .| #stop (\() -> Nothing)) )) r
+       , fmap settledValue (settle lenient a.next (#edges (\_ e -> Just e.command) .| #stop (\() -> Nothing))) )) r
 
 -- ---------------------------------------------------------------------------
 -- 4. An ordered ladder with a threshold.
@@ -124,7 +127,7 @@ corpusChecks c = do
   checkEq c "corpus 2: a clear winner is supported with its payload" (Right (Supported (Hypothesis "retry" "retry redelivered the message" "retry-fixture"))) d2
   -- 3
   e <- expand (stub "gate") "where is the reply dropped?" [Edge "gate" "gates publication" "sed -n 30,60p gate.rs", Edge "telemetry" "records latency" "sed -n 1,20p telemetry.rs"]
-  checkEq c "corpus 3: a battery per entry and a choice over the same entries with an exit" (Right (["gate", "telemetry"], Right (Settled (Just "sed -n 30,60p gate.rs")))) (fmap (\(ks, cmd) -> (sort ks, cmd)) e)
+  checkEq c "corpus 3: a battery per entry and a choice over the same entries with an exit" (Right (["gate", "telemetry"], Right (Just "sed -n 30,60p gate.rs"))) (fmap (\(ks, cmd) -> (sort ks, cmd)) e)
   -- 4
   att <- attention (stub "") "The build is red on main."
   checkEq c "corpus 4: a ladder threshold decides the disposition" (Right WakeNow) att

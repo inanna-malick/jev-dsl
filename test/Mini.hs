@@ -167,15 +167,17 @@ miniChecks c = do
                   handle (answers secondResponse).route (#ship (\payload -> payload 1) .| #hold (\payload -> payload 1)))
       checkEq c "mini prepared calls retain distinct same-shaped payload functions"
         (Right ("first", "second")) pairResult
-      checkEq c "mini response reports typed distribution drift"
-        (Right [DistributionDrift "route" 0.95])
-        (diagnostics <$> decode first preparedReply)
-      checkEq c "mini mapResponse keeps envelope metadata"
-        (Right ("prepared-model", Usage (Just 0) Nothing, MObj [("input_tokens", MNum 0)], [DistributionDrift "route" 0.95]))
-        (fmap (\response ->
+      case decode first preparedReply of
+        Left e -> check c ("mini prepared metadata decode: " ++ show e) False
+        Right response -> do
           let mapped = mapResponse (\a -> handle a.route (#ship (\f -> f 1) .| #hold (\f -> f 1))) response
-          in (responseModel mapped, usage mapped, rawUsage mapped, diagnostics mapped))
-          (decode first preparedReply))
+          check c "mini response reports typed distribution drift" (case diagnostics response of
+            [DistributionDrift "route" total] -> abs (total - 0.95) < 1e-9
+            _ -> False)
+          checkEq c "mini mapResponse keeps envelope model, usage, and raw usage"
+            ("prepared-model", Usage (Just 0) Nothing, MObj [("input_tokens", MNum 0)])
+            (responseModel mapped, usage mapped, rawUsage mapped)
+          checkEq c "mini mapResponse keeps typed diagnostics" (diagnostics response) (diagnostics mapped)
       checkEq c "mini prepared request includes original nested state"
         (Just (MObj [("rooms", MArr [MStr "cellar"])]))
         (lookupKey "state" (request first) >>= lookupKey "house")

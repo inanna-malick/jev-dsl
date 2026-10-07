@@ -123,18 +123,19 @@ world req =
 golden :: Schema Value s => Checks -> String -> State () -> s Questions -> (Response s -> IO ()) -> IO ()
 golden c name st q inspectAnswers = do
   fx <- loadFixture name
-  case request (Core.Model (requestModel (fixtureRequest fx))) st q of
+  case prepare (Core.Model (requestModel (fixtureRequest fx))) st q of
     Left e -> check c (name ++ ": request failed: " ++ show e) False
-    Right req -> do
+    Right prepared -> do
+      let req = request prepared
       checkEq c (name ++ ": golden request") (fixtureRequest fx) req
-      case decode q (fixtureResponse fx) of
+      case decode prepared (fixtureResponse fx) of
         Left e -> check c (name ++ ": golden decode failed: " ++ show e) False
         Right resp -> do
           checkEq c (name ++ ": resolved model") "jev-1.13.0" (resolvedModel resp)
           let fixtureUsage = maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))
               usageField k = case lookup k (objectPairs fixtureUsage) of
-                Just (Number n) -> round n
-                _ -> 0
+                Just (Number n) | n >= 0 -> Just (round n :: Integer)
+                _ -> Nothing
           checkEq c (name ++ ": usage verbatim") (Usage (usageField "input_tokens") (usageField "output_tokens")) (usage resp)
           inspectAnswers resp
 
@@ -225,11 +226,12 @@ genericOne c name req resp
       check c (name ++ ": request-level extras are inexpressible by design " ++ show extras) True
   | otherwise = do
   let Shaped model st qs rawCount = shapeRequest req
-  case request model st qs of
+  case prepare model st qs of
     Left e -> check c (name ++ ": generic request failed: " ++ show e) False
-    Right rendered -> do
+    Right prepared -> do
+      let rendered = request prepared
       check c (name ++ ": generic request equals capture" ++ (if rawCount > 0 then " (" ++ show rawCount ++ " raw)" else "")) (rendered == req)
-      case decode qs resp of
+      case decode prepared resp of
         Left e -> check c (name ++ ": generic decode failed: " ++ show e) False
         Right r -> check c (name ++ ": generic decode answer count") (length (exactAnswers (answers r)) == length (requestQuestions req))
 
@@ -244,9 +246,9 @@ genericChecks c = do
   forM_ ["choice256", "model-unknown", "empty-questions", "max-tokens-exceeded"] $ \name -> do
     fx <- loadFixture name
     let Shaped model st qs _ = shapeRequest (fixtureRequest fx)
-    case request model st qs of
-      Right _ -> check c (name ++ ": rejection body parsed") (case decode qs (fixtureResponse fx) of
-        Left (Decode (Core.ProviderRejected _)) -> True
+    case prepare model st qs of
+      Right prepared -> check c (name ++ ": rejection body parsed") (case decode prepared (fixtureResponse fx) of
+        Left (Core.ProviderRejected _) -> True
         _ -> False)
       Left _ -> check c (name ++ ": rejected locally before decode") True
   -- the full private capture set, when available
