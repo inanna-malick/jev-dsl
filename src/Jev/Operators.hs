@@ -71,7 +71,7 @@ module Jev.Operators
   , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics, Diagnostic (..)
   , JevError (..), PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..)
     -- * Recording and replay: the same operation split
-  , Prepared, prepare, request, decode, mapResponse, rawUsage
+  , Prepared, prepare, request, decode, mapResponse, responsePreview, rawUsage
     -- * Types, for signatures only
   , type (::=), type (:&), type (::>), type (::*), type (:|:), Offers, Handlers, Handles, Rubric
   , Noul, Choice, Score, Each, Optional, Group
@@ -313,6 +313,9 @@ answers = Core.answers
 
 mapResponse :: (a -> b) -> Response a -> Response b
 mapResponse = Core.mapResponse
+
+responsePreview :: Response a -> Value
+responsePreview = Core.responsePreview
 
 rawUsage :: Response a -> Value
 rawUsage = Core.rawUsage

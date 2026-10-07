@@ -69,7 +69,7 @@ module Jev.Core.Schema
     -- * The operation
   , Schema (..), Model (..), jevLatest, Session, session
   , Prepared, prepare, request, decode, executePrepared
-  , Response, answers, mapResponse, responseModel, rawUsage, usage, Usage (..), diagnostics, Diagnostic (..)
+  , Response, answers, mapResponse, responsePreview, responseModel, rawUsage, usage, Usage (..), diagnostics, Diagnostic (..)
   , JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
   , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
@@ -1272,7 +1272,7 @@ prepare (Model m) st q = do
           ans <- decodeSchema (Segments []) q ws
           let drift = [DistributionDrift k total
                       | (k, a) <- ws, Just total <- [driftOf a], abs (total - 1) > 0.01]
-          Right (Response ans model use drift)
+          Right (Response ans (previewSchema ans) model use drift)
   Right (Prepared body decoder)
 
 -- | The wire body for this checked call; no decoder is reconstructed from it.
@@ -1283,24 +1283,29 @@ decode :: Prepared v a -> v -> Either DecodeError (Response v a)
 decode (Prepared _ decoder) = decoder
 
 -- | Metadata over any answer payload, including a single question.
-data Response v a = Response a Text v [Diagnostic]
+data Response v a = Response a v Text v [Diagnostic]
 
 -- | Explicit value projection discards the envelope.
 answers :: Response v a -> a
-answers (Response a _ _ _) = a
+answers (Response a _ _ _ _) = a
 
 -- | Project an answer while preserving the call's metadata.
 mapResponse :: (a -> b) -> Response v a -> Response v b
-mapResponse f (Response a m u d) = Response (f a) m u d
+mapResponse f (Response a facts m u d) = Response (f a) facts m u d
 
 instance Functor (Response v) where
   fmap = mapResponse
 
+-- | Bounded presentation facts from the original typed answer. Mapping or
+-- projecting an action never traverses that retained action for presentation.
+responsePreview :: Response v a -> v
+responsePreview (Response _ facts _ _ _) = facts
+
 responseModel :: Response v a -> Text
-responseModel (Response _ m _ _) = m
+responseModel (Response _ _ m _ _) = m
 
 rawUsage :: Response v a -> v
-rawUsage (Response _ _ u _) = u
+rawUsage (Response _ _ _ u _) = u
 
 -- | Unknown usage is distinct from a measured zero. Only nonnegative,
 -- finite integral counts are admitted; partial usage retains known fields.
@@ -1320,7 +1325,7 @@ data Diagnostic = DistributionDrift { questionId :: Text, distributionTotal :: D
   deriving (Show, Eq)
 
 diagnostics :: Response v a -> [Diagnostic]
-diagnostics (Response _ _ _ d) = d
+diagnostics (Response _ _ _ _ d) = d
 
 instance HasField k a r => HasField k (Response v a) r where
   getField = getField @k . answers
