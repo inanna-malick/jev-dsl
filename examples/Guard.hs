@@ -406,7 +406,7 @@ type Transport = Value -> IO (Either Text Value)
 -- any. That fact lets an Ask answer a runner-up topic in the same breath as the winner.
 data Node = Node { play :: Play, quip :: Maybe Text }
 
-interpret :: Session IO -> GuardF Node -> Node
+interpret :: Session IO Text -> GuardF Node -> Node
 interpret sess = \case
   Ask line trip offers -> program $ \t -> do
     let askedBefore = length [() | u <- t.turns, u.asked == line]

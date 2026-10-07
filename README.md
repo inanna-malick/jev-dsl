@@ -137,7 +137,7 @@ One question, one call, and either a payload the program offered or a
 handback.
 
 ```haskell
-locate :: Session IO -> Text -> [Line] -> IO (Either Text Int)
+locate :: Session IO Text -> Text -> [Line] -> IO (Either Text Int)
 locate sess source numbered = do
   answer <- ask1 sess (state (#source := source))
     (choice "Which line begins the retry-timeout branch?"

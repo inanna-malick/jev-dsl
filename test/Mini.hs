@@ -178,6 +178,8 @@ miniChecks c = do
             ("prepared-model", Usage (Just 0) Nothing, MObj [("input_tokens", MNum 0)])
             (responseModel mapped, usage mapped, rawUsage mapped)
           checkEq c "mini mapResponse keeps typed diagnostics" (diagnostics response) (diagnostics mapped)
+          check c "mini mapResponse retains the original answer preview"
+            (responsePreview mapped == responsePreview response && responsePreview mapped /= MStr "ship")
       checkEq c "mini prepared request includes original nested state"
         (Just (MObj [("rooms", MArr [MStr "cellar"])]))
         (lookupKey "state" (request first) >>= lookupKey "house")

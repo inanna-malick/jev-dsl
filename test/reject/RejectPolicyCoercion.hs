@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- The nominal policy tag is an authority boundary.
+-- The nominal tag records which validated policy ran; it cannot be relabelled.
 import Data.Coerce (coerce)
 import Jev.Core
 
