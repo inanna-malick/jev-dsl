@@ -180,6 +180,9 @@ miniChecks c = do
           checkEq c "mini mapResponse keeps typed diagnostics" (diagnostics response) (diagnostics mapped)
           check c "mini mapResponse retains the original answer preview"
             (responsePreview mapped == responsePreview response && responsePreview mapped /= MStr "ship")
+          let unavailablePayload = mapResponse (const (error "presentation demanded mapped action" :: Int)) response
+          checkEq c "mini response preview does not demand the mapped action"
+            (responsePreview response) (responsePreview unavailablePayload)
       checkEq c "mini prepared request includes original nested state"
         (Just (MObj [("rooms", MArr [MStr "cellar"])]))
         (lookupKey "state" (request first) >>= lookupKey "house")
