@@ -30,14 +30,10 @@ answer is a distribution over the levels and its expectation.
 `prepare model state packet` checks one call and returns a `Prepared` value.
 Use that same value for both sides of a recorded exchange:
 
-```haskell
-case prepare jevLatest world packet of
-  Left problem -> ...
-  Right call -> do
-    sendJson (request call) >>= \body -> case decode call body of
-      Left problem -> ...
-      Right response -> consume (answers response)
-```
+`request prepared` projects its checked wire request. Record that request and
+retain the prepared value; `decode prepared responseBody` consumes the same
+original decoder. Use `answers response` only when the next function wants the
+bare answer payload.
 
 The prepared call retains the decoder for the original packet, including its
 offered payloads. Rebuilding a decoder from the wire JSON would lose those
