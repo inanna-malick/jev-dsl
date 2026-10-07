@@ -31,8 +31,9 @@ locate transport source numbered = do
   pure $ case answer of
     Left err -> Left (T.pack (show err))
     Right a -> case settle lenient a (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
-      Right (Settled (Just n)) -> Right n
-      Right (Settled Nothing) -> Left "not in this file"
+      Right verdict -> case settledValue verdict of
+        Just n -> Right n
+        Nothing -> Left "not in this file"
       Left d -> Left d.why
 
 -- A packet: the type is inferred from the questions.
@@ -65,7 +66,7 @@ act a =
          (  #edges       (\k _ -> "follow " <> k)
          .| #use_witness (\(Witness w) -> "located at " <> w)
          .| #ask_model   (\(Handoff h) -> "hand back: " <> h) ) of
-    Right (Settled step) -> step <> (if holds lenient a.enough then "; evidence suffices" else "")
+    Right verdict -> settledValue verdict <> (if holds lenient a.enough then "; evidence suffices" else "")
     Left d -> "stopped: " <> d.why
 
 -- Reading answers: every answer is a plain record, read by field.
@@ -120,7 +121,7 @@ newtype Patch = Patch Text
 newtype Receipt = Receipt Text
 
 merge :: Settled Strict Patch -> IO Receipt
-merge (Settled (Patch p)) = pure (Receipt p)
+merge verdict = case settledValue verdict of Patch p -> pure (Receipt p)
 
 -- The state is written once, keeps its Haskell types, and is what the
 -- questions draw their rows and their field names from.

@@ -474,7 +474,7 @@ interpret sess = \case
         -- the step that does it demands a verdict from the policy meant to
         -- decide it. A lenient verdict does not typecheck here.
         stop :: Settled Careful (Maybe Node) -> Maybe Play
-        stop (Settled node) = fmap (.play) node
+        stop verdict = fmap (.play) (settledValue verdict)
         divert a = case takenUnder careful a of
           Right v | Just go <- stop v -> do
             aside (explain careful a)
@@ -552,8 +552,9 @@ interpret sess = \case
       -- ambiguous, nothing in particular happens.
       case takenUnder lenient a of
         Left _ -> next.play t
-        Right (Settled Nothing) -> next.play t
-        Right (Settled (Just h)) -> do
+        Right verdict | Nothing <- settledValue verdict -> next.play t
+        Right verdict -> case settledValue verdict of
+          Just h -> do
              aside ("happening " <> h.tag <> "; " <> explain lenient a)
              narrate h.seen
              guard (h.said (headMay t.standing))
@@ -562,6 +563,7 @@ interpret sess = \case
              if h.tag == "captain" && take 1 t.standing == [SendForCaptain]
                then pure (Outcome (Just SendForCaptain) (reverse t'.turns))
                else next.play t'
+          Nothing -> next.play t
 
   Knot _ next -> next
 
@@ -662,7 +664,7 @@ hear = do
     unless tty (TIO.putStrLn reply)
     pure reply
 
-must :: Either JevError a -> IO a
+must :: Either (JevError Text) a -> IO a
 must = either (\e -> hPutStrLn stderr ("jev: " ++ show e) >> exitFailure) pure
 
 pct :: Double -> Text

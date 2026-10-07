@@ -27,13 +27,13 @@ st :: State ()
 st = rawState (object ["message" .= ("m" :: T.Text)])
 
 prepErr :: Schema Value s => s Questions -> Maybe PrepError
-prepErr q = case request jevLatest st q of
-  Left (Prepare e) -> Just e
+prepErr q = case prepare jevLatest st q of
+  Left e -> Just e
   _ -> Nothing
 
 stateErr :: State () -> Maybe PrepError
-stateErr s = case request jevLatest s (#wake := noul "?") of
-  Left (Prepare e) -> Just e
+stateErr s = case prepare jevLatest s (#wake := noul "?") of
+  Left e -> Just e
   _ -> Nothing
 
 route :: [(T.Text, Value)] -> Packet ("route" ::= Choice ("row" ::* (T.Text, Value))) Questions
@@ -62,11 +62,11 @@ table =
   , ("instructions-number", Prep (Core.BadInstructions "wake"), prepErr (wake (Core.Instructions (Number 42))))
   , ("choice-boolean-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Bool True), ("owner_1", Null)]))
   , ("choice-number-description", Prep (Core.BadDescription "route" "owner_0"), prepErr (route [("owner_0", Number 42), ("owner_1", Null)]))
-  , ("questions-null", Inexpressible "request takes a packet; the map is never null", Nothing)
+  , ("questions-null", Inexpressible "prepare takes a packet; the map is never null", Nothing)
   , ("questions-array", Inexpressible "request takes a packet; the map is never an array", Nothing)
   , ("questions-omitted", Inexpressible "request takes a packet; the map is always present", Nothing)
   , ("model-null", Inexpressible "Model is Text", Nothing)
-  , ("model-omitted", Inexpressible "request takes a Model", Nothing)
+  , ("model-omitted", Inexpressible "prepare takes a Model", Nothing)
   , ("state-omitted", Inexpressible "request takes a State", Nothing)
   , ("question-type-omitted", Inexpressible "every endpoint renders its type; Raw is replay-only", Nothing)
   , ("question-type-unknown", Inexpressible "the endpoint set is closed; Raw is replay-only", Nothing)

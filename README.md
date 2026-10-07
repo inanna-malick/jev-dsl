@@ -146,8 +146,9 @@ locate sess source numbered = do
   pure $ case answer of
     Left err -> Left (T.pack (show err))
     Right a -> case settle lenient a (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
-      Right (Settled (Just n)) -> Right n
-      Right (Settled Nothing) -> Left "not in this file"
+      Right verdict -> case settledValue verdict of
+        Just n -> Right n
+        Nothing -> Left "not in this file"
       Left d -> Left d.why
 ```
 
@@ -218,7 +219,7 @@ act a =
          (  #edges       (\k _ -> "follow " <> k)
          .| #use_witness (\(Witness w) -> "located at " <> w)
          .| #ask_model   (\(Handoff h) -> "hand back: " <> h) ) of
-    Right (Settled step) -> step <> (if holds lenient a.enough then "; evidence suffices" else "")
+    Right verdict -> settledValue verdict <> (if holds lenient a.enough then "; evidence suffices" else "")
     Left d -> "stopped: " <> d.why
 ```
 

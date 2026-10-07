@@ -8,10 +8,9 @@
 -- expect: Jev: duplicate packet label #enough
 module RejectDuplicateLabel where
 
-import Data.Aeson (Value)
 import Data.Text (Text)
 import Jev.Operators
 
 -- Two cells with one label: the second would be unreachable.
-bad :: Either JevError Value
-bad = request jevLatest (state (#s := ("x" :: Text))) (#enough := noul "?" :& #enough := noul "?")
+bad :: Either PrepError (Prepared (Answers ()))
+bad = prepare jevLatest (state (#s := ("x" :: Text))) (#enough := noul "?" :& #enough := noul "?")

@@ -16,6 +16,7 @@
 module Mini (miniChecks) where
 
 import Check
+import Data.Coerce (coerce)
 import Data.String (IsString (..))
 import Data.Text (Text)
 
@@ -101,9 +102,10 @@ miniChecks :: Checks -> IO ()
 miniChecks c = do
   let rooms = [Room "cellar", Room "attic"]
       packet = inspect rooms
-  case request jevLatest (rawState (MObj [("house", MStr "Greyhaven")])) packet of
+  case prepare jevLatest (rawState (MObj [("house", MStr "Greyhaven")])) packet of
     Left e -> check c ("mini: request failed: " ++ show e) False
-    Right req -> do
+    Right prepared -> do
+      let req = request prepared
       check c "mini: the request is built in a value type the core never saw"
         (case lookupKey "questions" req >>= viewObject of
           Just kv -> length kv == 5
@@ -130,12 +132,99 @@ miniChecks c = do
       optionalRoom = #next := optional (Just (choice
         ("Which of " <> field (#house :/ #rooms) world <> " next?")
         (alt #cellar "Search the cellar" (Room "cellar"))))
+      custom = either (error . show) id (customPolicy 0.55 0.2 0.7)
   rOptional <- roundTrip (session stub jevLatest) world optionalRoom
   checkEq c "mini: optional choice and policy-aware payload consumption"
-    (Right (Just (Right (Settled (Room "cellar")))))
-    (fmap (\resp -> fmap (takenUnder (Policy 0.55 0.2 0.7)) resp.next) rOptional)
+    (Right (Just (Right (Room "cellar"))))
+    (fmap (\resp -> fmap (fmap settledValue . takenUnder custom) resp.next) rOptional)
   -- the class default equality, which aeson overrides with its own
   check c "mini: structural equality ignores object member order"
     (jEqual (MObj [("a", MNum 1), ("b", MArr [MNull])]) (MObj [("b", MArr [MNull]), ("a", MNum 1)]))
   check c "mini: structural equality still distinguishes values"
     (not (jEqual (MObj [("a", MNum 1)]) (MObj [("a", MNum 2)])))
+  -- A prepared value owns its original decoder and answer payloads. These
+  -- packets have identical wire questions but deliberately different
+  -- program-side functions.
+  let preparedPacket :: (Int -> Text) -> Packet
+        ("route" ::= Choice ("ship" ::> (Int -> Text) :|: "hold" ::> (Int -> Text)))
+        (Questions Mini)
+      preparedPacket f = #route := choice "Where should this go?"
+        (alt #ship "Ship" f .| alt #hold "Hold" (const "hold"))
+      preparedReply = MObj
+        [ ("model", MStr "prepared-model")
+        , ("usage", MObj [("input_tokens", MNum 0)])
+        , ("answers", MObj [("route", MObj
+            [("type", MStr "choice"), ("choice", MStr "ship"), ("confidence", MNum 0.9)
+            , ("probabilities", MObj [("ship", MNum 0.85), ("hold", MNum 0.1)])])])
+        ]
+  case ( prepare jevLatest world (preparedPacket (const "first"))
+       , prepare jevLatest world (preparedPacket (const "second")) ) of
+    (Right first, Right second) -> do
+      let pairResult = do
+            firstResponse <- decode first preparedReply
+            secondResponse <- decode second preparedReply
+            pure (handle (answers firstResponse).route (#ship (\payload -> payload 1) .| #hold (\payload -> payload 1)),
+                  handle (answers secondResponse).route (#ship (\payload -> payload 1) .| #hold (\payload -> payload 1)))
+      checkEq c "mini prepared calls retain distinct same-shaped payload functions"
+        (Right ("first", "second")) pairResult
+      checkEq c "mini response reports typed distribution drift"
+        (Right [DistributionDrift "route" 0.95])
+        (diagnostics <$> decode first preparedReply)
+      checkEq c "mini mapResponse keeps envelope metadata"
+        (Right ("prepared-model", Usage (Just 0) Nothing, MObj [("input_tokens", MNum 0)], [DistributionDrift "route" 0.95]))
+        (fmap (\response ->
+          let mapped = mapResponse (\a -> handle a.route (#ship (\f -> f 1) .| #hold (\f -> f 1))) response
+          in (responseModel mapped, usage mapped, rawUsage mapped, diagnostics mapped))
+          (decode first preparedReply))
+      checkEq c "mini prepared request includes original nested state"
+        (Just (MObj [("rooms", MArr [MStr "cellar"])]))
+        (lookupKey "state" (request first) >>= lookupKey "house")
+    _ -> check c "mini prepared calls prepare successfully" False
+  let oneReply = MObj
+        [("model", MStr "prepared-model"), ("usage", MObj [("output_tokens", MNum 2)])
+        , ("answers", MObj [("value", MObj [("type", MStr "noul"), ("noul", MNum 0.8)])])]
+      oneTransport :: Mini -> IO (Either String Mini)
+      oneTransport _ = pure (Right oneReply)
+  one <- jev1 (session oneTransport jevLatest)
+          (rawState (MObj [("house", MStr "Greyhaven")])) (noul "Ready?")
+  checkEq c "mini ask1 retains model and partial usage metadata"
+    (Right ("prepared-model", Usage Nothing (Just 2)))
+    ((\result -> (responseModel result, usage result)) <$> one)
+  offline <- roundTrip (session (\_ -> pure (Left "offline" :: Either String Mini)) jevLatest)
+              (rawState (MObj [("house", MStr "Greyhaven")])) (#ready := noul "Ready?")
+  check c "mini retains typed host transport errors"
+    (case offline of Left (Transport "offline") -> True; _ -> False)
+  check c "mini distinguishes zero usage from unknown usage" $ case prepare jevLatest world (#ready := noul "Ready?") of
+    Left _ -> False
+    Right prepared -> case (decode prepared (MObj [("model", MStr "m"), ("usage", MObj [("input_tokens", MNum 0)]), ("answers", MObj [("ready", MObj [("type", MStr "noul"), ("noul", MNum 0.8)])])]),
+                           decode prepared (MObj [("model", MStr "m"), ("answers", MObj [("ready", MObj [("type", MStr "noul"), ("noul", MNum 0.8)])])])) of
+      (Right zeroResponse, Right unknownResponse) -> usage zeroResponse == Usage (Just 0) Nothing && usage unknownResponse == Usage Nothing Nothing
+      _ -> False
+  check c "mini custom policies reject invalid floors" $ case customPolicy (-0.1) 0 0 of
+    Left _ -> True
+    Right _ -> False
+  check c "mini custom policies reject non-finite and over-one floors"
+    (case (customPolicy 0 (0 / 0) 0, customPolicy 0 0 1.01) of
+      (Left _, Left _) -> True
+      _ -> False)
+  case customPolicy 0 0 0 of
+    Left _ -> check c "mini valid custom policy setup" False
+    Right policy -> do
+      let sameTag :: Policy Custom -> Policy Custom
+          sameTag = coerce
+      let controlPacket :: (Int -> Text) -> Packet
+            ("route" ::= Choice ("ship" ::> (Int -> Text) :|: "hold" ::> (Int -> Text)))
+            (Questions Mini)
+          controlPacket f = #route := choice "Where should this go?"
+            (alt #ship "Ship" f .| alt #hold "Hold" (const "hold"))
+      case prepare jevLatest world (controlPacket (const "control")) of
+        Left _ -> check c "mini same-tag coercion setup" False
+        Right prepared -> case decode prepared preparedReply of
+          Left _ -> check c "mini same-tag coercion decode" False
+          Right response -> do
+            let sameSettled :: Settled Custom (Int -> Text) -> Settled Custom (Int -> Text)
+                sameSettled = coerce
+                selected = takenUnder policy (answers response).route
+            check c "mini same-tag Policy and Settled coercions preserve the output"
+              (fmap (\verdict -> settledValue verdict 1) selected
+                 == fmap (\verdict -> settledValue verdict 1) (sameSettled <$> takenUnder (sameTag policy) (answers response).route))

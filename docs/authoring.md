@@ -25,6 +25,32 @@ carrying the payload your program offered it with.
 A **score** grades something on an ordered rubric of one to ten levels. The
 answer is a distribution over the levels and its expectation.
 
+## Prepared calls and response envelopes
+
+`prepare model state packet` checks one call and returns a `Prepared` value.
+Use that same value for both sides of a recorded exchange:
+
+```haskell
+case prepare jevLatest world packet of
+  Left problem -> ...
+  Right call -> do
+    sendJson (request call) >>= \body -> case decode call body of
+      Left problem -> ...
+      Right response -> consume (answers response)
+```
+
+The prepared call retains the decoder for the original packet, including its
+offered payloads. Rebuilding a decoder from the wire JSON would lose those
+values. `ask` and `ask1` use the same preparation and decoding path for a
+transport-bound call. Their result is a `Response a` envelope: use `answers`
+to explicitly project the answer payload, `mapResponse` to transform that
+payload while keeping metadata, and `usage`, `rawUsage`, `resolvedModel`, or
+`diagnostics` to inspect metadata. `ask1` returns the same envelope as `ask`.
+
+Usage counts are `Maybe Integer`: `Nothing` means the provider omitted or
+malformed that count, while `Just 0` is a measured zero. `rawUsage` retains the
+provider's usage JSON, and diagnostics are typed `DistributionDrift` values.
+
 ## One question
 
 ```haskell
@@ -34,7 +60,7 @@ answer <- ask1 sess (state (#source := source))
      (alt #not_here "The branch is not in this file" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) lines))
 case answer of
   Right a -> case settle lenient a (#not_here (\() -> handBack) .| #lines (\_ l -> editAt l.lineNo l.revision)) of
-    Right (Settled result) -> result
+    Right verdict -> settledValue verdict
     Left d -> stop d.why
   Left err -> ...
 ```
@@ -82,10 +108,11 @@ directly, with no need to project out the packet first: `r.next`,
 what it answered), `r.evidence.gap`. `answers r` is still there for handing
 the whole packet to a function that wants it as one value rather than a
 label at a time. A label the packet lacks is a compile error listing the
-labels it has. `usage` is a `Usage { inputTokens, outputTokens }`;
+labels it has. `usage` is a `Usage { inputTokens, outputTokens }`, where each
+count is `Maybe Integer` (`Nothing` is unknown and `Just 0` is measured zero);
 `resolvedModel` is the model the request actually resolved to;
-`diagnostics` is a list of log lines, such as a distribution that did not
-sum to one.
+`rawUsage` retains the original provider JSON, and `diagnostics` is a list of
+typed diagnostics such as `DistributionDrift`.
 
 ## State
 
@@ -162,7 +189,7 @@ three are named for how bad it is to be wrong:
 | `strict` | merging, stopping, anything with a receipt | 0.70 | 0.40 | 0.85 |
 
 `settle policy answer handlers` consumes a choice, returning
-`Either Doubt (Settled p r)`: `Right (Settled r)` through the handler for
+`Either Doubt (Settled p r)`: a successful verdict through the handler for
 the alternative that won, or `Left` a `Doubt`.
 
 ```haskell
@@ -170,7 +197,7 @@ case settle careful a.next
        (  #rerun (\c -> run c)
        .| #ask_model (\h -> handBack h)
        .| #edges (\_ e -> follow e) ) of
-  Right (Settled action) -> action
+  Right verdict -> settledValue verdict
   Left d -> stop d.why
 ```
 
@@ -179,7 +206,9 @@ group. A confident "none of these" runs its own handler. `Right` means the
 selected alternative cleared the policy, not that the answer was approval;
 inspect the result your handler returned.
 
-The verdict carries the policy that reached it, so a function that must not
+The verdict is abstract: inspect its payload with `settledValue` and do not
+construct or pattern match on it. Its type carries the policy that reached it,
+so a function that must not
 be handed a lightly-settled answer can demand one in its own signature:
 
 ```haskell
@@ -193,8 +222,8 @@ is `NearTie`, `Underweight`, or `Unconfident`. `why` is the same line
 the reason itself reads `Left Doubt { cause = NearTie {} } -> ...`.
 
 `judge policy answer` does the same for a Noul: `Either Doubt (Settled p
-Bool)`, so `Right (Settled True)`, `Right (Settled False)`, or `Left`
-a `Doubt`. A Noul weighs yes against no, so the same three policies apply;
+Bool)`. Project a successful result with `settledValue`; `False` is a result,
+while `Left` is a `Doubt`. A Noul weighs yes against no, so the same three policies apply;
 there is no confidence on the wire for a Noul, so that floor is not
 consulted.
 
@@ -207,8 +236,7 @@ common case of a Noul in a guard or a list comprehension:
 
 It is `True` only for a settled yes. A doubt is not a no, and both read as
 `False` here, which is the whole reason it is a separate verb: comparing a
-verdict for equality (`judge p n == Right (Settled True)`) silently turns
-every doubt into a no. Use `judge` wherever the doubt is worth acting on or
+verdict for equality silently turns every doubt into a no. Use `judge` wherever the doubt is worth acting on or
 worth a line in the log, and `holds` where the answer is a filter.
 
 `explain policy answer` says in one line which check settled or doubted the
@@ -238,7 +266,9 @@ consume its payload without repeating the branches:
 | Under a policy | `settle policy answer handlers` | `takenUnder policy answer` |
 
 `takenUnder policy answer` returns `Either Doubt (Settled p r)`, with the
-same checks and exact doubt explanations as `settle`. A uniform chain is
+same checks and exact doubt explanations as `settle`; project the value with
+`settledValue`. Custom floors go through `customPolicy mass margin confidence`,
+which returns a checked `Policy Custom` or a `PolicyError`. A uniform chain is
 built by giving every alternative a payload of one type, including the
 exit: `alt #none "No matching row" Nothing .| mapCarried Just (many ...)`. The selected payload
 is the one authored beside its wording. Every alternative has a payload;

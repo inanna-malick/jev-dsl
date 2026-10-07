@@ -124,12 +124,14 @@ main = do
   let (world, questions) = triage inputs
   case mode of
     RequestMode -> do
-      req <- either (die . ("request: " ++) . show) pure (request (fromString (T.unpack inputs.model)) world questions)
+      prepared <- either (die . ("request: " ++) . show) pure (prepare (fromString (T.unpack inputs.model)) world questions)
+      let req = request prepared
       BL.putStr (Aeson.encode req) >> putStrLn ""
     DecodeMode -> do
       body <- BL.getContents
       response <- either (die . ("response is not JSON: " ++)) pure (Aeson.eitherDecode body)
-      resp <- either (die . ("decode: " ++) . show) pure (decode questions response)
+      prepared <- either (die . ("request: " ++) . show) pure (prepare (fromString (T.unpack inputs.model)) world questions)
+      resp <- either (die . ("decode: " ++) . show) pure (decode prepared response)
       report resp
 
 die :: String -> IO a
@@ -142,7 +144,7 @@ die msg = hPutStrLn stderr msg >> exitFailure
 report :: Response Triage -> IO ()
 report r = do
   let u = usage r
-  TIO.putStrLn ("usage: " <> showT u.inputTokens <> " in, " <> showT u.outputTokens <> " out; model " <> resolvedModel r)
+  TIO.putStrLn ("usage: " <> showUsage u.inputTokens <> " in, " <> showUsage u.outputTokens <> " out; model " <> resolvedModel r)
   mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics r)
   -- Each choice is settled under a policy: a result only through a handler
   -- per alternative, or a doubt with the numbers behind it.
@@ -164,7 +166,8 @@ report r = do
     <> "\n  expectation " <> showT r.breadth.expectation
     <> ", mass at or above adjacent " <> showT (massAtOrAbove #adjacent r.breadth))
   where
-    line name why outcome = TIO.putStrLn (name <> ": " <> either (.why) (\(Settled t) -> t) outcome <> "\n  " <> why)
-    verdict = either (const "?") (\(Settled b) -> if b then "yes" else "no")
+    line name why outcome = TIO.putStrLn (name <> ": " <> either (.why) (settledValue) outcome <> "\n  " <> why)
+    verdict = either (const "?") (\v -> if settledValue v then "yes" else "no")
+    showUsage = maybe "unknown" showT
     showT :: Show x => x -> Text
     showT = T.pack . show

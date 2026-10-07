@@ -26,6 +26,12 @@ import qualified Jev.Core as Core
 import Jev.Operators hiding (field)
 import Replay (noulWith, Presence (..))
 
+custom :: Double -> Double -> Double -> Policy Custom
+custom m d c' = either (error . show) id (customPolicy m d c')
+
+verdictValue :: Either e (Settled p a) -> Either e a
+verdictValue = fmap settledValue
+
 -- ---------------------------------------------------------------------------
 -- Domain payloads: never serialized
 -- ---------------------------------------------------------------------------
@@ -111,8 +117,8 @@ protoChecks c = do
   case r1 of
     Left e -> check c ("tiny: " ++ show e) False
     Right a -> do
-      checkEq c "tiny: the chosen row is the payload" (Right (Settled "publish_if_active"))
-        (settle lenient a (#edges (\_ e -> e.edgeTarget)))
+      checkEq c "tiny: the chosen row is the payload" (Right "publish_if_active")
+        (verdictValue (settle lenient a (#edges (\_ e -> e.edgeTarget))))
       checkEq c "tiny: masses are wire keys" ["publication_gate", "telemetry"] (map fst a.masses)
 
   -- a packet inferred from its questions; a reusable handler list; settle under a policy
@@ -136,7 +142,7 @@ protoChecks c = do
                                  ) :: Packet ("useful" ::= Noul :& "contradicts" ::= Noul) Questions)
                                  ["e1", "e.2"]
             :& #evidence := (#gap := noul "Does answering require source not supplied?")
-  case request jevLatest world packet of
+  case request <$> prepare jevLatest world packet of
     Left e -> check c ("packet: request failed: " ++ show e) False
     Right req -> do
       let qs = questionsOf req
@@ -156,29 +162,29 @@ protoChecks c = do
     Left e -> check c ("packet: " ++ show e) False
     Right resp -> do
       let a = answers resp
-      checkEq c "packet: usage kept" (Usage 100 7) (usage resp)
+      checkEq c "packet: usage kept" (Usage (Just 100) (Just 7)) (usage resp)
       checkEq c "packet: the winner runs with no policy at all" "handback preference"
         (handle a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
-      checkEq c "packet: inline handler list ran the chosen branch" (Right (Settled "handback preference"))
-        (settle lenient a.next (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| #edges (\k _ -> "follow " ++ T.unpack k)))
-      checkEq c "packet: reusable handler list" (Right (Settled "handback preference")) (settle lenient a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h)))
+      checkEq c "packet: inline handler list ran the chosen branch" (Right "handback preference")
+        (verdictValue (settle lenient a.next (#use_witness (\(Witness w) -> "located " ++ T.unpack w) .| #ask_model (\(Handoff h) -> "handback " ++ T.unpack h) .| #edges (\k _ -> "follow " ++ T.unpack k))))
+      checkEq c "packet: reusable handler list" (Right "handback preference") (verdictValue (settle lenient a.next (handlers (\(Handoff h) -> "handback " ++ T.unpack h))) )
       checkEq c "packet: contenders eliminate through the same handlers, best first"
         ["handback preference", "follow publication_gate", "follow telemetry", "located complete_request:41"]
         (map snd (contenders 0 a.next (handlers (const "handback preference"))))
       checkEq c "packet: a floor keeps only the mass above it" 1
         (length (contenders 0.5 a.next (handlers (const ""))))
       check c "packet: a near tie is structured doubt, not a result"
-        (case settle (Policy 0 0.7 0 :: Policy Strict) a.next (handlers (const "")) of
+        (case settle (custom 0 0.7 0) a.next (handlers (const "")) of
           Left (Doubt { cause = NearTie ("ask_model", _) ("publication_gate", _) }) -> True
           _ -> False)
       checkEq c "packet: explain names a near-tie doubt with the failing floor and the rest"
         "doubted ask_model (NearTie): margin 0.60 < 0.70 by 0.10; confidence 0.70, mass 0.70"
-        (explain (Policy 0 0.7 0 :: Policy Strict) a.next)
+        (explain (custom 0 0.7 0) a.next)
       checkEq c "packet: explain names a settlement with every check"
         "settled on ask_model: confidence 0.70 \8805 0.00, mass 0.70 \8805 0.00, margin 0.60 \8805 0.00"
-        (explain (Policy 0 0 0 :: Policy Strict) a.next)
+        (explain (custom 0 0 0) a.next)
       checkEq c "packet: noul" 0.8 a.enough.yes
-      checkEq c "packet: a noul is judged under the same policy" (Right (Settled True)) (judge lenient a.enough)
+      checkEq c "packet: a noul is judged under the same policy" (Right True) (verdictValue (judge lenient a.enough))
       checkEq c "packet: judge explains in the same words"
         "settled on yes: mass 0.80 \8805 0.40, margin 0.60 \8805 0.08" (explain lenient a.enough)
       checkEq c "packet: rubric expectation" 1.5 a.urgency.expectation
@@ -225,11 +231,11 @@ protoChecks c = do
   jy <- judged 0.9
   jn <- judged 0.1
   jd <- judged 0.55
-  checkEq c "judge: a clear yes" (Right (Right (Settled True))) (fmap (judge strict) jy)
-  checkEq c "judge: a clear no is a result, not a doubt" (Right (Right (Settled False))) (fmap (judge strict) jn)
-  checkEq c "judge: a slim majority still answers under a lenient policy" (Right (Right (Settled True))) (fmap (judge lenient) jd)
+  checkEq c "judge: a clear yes" (Right (Right True)) (fmap (verdictValue . judge strict) jy)
+  checkEq c "judge: a clear no is a result, not a doubt" (Right (Right False)) (fmap (verdictValue . judge strict) jn)
+  checkEq c "judge: a slim majority still answers under a lenient policy" (Right (Right True)) (fmap (verdictValue . judge lenient) jd)
   check c "judge: the middle is a near tie under a policy that wants a margin"
-    (case fmap (judge (Policy 0 0.4 0 :: Policy Strict)) jd of
+    (case fmap (judge (custom 0 0.4 0)) jd of
       Right (Left (Doubt { cause = NearTie ("yes", _) ("no", _) })) -> True
       _ -> False)
   checkEq c "judge: explain names the doubt and the floor it missed"
@@ -241,7 +247,7 @@ protoChecks c = do
   checkEq c "holds: a clear yes" (Right True) (fmap (holds strict) jy)
   checkEq c "holds: a clear no" (Right False) (fmap (holds strict) jn)
   checkEq c "holds: a doubt does not hold" (Right False)
-    (fmap (holds (Policy 0 0.4 0 :: Policy Strict)) jd)
+    (fmap (holds (custom 0 0.4 0)) jd)
   checkEq c "holds: agrees with judge wherever judge answers" (Right True) (fmap (holds lenient) jd)
 
   -- structured wording
@@ -249,7 +255,7 @@ protoChecks c = do
                 (  Core.alt #retry_redelivery (object ["what" .= ("retry redelivers m42" :: Text)]) (Command "just test-target actor retry")
                 .| Core.alt #double_admission "The inbox admitted two records" (Command "just test-target node inbox")
                 .| Core.alt #unknown Null () )
-  case request jevLatest world mech of
+  case request <$> prepare jevLatest world mech of
     Left e -> check c ("wording: " ++ show e) False
     Right req -> do
       let qs = questionsOf req
@@ -269,8 +275,8 @@ protoChecks c = do
 
   -- preparation errors, every builder total
   let prepErr :: Core.Endpoint Value e => Q Value e -> Maybe PrepError
-      prepErr q = case request jevLatest world (#value := q) of
-        Left (Prepare e) -> Just e
+      prepErr q = case prepare jevLatest world (#value := q) of
+        Left e -> Just e
         _ -> Nothing
       rows :: [(Text, Value, Edge)] -> Offers ("rows" ::* (Text, Value, Edge))
       rows = Core.many #rows (\(k, _, _) -> k) (\(_, d, _) -> d)
@@ -292,7 +298,7 @@ protoChecks c = do
   checkEq c "prepare: null level rejected" (Just (BadLevel "value" 0))
     (prepErr (score "?" (Core.level #a Null () .| level #b "b" ())))
   checkEq c "prepare: bare-number state rejected" (Just BadStateShape)
-    (case request jevLatest (Core.rawState (Number 1)) (#value := noul "?") of Left (Prepare e) -> Just e; _ -> Nothing)
+    (case prepare jevLatest (Core.rawState (Number 1)) (#value := noul "?") of Left e -> Just e; _ -> Nothing)
 
   -- malformed responses are decode errors, never values
   let groups = choice "?" (many #rows fst snd [("run_retry_fixture" :: Text, "r" :: Text), ("read_publish_gate", "p")])
