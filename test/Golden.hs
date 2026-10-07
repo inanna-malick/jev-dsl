@@ -120,7 +120,7 @@ world req =
 
 -- ---------------------------------------------------------------------------
 
-golden :: Schema Value s => Checks -> String -> State () -> s Questions -> (Response s -> IO ()) -> IO ()
+golden :: Schema Value s => Checks -> String -> State () -> s Questions -> (Response (s Answers) -> IO ()) -> IO ()
 golden c name st q inspectAnswers = do
   fx <- loadFixture name
   case prepare (Core.Model (requestModel (fixtureRequest fx))) st q of
@@ -131,6 +131,8 @@ golden c name st q inspectAnswers = do
       case decode prepared (fixtureResponse fx) of
         Left e -> check c (name ++ ": golden decode failed: " ++ show e) False
         Right resp -> do
+          checkEq c (name ++ ": raw usage retained")
+            (maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))) (rawUsage resp)
           checkEq c (name ++ ": resolved model") "jev-1.13.0" (resolvedModel resp)
           let fixtureUsage = maybe Null id (lookup "usage" (objectPairs (fixtureResponse fx)))
               usageField k = case lookup k (objectPairs fixtureUsage) of

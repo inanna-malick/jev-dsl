@@ -510,9 +510,10 @@ interpret sess = \case
     -- is built from is the poster the provider was shown.
     let st = situation t
         wanted = [(k, poster, node) | (k, node) <- matches, Just poster <- [lookup k st.gate.posters]]
-    fits <- must =<< ask1 sess st
+    fitsResponse <- must =<< ask1 sess st
       (each (\(k, _, _) -> k) (\(_, poster, _) -> noul
         ("Does the traveller's story so far match this wanted poster from " <> field (#gate :/ #posters) st <> "? " <> poster)) wanted)
+    let fits = answers fitsResponse
     let scored = sortOn (Down . (.yes) . snd) fits
     aside ("posters " <> T.intercalate ", " [k <> " " <> pct n.yes | ((k, _, _), n) <- scored])
     -- Holding someone starts something, so the closest poster is judged under
@@ -528,8 +529,9 @@ interpret sess = \case
     -- next, on one line. The highest level half the weight reaches is the
     -- one taken, which is the median; there is no string to dispatch on and
     -- no second list that could fall out of step with this one.
-    a <- must =<< ask1 sess (situation t)
+    response <- must =<< ask1 sess (situation t)
       (score q (level #sound sound x .| level #thin thin y .| level #false false z))
+    let a = answers response
     let (landed, next) = graded 0.5 a
     aside ("weighed " <> landed <> "  (" <> T.intercalate ", " [k <> " " <> pct m | (k, m) <- a.masses]
       <> "; thin or worse " <> pct (massAtOrAbove #thin a) <> ")")
@@ -542,10 +544,11 @@ interpret sess = \case
         turned = let n = sum [T.length u.replied | u <- t.turns] `mod` max 1 (length unused)
                  in take 3 (drop n unused ++ take n unused)
     if null unused || even (length t.turns) then next.play t else do
-      a <- must =<< ask1 sess (situation t)
+      response <- must =<< ask1 sess (situation t)
         (choice "Which of these fits this moment at the gate, given what has happened so far?"
           (alt #nothing "The night goes on; nothing in particular happens" Nothing
            .| mapCarried Just (many #happening (.tag) (.blurb) turned)))
+      let a = answers response
       -- Firing an event changes the world, so it goes through a policy too.
       -- Every alternative already carries what to do, the quiet one
       -- included, so the policy adds no handlers. If the night reads as

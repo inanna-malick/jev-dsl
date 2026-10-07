@@ -30,7 +30,7 @@ locate transport source numbered = do
        (alt #not_here "No line in this file begins that branch" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) numbered))
   pure $ case answer of
     Left err -> Left (T.pack (show err))
-    Right a -> case settle lenient a (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
+    Right response -> case settle lenient (answers response) (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
       Right verdict -> case settledValue verdict of
         Just n -> Right n
         Nothing -> Left "not in this file"
@@ -91,7 +91,7 @@ urgency transport situation = do
        .| level #blocked "A worker cannot take its next action" Now ))
   pure $ case answer of
     Left err -> Left (T.pack (show err))
-    Right a -> Right (grade 0.5 a)
+    Right response -> Right (grade 0.5 (answers response))
 
 -- The same handlers on every contender above a floor.
 routes :: Handlers Text Routes
@@ -105,7 +105,7 @@ selectLine sess world numbered = do
   answer <- ask1 sess world (choice "Which line begins the branch?"
     (alt #not_here "No line begins it" Nothing
      .| mapCarried (Just . (.lineNo)) (many #lines (T.pack . show . (.lineNo)) (.lineText) numbered)))
-  pure (fmap (takenUnder lenient) answer)
+  pure (fmap (takenUnder lenient . answers) answer)
 
 -- Optional leaves and packets keep an inferred shape across presence changes.
 withExtra extra = #ready := noul "Ready?" :& #extra := optional (noul <$> extra)

@@ -145,7 +145,7 @@ locate sess source numbered = do
         .| many #lines (T.pack . show . (.lineNo)) (.lineText) numbered))
   pure $ case answer of
     Left err -> Left (T.pack (show err))
-    Right a -> case settle lenient a (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
+    Right response -> case settle lenient (answers response) (#not_here (\() -> Nothing) .| #lines (\_ l -> Just l.lineNo)) of
       Right verdict -> case settledValue verdict of
         Just n -> Right n
         Nothing -> Left "not in this file"

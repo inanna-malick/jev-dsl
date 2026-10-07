@@ -116,7 +116,8 @@ protoChecks c = do
   r1 <- ask1 (session (stub "publication_gate") jevLatest) world (choice "Which edge next?" edgeOffers)
   case r1 of
     Left e -> check c ("tiny: " ++ show e) False
-    Right a -> do
+    Right response -> do
+      let a = answers response
       checkEq c "tiny: the chosen row is the payload" (Right "publish_if_active")
         (verdictValue (settle lenient a (#edges (\_ e -> e.edgeTarget))))
       checkEq c "tiny: masses are wire keys" ["publication_gate", "telemetry"] (map fst a.masses)
@@ -227,7 +228,7 @@ protoChecks c = do
         (fmap (field "yes") (field "gap" (toJSON a.evidence)))
 
   -- judging a noul: yes, no, and the doubt in between
-  let judged p = ask1 (session (fixed (answerMap [("value", noulAt p)])) jevLatest) world (noul "?")
+  let judged p = fmap (fmap answers) (ask1 (session (fixed (answerMap [("value", noulAt p)])) jevLatest) world (noul "?"))
   jy <- judged 0.9
   jn <- judged 0.1
   jd <- judged 0.55
@@ -332,7 +333,7 @@ protoChecks c = do
               , "legend" .= object ["0" .= ("no risk" :: Text), "1" .= ("adjacent cases" :: Text), "2" .= ("crosses a contract" :: Text)]
               , "probabilities" .= object [Key.fromText (T.pack (show i)) .= p | (i, p) <- zip [0 :: Int ..] ps] ])])) jevLatest)
               world rubric
-        pure (fmap (grade floor') r)
+        pure (fmap (grade floor' . answers) r)
   g1 <- gradeOver [0.2, 0.3, 0.5 :: Double] 0.5
   checkEq c "grade: the top level clears exactly at the floor" (Right ("contract" :: Text)) g1
   g2 <- gradeOver [0.2, 0.3, 0.5 :: Double] 0.6

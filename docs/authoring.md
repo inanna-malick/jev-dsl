@@ -59,7 +59,7 @@ answer <- ask1 sess (state (#source := source))
   (choice "Which line begins the retry-timeout branch?"
      (alt #not_here "The branch is not in this file" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) lines))
 case answer of
-  Right a -> case settle lenient a (#not_here (\() -> handBack) .| #lines (\_ l -> editAt l.lineNo l.revision)) of
+  Right response -> case settle lenient (answers response) (#not_here (\() -> handBack) .| #lines (\_ l -> editAt l.lineNo l.revision)) of
     Right verdict -> settledValue verdict
     Left d -> stop d.why
   Left err -> ...

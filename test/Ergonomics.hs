@@ -103,8 +103,8 @@ ergonomicChecks c = do
     (readLeaf present (body [baseAnswer, ("extra", yesAt 1.1)]))
   checkEq c "optional: present answer must have the correct kind" (Left (WrongKind "extra"))
     (readLeaf present (body [baseAnswer, ("extra", object ["type" .= ("choice" :: Text)])]))
-  checkEq c "optional: an entirely absent request remains an error" (Left EmptyQuestionMap :: Either PrepError (Prepared (Answers ())))
-    (prepare jevLatest world (#extra := optional (noul <$> (Nothing :: Maybe Text))))
+  checkEq c "optional: an entirely absent request remains an error" (Left EmptyQuestionMap :: Either PrepError ())
+    (fmap (const ()) (prepare jevLatest world (#extra := optional (noul <$> (Nothing :: Maybe Text)))))
 
   -- Optional packets, choices and scores, and optional leaves inside each.
   let nested enabled =

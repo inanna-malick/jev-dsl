@@ -12,5 +12,4 @@ import Data.Text (Text)
 import Jev.Operators
 
 -- Two cells with one label: the second would be unreachable.
-bad :: Either PrepError (Prepared (Answers ()))
 bad = prepare jevLatest (state (#s := ("x" :: Text))) (#enough := noul "?" :& #enough := noul "?")

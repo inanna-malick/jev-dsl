@@ -37,8 +37,9 @@ locate transport source numbered = do
        (alt #not_here "The branch is not in this file" () .| many #lines (T.pack . show . (.lineNo)) (.lineText) numbered))
   pure $ case r of
     Left _ -> (HandBack, [])
-    Right a ->
-      let edit = #not_here (\() -> HandBack) .| #lines (\_ l -> EditAt l.lineNo l.revision)
+    Right response ->
+      let a = answers response
+          edit = #not_here (\() -> HandBack) .| #lines (\_ l -> EditAt l.lineNo l.revision)
           winner = either (const HandBack) settledValue (settle (custom 0.3 0.1 0.5) a edit)
           alsoPlausible = map snd (contenders 0.2 a edit)
       in (winner, alsoPlausible)
@@ -68,7 +69,7 @@ diagnose transport inquiry hypotheses = do
           observations = [(h.hKey, "ran " <> h.probe) | h <- worthProbing]
       r2 <- ask1 sess (state (#inquiry := inquiry :& #observations := observations))
               (choice "Which mechanism do the observations support?" offers)
-      pure $ fmap (\final -> either (const (Undecided live)) (maybe Neither Supported . settledValue) (settle (custom 0.6 0.2 0.5) final hypothesisOf)) r2
+      pure $ fmap (\final -> either (const (Undecided live)) (maybe Neither Supported . settledValue) (settle (custom 0.6 0.2 0.5) (answers final) hypothesisOf)) r2
 
 -- ---------------------------------------------------------------------------
 -- 3. The per-item battery: a Noul per edge with its own wording, and a
@@ -104,7 +105,7 @@ attention transport message = do
   -- Each level carries what it means for the program beside what it means
   -- for the provider, so there is no second list to keep in step and no
   -- level that can quietly lose its result.
-  pure $ fmap (grade 0.5) r
+  pure $ fmap (grade 0.5 . answers) r
 
 -- ---------------------------------------------------------------------------
 

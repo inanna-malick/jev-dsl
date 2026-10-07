@@ -141,11 +141,11 @@ die msg = hPutStrLn stderr msg >> exitFailure
 -- What the typed answers say, under a policy
 -- ---------------------------------------------------------------------------
 
-report :: Response Triage -> IO ()
+report :: Response (Triage Answers) -> IO ()
 report r = do
   let u = usage r
   TIO.putStrLn ("usage: " <> showUsage u.inputTokens <> " in, " <> showUsage u.outputTokens <> " out; model " <> resolvedModel r)
-  mapM_ (TIO.putStrLn . ("note: " <>)) (diagnostics r)
+  mapM_ (TIO.putStrLn . ("note: " <>) . showT) (diagnostics r)
   -- Each choice is settled under a policy: a result only through a handler
   -- per alternative, or a doubt with the numbers behind it.
   line "explains" (explain lenient r.explains) $ settle lenient r.explains
