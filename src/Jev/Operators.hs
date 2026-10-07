@@ -43,8 +43,8 @@
 -- are compile errors in these words. Wording, runtime candidates and level
 -- counts are checked when the request is built.
 --
--- No network: 'ask' and 'ask1' take a 'Session'. 'request' and 'decode'
--- are the same operation split, for recording and replay.
+-- No network: 'ask' and 'ask1' take a 'Session'. 'prepare' retains the
+-- checked request and original decoder for 'request' and 'decode' replay.
 module Jev.Operators
   ( -- * Packets
     Packet ((:=), (:&))
@@ -283,7 +283,7 @@ jevLatest :: Model
 jevLatest = Core.jevLatest
 
 -- | A transport and the model it is asked for, bound once.
--- @transport :: Value -> m (Either Text Value)@ is anything that posts JSON
+-- @transport :: Value -> m (Either err Value)@ is anything that posts JSON
 -- and hands the body back.
 session :: (Value -> m (Either err Value)) -> Model -> Session m err
 session = Core.session

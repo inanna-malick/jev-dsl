@@ -814,7 +814,9 @@ class JsonValue v => Endpoint v e where
   decodeA :: Path -> Q v e -> [(Text, v)] -> Either DecodeError (A v e)
   -- | The answer as a cell reads it (transparent for nesting).
   unwrapA :: A v e -> Answers v :- e
-  -- | A payload-independent summary for inspection.
+  -- | A payload-independent summary for inspection. Extension instances must
+  -- omit retained domain/action payloads; presentation retains these facts
+  -- separately so mapping an answer never demands the mapped value.
   previewA :: A v e -> v
 
 lookupAnswer :: Path -> [(Text, v)] -> Either DecodeError v
@@ -1187,6 +1189,8 @@ fieldPairs = \case
 class JsonValue v => Schema v (s :: Type -> Type) where
   compileSchema :: Path -> s (Questions v) -> Either PrepError [(Text, WireQuestion v)]
   decodeSchema :: Path -> s (Questions v) -> [(Text, v)] -> Either DecodeError (s (Answers v))
+  -- | Presentation facts only. Custom schemas must follow the payload-free
+  -- contract of 'previewA'; the core cannot inspect an extension's payload.
   previewSchema :: s (Answers v) -> v
 
 instance (JsonValue v, Unique t) => Schema v (Packet t) where
@@ -1296,7 +1300,7 @@ mapResponse f (Response a facts m u d) = Response (f a) facts m u d
 instance Functor (Response v) where
   fmap = mapResponse
 
--- | Bounded presentation facts from the original typed answer. Mapping or
+-- | Presentation facts from the original typed answer. Mapping or
 -- projecting an action never traverses that retained action for presentation.
 responsePreview :: Response v a -> v
 responsePreview (Response _ facts _ _ _) = facts
