@@ -63,15 +63,15 @@ module Jev.Operators
   , Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Acting on answers
   , settle, takenUnder, judge, holds, grade, graded, explain, handle, contenders, taken
-  , Policy (..), lenient, careful, strict, Lenient, Careful, Strict
-  , Settled (..), Doubt (..), Cause (..), Weighed
+  , Policy, lenient, careful, strict, Lenient, Careful, Strict, Custom, customPolicy, PolicyError (..)
+  , Settled, settledValue, Doubt (..), Cause (..), Weighed
     -- * Uniform payloads: the continuation is the payload
   , Carries (mapCarried), Retarget, Uniform, uniform, mapUniform, withUniform, branches
     -- * Asking
-  , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics
+  , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics, Diagnostic (..)
   , JevError (..), PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..)
     -- * Recording and replay: the same operation split
-  , request, decode
+  , Prepared, prepare, request, decode, mapResponse, rawUsage
     -- * Types, for signatures only
   , type (::=), type (:&), type (::>), type (::*), type (:|:), Offers, Handlers, Handles, Rubric
   , Noul, Choice, Score, Each, Optional, Group
@@ -80,9 +80,6 @@ module Jev.Operators
   ) where
 
 import Data.Aeson (Value (String), ToJSON (..))
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.TypeLits (KnownNat, KnownSymbol)
@@ -92,9 +89,9 @@ import Jev.Core
   ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
   , Alternatives, AltsOk, RubricOk, Carries (mapCarried), Cause (..), Choice, DecodeError (..), Doubt (..), Each, Optional, Field, Group
   , FieldPath ((:/)), StatePath
-  , Handles, JevError (..), Label, Lenient, Careful, Strict, Model, Noul, Packet (..), Retarget, Schema, Settled (..)
+  , Handles, JevError (..), Label, Lenient, Careful, Strict, Model, Noul, Packet (..), Retarget, Schema, Settled, settledValue
   , uniform, mapUniform
-  , PrepError (..), Q, Score, Unique, Weighed, type (:-), type (::=), type (:&), type (::>), type (::*), type (:|:), Policy (..)
+  , PrepError (..), Q, Score, Unique, Weighed, type (:-), type (::=), type (:&), type (::>), type (::*), type (:|:), Policy, Custom, customPolicy, PolicyError (..), Usage (..), Diagnostic (..)
   , Rejection (..), ValidationIssue (..)
   )
 
@@ -102,8 +99,9 @@ type Questions = Core.Questions Value
 type Answers = Core.Answers Value
 type Fields = Core.Fields Value
 type State t = Core.State Value t
-type Response s = Core.Response Value s
-type Session m = Core.Session m Value
+type Response a = Core.Response Value a
+type Prepared a = Core.Prepared Value a
+type Session m err = Core.Session m Value err
 
 -- | A disjunction whose alternatives all carry the same kind of thing,
 -- with the chain itself kept out of sight. 'withUniform' opens one.
@@ -255,17 +253,15 @@ contenders = Core.contenders
 -- A handler list as written: found by label, so its own order is its type.
 type Handlers' hs = Core.Alts Core.HandlerT hs
 
--- | Read-only choices: which file, which skill.
+-- | Package-owned preset policies.
 lenient :: Policy Lenient
-lenient = Policy 0.40 0.08 0.50
+lenient = Core.lenient
 
--- | Starting a worker, or choosing an approach.
 careful :: Policy Careful
-careful = Policy 0.55 0.20 0.70
+careful = Core.careful
 
--- | Merging, stopping, anything with a receipt.
 strict :: Policy Strict
-strict = Policy 0.70 0.40 0.85
+strict = Core.strict
 
 massAtOrAbove :: KnownNat (Core.Index l levels) => Label l -> Scored p levels -> Double
 massAtOrAbove = Core.massAtOrAbove
@@ -289,47 +285,43 @@ jevLatest = Core.jevLatest
 -- | A transport and the model it is asked for, bound once.
 -- @transport :: Value -> m (Either Text Value)@ is anything that posts JSON
 -- and hands the body back.
-session :: (Value -> m (Either Text Value)) -> Model -> Session m
+session :: (Value -> m (Either err Value)) -> Model -> Session m err
 session = Core.session
 
 -- | Send a packet through a session and read back its typed 'Response'.
-ask :: (Monad m, Schema Value s) => Session m -> State t -> s Questions -> m (Either JevError (Response s))
+ask :: (Monad m, Schema Value s) => Session m err -> State t -> s Questions -> m (Either (JevError err) (Response (s Answers)))
 ask = Core.roundTrip
 
 -- | One question, one answer, under the label @value@.
-ask1 :: (Monad m, Core.Endpoint Value e) => Session m -> State t -> Q Value e -> m (Either JevError (Answers :- e))
+ask1 :: (Monad m, Core.Endpoint Value e) => Session m err -> State t -> Q Value e -> m (Either (JevError err) (Response (Answers :- e)))
 ask1 = Core.jev1
 
--- | The request body, without sending it.
-request :: Schema Value s => Model -> State t -> s Questions -> Either JevError Value
+-- | Check one call and retain its original typed decoder.
+prepare :: Schema Value s => Model -> State t -> s Questions -> Either PrepError (Prepared (s Answers))
+prepare = Core.prepare
+
+-- | The checked request body for recording or transport.
+request :: Prepared a -> Value
 request = Core.request
 
--- | A response body against the packet that produced the request.
-decode :: Schema Value s => s Questions -> Value -> Either JevError (Response s)
+-- | Decode a recording with the exact prepared call that produced it.
+decode :: Prepared a -> Value -> Either DecodeError (Response a)
 decode = Core.decode
 
--- | The packet, under 'Answers'. A response already reads by its packet's
--- labels, so this is for handing the whole packet to a function.
-answers :: Response s -> s Answers
+answers :: Response a -> a
 answers = Core.answers
 
--- | Token counts for one call. Missing or non-numeric fields read as 0.
-data Usage = Usage { inputTokens :: Int, outputTokens :: Int } deriving (Show, Eq)
+mapResponse :: (a -> b) -> Response a -> Response b
+mapResponse = Core.mapResponse
 
-usage :: Response s -> Usage
-usage r = Usage (field' "input_tokens") (field' "output_tokens")
-  where
-    field' :: Text -> Int
-    field' k = case Core.usage r of
-      Aeson.Object o -> case KeyMap.lookup (Key.fromText k) o of
-        Just (Aeson.Number n) -> round n
-        _ -> 0
-      _ -> 0
+rawUsage :: Response a -> Value
+rawUsage = Core.rawUsage
 
--- | The model the request resolved to, as reported by the response envelope.
-resolvedModel :: Response s -> Text
+usage :: Response a -> Usage
+usage = Core.usage
+
+resolvedModel :: Response a -> Text
 resolvedModel = Core.responseModel
 
--- | Distributions that did not sum to one, and the like. Worth a log line.
-diagnostics :: Response s -> [Text]
+diagnostics :: Response a -> [Diagnostic]
 diagnostics = Core.diagnostics

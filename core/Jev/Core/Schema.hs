@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
@@ -61,13 +62,14 @@ module Jev.Core.Schema
     -- * Builders
   , noul, choice, score, each, optional
     -- * Results
-  , Weighed (..), Weight (..), Doubt (..), Cause (..), Policy (..), Settled (..)
-  , Lenient, Careful, Strict
+  , Weighed (..), Weight (..), Doubt (..), Cause (..), Policy, PolicyError (..), Custom, customPolicy, Settled, settledValue
+  , Lenient, Careful, Strict, lenient, careful, strict
   , settle, takenUnder, judge, holds, explain, contenders, handle
   , grade, graded, massAtOrAbove
     -- * The operation
   , Schema (..), Model (..), jevLatest, Session, session
-  , request, decode, Response, answers, responseModel, usage, diagnostics
+  , Prepared, prepare, request, decode, executePrepared
+  , Response, answers, mapResponse, responseModel, rawUsage, usage, Usage (..), diagnostics, Diagnostic (..)
   , JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
   , Endpoint (..), Path (..), encodePath, extend, leaf, lookupAnswer
@@ -637,9 +639,9 @@ data Cause
 -- nothing has to be rebuilt from the policy and the answer.
 data Doubt = Doubt { cause :: Cause, why :: Text } deriving (Show, Eq)
 
--- | Three floors. The tag records which policy weighed an answer, so a
--- step that must not be taken lightly can demand a verdict from the policy
--- that suits it.
+-- | Validated probability floors. The nominal tag records which policy ran;
+-- it grants neither runtime authority nor semantic certainty.
+type role Policy nominal
 data Policy (p :: Type) = Policy
   { minMass :: Double
   , minMargin :: Double
@@ -649,11 +651,35 @@ data Policy (p :: Type) = Policy
 data Lenient
 data Careful
 data Strict
+data Custom
 
--- | A verdict, carrying the policy that reached it. A function that merges,
--- stops or files a receipt takes @Settled Strict r@ and no lesser verdict
--- will do.
+data PolicyError = InvalidPolicyFloor Text Double deriving (Show, Eq)
+
+customPolicy :: Double -> Double -> Double -> Either PolicyError (Policy Custom)
+customPolicy m d c = do
+  mapM_ valid [("mass", m), ("margin", d), ("confidence", c)]
+  Right (Policy m d c)
+  where
+    valid (name, x)
+      | isNaN x || isInfinite x || x < 0 || x > 1 = Left (InvalidPolicyFloor name x)
+      | otherwise = Right ()
+
+lenient :: Policy Lenient
+lenient = Policy 0.40 0.08 0.50
+
+careful :: Policy Careful
+careful = Policy 0.55 0.20 0.70
+
+strict :: Policy Strict
+strict = Policy 0.70 0.40 0.85
+
+-- | The selected value accompanied by evidence that this policy ran.
+-- Projecting or mapping the value makes no assertion about its authority.
+type role Settled nominal representational
 newtype Settled (p :: Type) (r :: Type) = Settled r deriving (Show, Eq)
+
+settledValue :: Settled p r -> r
+settledValue (Settled r) = r
 
 instance Functor (Settled p) where
   fmap f (Settled r) = Settled (f r)
@@ -1199,10 +1225,10 @@ instance IsString Model where fromString = Model . T.pack
 jevLatest :: Model
 jevLatest = Model "jev-latest"
 
--- | A transport and the model it is asked for, bound once.
-data Session (m :: Type -> Type) (v :: Type) = Session (v -> m (Either Text v)) Model
+-- | A transport and its requested model. The adapter owns its failure type.
+data Session (m :: Type -> Type) (v :: Type) err = Session (v -> m (Either err v)) Model
 
-session :: (v -> m (Either Text v)) -> Model -> Session m v
+session :: (v -> m (Either err v)) -> Model -> Session m v err
 session = Session
 
 -- | The flattened questions, with every preparation check applied.
@@ -1219,87 +1245,111 @@ prepareWire q = do
     [] -> Right ()
   Right qs
 
--- | The request body a transport sends.
-request :: Schema v s => Model -> State v t -> s (Questions v) -> Either JevError v
-request (Model m) st q = either (Left . Prepare) Right $ do
+-- | One checked call owns both the wire contract and its original decoder.
+-- The decoder closes over the original payloads, including functions.
+data Prepared v a = Prepared v (v -> Either DecodeError (Response v a))
+
+prepare :: Schema v s => Model -> State v t -> s (Questions v) -> Either PrepError (Prepared v (s (Answers v)))
+prepare (Model m) st q = do
   checkState (stateValue st)
   qs <- prepareWire q
-  Right (jObject
-    [ ("model", jString m)
-    , ("state", stateValue st)
-    , ("questions", jObject [(k, questionValue w) | (k, w) <- qs])
-    ])
+  let body = jObject
+        [ ("model", jString m)
+        , ("state", stateValue st)
+        , ("questions", jObject [(k, questionValue w) | (k, w) <- qs])
+        ]
+      decoder response = parseEnvelope response >>= \case
+        Rejected r -> Left (ProviderRejected r)
+        Evaluated model use ws -> do
+          let expected = map fst qs
+              got = map fst ws
+          case filter (`notElem` expected) got of
+            k : _ -> Left (UnexpectedAnswer k)
+            [] -> Right ()
+          case [k | k <- got, length (filter (== k) got) > 1] of
+            k : _ -> Left (DuplicateAnswer k)
+            [] -> Right ()
+          ans <- decodeSchema (Segments []) q ws
+          let drift = [DistributionDrift k total
+                      | (k, a) <- ws, Just total <- [driftOf a], abs (total - 1) > 0.01]
+          Right (Response ans model use drift)
+  Right (Prepared body decoder)
 
-data Response v s = Response (s (Answers v)) Text v [Text]
+-- | The wire body for this checked call; no decoder is reconstructed from it.
+request :: Prepared v a -> v
+request (Prepared body _) = body
 
--- | The packet, under 'Answers'. Usually unnecessary: a response reads by
--- its packet's own labels, @r.next@, through the instance below.
-answers :: Response v s -> s (Answers v)
+decode :: Prepared v a -> v -> Either DecodeError (Response v a)
+decode (Prepared _ decoder) = decoder
+
+-- | Metadata over any answer payload, including a single question.
+data Response v a = Response a Text v [Diagnostic]
+
+-- | Explicit value projection discards the envelope.
+answers :: Response v a -> a
 answers (Response a _ _ _) = a
 
--- | The model the request resolved to, as the envelope reported it.
-responseModel :: Response v s -> Text
+-- | Project an answer while preserving the call's metadata.
+mapResponse :: (a -> b) -> Response v a -> Response v b
+mapResponse f (Response a m u d) = Response (f a) m u d
+
+instance Functor (Response v) where
+  fmap = mapResponse
+
+responseModel :: Response v a -> Text
 responseModel (Response _ m _ _) = m
 
--- | The token counts for the call, as the provider sent them.
-usage :: Response v s -> v
-usage (Response _ _ u _) = u
+rawUsage :: Response v a -> v
+rawUsage (Response _ _ u _) = u
 
--- | Distributions that do not sum to one, and the like: worth a log line,
--- never a rejection.
-diagnostics :: Response v s -> [Text]
+-- | Unknown usage is distinct from a measured zero. Only nonnegative,
+-- finite integral counts are admitted; partial usage retains known fields.
+data Usage = Usage { inputTokens :: Maybe Integer, outputTokens :: Maybe Integer }
+  deriving (Show, Eq)
+
+usage :: JsonValue v => Response v a -> Usage
+usage r = Usage (tokens "input_tokens") (tokens "output_tokens")
+  where
+    tokens name = do
+      n <- lookupKey name (rawUsage r) >>= viewNumber
+      if isNaN n || isInfinite n || n < 0 then Nothing
+      else let count = floor n :: Integer
+           in if fromInteger count == n then Just count else Nothing
+
+data Diagnostic = DistributionDrift { questionId :: Text, distributionTotal :: Double }
+  deriving (Show, Eq)
+
+diagnostics :: Response v a -> [Diagnostic]
 diagnostics (Response _ _ _ d) = d
 
--- | A response reads by the labels of the packet that produced it:
--- @r.next.key@. A label the packet lacks is the same compile error it is on
--- the packet itself.
-instance HasField k (s (Answers v)) r => HasField k (Response v s) r where
+instance HasField k a r => HasField k (Response v a) r where
   getField = getField @k . answers
 
--- | A response prints as its answers: the packet's labels over each
--- answer's own fields, nested packets nested.
-instance (Show v, Schema v s) => Show (Response v s) where
-  show r = show (previewSchema (answers r))
+instance Show a => Show (Response v a) where
+  show = show . answers
 
--- | Decode a response body against the packet that produced the request.
-decode :: Schema v s => s (Questions v) -> v -> Either JevError (Response v s)
-decode q body = do
-  qs <- either (Left . Prepare) Right (prepareWire q)
-  either (Left . Decode) Right $ parseEnvelope body >>= \case
-    Rejected r -> Left (ProviderRejected r)
-    Evaluated model use ws -> do
-      let expected = map fst qs
-          got = map fst ws
-      case filter (`notElem` expected) got of
-        k : _ -> Left (UnexpectedAnswer k)
-        [] -> Right ()
-      case [k | k <- got, length (filter (== k) got) > 1] of
-        k : _ -> Left (DuplicateAnswer k)
-        [] -> Right ()
-      ans <- decodeSchema (Segments []) q ws
-      let drift = [ k <> ": distribution sums to " <> T.pack (show total)
-                  | (k, a) <- ws, Just total <- [driftOf a], abs (total - 1) > 0.01 ]
-      Right (Response ans model use drift)
-
-data JevError = Prepare PrepError | Transport Text | Decode DecodeError
+data JevError err = Prepare PrepError | Transport err | Decode DecodeError
   deriving (Show, Eq)
+
+executePrepared :: Monad m => Session m v err -> Prepared v a -> m (Either (JevError err) (Response v a))
+executePrepared (Session transport _) prepared = transport (request prepared) >>= \case
+  Left failure -> pure (Left (Transport failure))
+  Right body -> pure (either (Left . Decode) Right (decode prepared body))
 
 roundTrip
   :: (Monad m, Schema v s)
-  => Session m v -> State v t -> s (Questions v)
-  -> m (Either JevError (Response v s))
-roundTrip (Session transport model) st q = case request model st q of
-  Left e -> pure (Left e)
-  Right body -> transport body >>= \case
-    Left t -> pure (Left (Transport t))
-    Right resp -> pure (decode q resp)
+  => Session m v err -> State v t -> s (Questions v)
+  -> m (Either (JevError err) (Response v (s (Answers v))))
+roundTrip sess@(Session _ model) st q = case prepare model st q of
+  Left failure -> pure (Left (Prepare failure))
+  Right prepared -> executePrepared sess prepared
 
--- | The tiny use: one question, one answer.
+-- | One question with the same metadata envelope as a packet.
 jev1
-  :: forall m v e t. (Monad m, Endpoint v e)
-  => Session m v -> State v t -> Q v e
-  -> m (Either JevError (Answers v :- e))
-jev1 sess st q = fmap (fmap only) (roundTrip sess st ((Label :: Label "value") := q))
+  :: forall m v e t err. (Monad m, Endpoint v e)
+  => Session m v err -> State v t -> Q v e
+  -> m (Either (JevError err) (Response v (Answers v :- e)))
+jev1 sess st q = fmap (fmap (mapResponse only)) (roundTrip sess st ((Label :: Label "value") := q))
   where
-    only r = case answers r of
+    only packet = case packet of
       (_ :: Label k) := (a :: a) -> case toCell @a @(Answers v) a of Answered x -> unwrapA x
