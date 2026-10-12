@@ -23,7 +23,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified Jev.Core as Core
-import Jev.Operators hiding (field)
+import Jev.Operators hiding (packet, field)
 import Replay (noulWith, Presence (..))
 
 custom :: Double -> Double -> Double -> Policy Custom

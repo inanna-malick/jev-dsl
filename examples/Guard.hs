@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -155,24 +156,12 @@ data GuardF r
   | Knot Text r                                    -- a named point the script comes back to
   | Verdict Action r                               -- the guard decides, and the story goes on
   | End
+  deriving Functor
 
 -- An admission and a contradiction are different things and deserve
 -- different lines, so the tripwire is a disjunction with a continuation per
 -- outcome rather than one Noul standing for both.
-data Trip r = Trip r r   -- where an admission leads, and where a contradiction leads
-
-instance Functor Trip where
-  fmap f (Trip a b) = Trip (f a) (f b)
-
-instance Functor GuardF where
-  fmap f (Ask line trip bs) = Ask line (fmap (fmap f) trip) (mapUniform f bs)
-  fmap f (Say line r) = Say line (f r)
-  fmap f (Check ms none) = Check [(k, f r) | (k, r) <- ms] (f none)
-  fmap f (Weigh q (a, x) (b, y) (c, z)) = Weigh q (a, f x) (b, f y) (c, f z)
-  fmap f (Happen r) = Happen (f r)
-  fmap f (Knot n r) = Knot n (f r)
-  fmap f (Verdict v r) = Verdict v (f r)
-  fmap _ End = End
+data Trip r = Trip r r deriving Functor   -- where an admission leads, and where a contradiction leads
 
 newtype Fix f = Fix (f (Fix f))
 

@@ -40,7 +40,7 @@ route :: [(T.Text, Value)] -> Packet ("route" ::= Choice ("row" ::* (T.Text, Val
 route cs = #route := choice "?" (many #row fst snd cs)
 
 count :: [Value] -> Packet ("count" ::= Scale) Questions
-count ls = #count := scale (question "?") ls
+count ls = #count := scale (Core.textInstructions "?") ls
 
 wake :: Instructions Value -> Packet ("wake" ::= Noul) Questions
 wake i = #wake := noulWith i Omitted
@@ -81,6 +81,6 @@ rejectionChecks c = forM_ table $ \(name, disposition, observed) -> do
   fx <- loadFixture name
   check c (name ++ ": fixture is a rejection") (fixtureStatus fx `elem` [400, 422])
   case disposition of
-    Prep expected -> checkEq c (name ++ ": rejected before the request is built") (Just expected) observed
+    Prep anticipated -> checkEq c (name ++ ": rejected before the request is built") (Just anticipated) observed
     Inexpressible why -> check c (name ++ ": inexpressible (" ++ why ++ ")") True
     ProviderDecided -> check c (name ++ ": provider-decided") True

@@ -100,9 +100,13 @@ stub req = pure (Right (MObj
 
 miniChecks :: Checks -> IO ()
 miniChecks c = do
+  observed <- runQuery (session stub jevLatest) (traverse (\n ->
+    yes <$> question (rawState (MObj [("n", MNum n)])) #ready (noul "Ready?")) [1,2,1])
+  checkEq c "mini: independent assessments retain states and payload order" (Right [0.9,0.9,0.9]) (result observed)
+  checkEq c "mini: exact-state grouping executes two calls" 2 (length (observations observed))
   let rooms = [Room "cellar", Room "attic"]
-      packet = inspect rooms
-  case prepare jevLatest (rawState (MObj [("house", MStr "Greyhaven")])) packet of
+      battery = inspect rooms
+  case prepare jevLatest (rawState (MObj [("house", MStr "Greyhaven")])) battery of
     Left e -> check c ("mini: request failed: " ++ show e) False
     Right prepared -> do
       let req = request prepared
@@ -114,7 +118,7 @@ miniChecks c = do
         ((lookupKey "questions" req >>= lookupKey "next" >>= lookupKey "criteria" >>= lookupKey "cellar") == Just (MStr "cellar"))
       check c "mini: the battery flattens to one question per item"
         ((lookupKey "questions" req >>= lookupKey "each_room.attic") /= Nothing)
-  r <- roundTrip (session stub jevLatest) (rawState (MObj [("house", MStr "Greyhaven")])) packet
+  r <- roundTrip (session stub jevLatest) (rawState (MObj [("house", MStr "Greyhaven")])) battery
   case r of
     Left e -> check c ("mini: round trip failed: " ++ show e) False
     Right resp -> do

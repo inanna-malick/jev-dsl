@@ -559,3 +559,12 @@ catamorphism whose algebra is Jev.
 - Payloads are the only thing an action should run; never a key or wording.
 - Bind a packet in the session and keep it: answers are ordinary values,
   and the labels make them legible in a later turn.
+
+
+## Composable assessments and editable reflexes
+
+For independent assessments with their own evidence, ordinary traversals,
+payload optics, distributions, selective speculation, and exact replay, see
+[composition.md](composition.md). The complete compiled notebook-style example
+is [Reflex.hs](../examples/Reflex.hs). Existing typed packets remain useful as
+local schemas inside a query; they do not need to become a second DSL.

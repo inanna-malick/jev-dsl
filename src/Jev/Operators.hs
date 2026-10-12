@@ -71,7 +71,17 @@ module Jev.Operators
   , ask, ask1, session, Session, jevLatest, answers, usage, Usage (..), resolvedModel, diagnostics, Diagnostic (..)
   , JevError (..), PrepError (..), DecodeError (..), Rejection (..), ValidationIssue (..)
     -- * Recording and replay: the same operation split
-  , Prepared, prepare, request, decode, mapResponse, responsePreview, rawUsage
+  , Prepared, prepare, request, decode, executePrepared, mapResponse, responsePreview, rawUsage
+    -- * Composable observations
+  , Query, question, packet, scope, at, assessment
+  , PreparedQuery, prepareQuery, queryGroups, runQuery, executeQuery, replayQuery
+  , Evaluation, result, observations, recordings, evaluationPreview
+  , RequestGroup (..), Occurrence (..), Observation (..), Recording (..)
+  , EvaluationError (..), ReplayError (..)
+  , Program, liftQuery, Strategy (..), runProgram, replayProgram, programFrontier
+  , payloads, Payloads, PayloadAt, ReplacePayload
+  , choiceWeights, carriedWeights, noulWeights, scoreWeights
+  , module Jev.Core.Distribution
     -- * Types, for signatures only
   , type (::=), type (:&), type (::>), type (::*), type (:|:), Offers, Handlers, Handles, Rubric
   , Noul, Choice, Score, Each, Optional, Group
@@ -84,13 +94,21 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.TypeLits (KnownNat, KnownSymbol)
 import Jev.Aeson ()
+import Data.Profunctor (Star)
+import Jev.Core.Distribution
+import Jev.Core.Query
+  ( result, observations, recordings, queryGroups
+  , RequestGroup (..), Occurrence (..), Observation (..), Recording (..)
+  , EvaluationError (..), ReplayError (..) )
+import Jev.Core.Program (Strategy (..))
 import qualified Jev.Core as Core
 import Jev.Core
   ( Yes (yes), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
   , Alternatives, AltsOk, RubricOk, Carries (mapCarried), Cause (..), Choice, DecodeError (..), Doubt (..), Each, Optional, Field, Group
   , FieldPath ((:/)), StatePath
   , Handles, JevError (..), Label, Lenient, Careful, Strict, Model, Noul, Packet (..), Retarget, Schema, Settled, settledValue
-  , uniform, mapUniform
+  , uniform, mapUniform, payloads, Payloads, PayloadAt, ReplacePayload
+  , choiceWeights, carriedWeights, noulWeights, scoreWeights
   , PrepError (..), Q, Score, Unique, Weighed, type (:-), type (::=), type (:&), type (::>), type (::*), type (:|:), Policy, Custom, customPolicy, PolicyError (..), Usage (..), Diagnostic (..)
   , Rejection (..), ValidationIssue (..)
   )
@@ -328,3 +346,56 @@ resolvedModel = Core.responseModel
 
 diagnostics :: Response a -> [Diagnostic]
 diagnostics = Core.diagnostics
+
+-- Composable observation programs
+
+type Query a = Core.Query Value a
+type PreparedQuery a = Core.PreparedQuery Value a
+type Evaluation err a = Core.Evaluation Value err a
+type Program a = Core.Program Value a
+
+question :: (KnownSymbol k, Core.Endpoint Value e)
+  => State t -> Label k -> Q Value e -> Query (Answers :- e)
+question = Core.question
+
+packet :: Schema Value s => State t -> s Questions -> Query (s Answers)
+packet = Core.packet
+
+scope :: Text -> Query a -> Query a
+scope = Core.scope
+
+at :: KnownSymbol k => Label k -> Query a -> Query a
+at = Core.at
+
+assessment :: (input -> State t) -> (State t -> Query output) -> Star (Core.Query Value) input output
+assessment = Core.assessment
+
+prepareQuery :: Model -> Query a -> Either PrepError (PreparedQuery a)
+prepareQuery = Core.prepareQuery
+
+runQuery :: Monad m => Session m err -> Query a -> m (Evaluation err a)
+runQuery = Core.runQuery
+
+executeQuery :: Monad m => Session m err -> PreparedQuery a -> m (Evaluation err a)
+executeQuery = Core.executeQuery
+
+replayQuery :: PreparedQuery a -> [Recording Value err] -> Evaluation err a
+replayQuery = Core.replayQuery
+
+executePrepared :: Monad m => Session m err -> Prepared a -> m (Either (JevError err) (Response a))
+executePrepared = Core.executePrepared
+
+liftQuery :: Query a -> Program a
+liftQuery = Core.liftQuery
+
+runProgram :: Monad m => Strategy -> Session m err -> Program a -> m (Evaluation err a)
+runProgram = Core.runProgram
+
+replayProgram :: Strategy -> Model -> Program a -> [Recording Value err] -> Evaluation err a
+replayProgram = Core.replayProgram
+
+programFrontier :: Strategy -> Program a -> Either a (Query (Program a))
+programFrontier = Core.programFrontier
+
+evaluationPreview :: (err -> Value) -> Evaluation err a -> Value
+evaluationPreview = Core.evaluationPreview

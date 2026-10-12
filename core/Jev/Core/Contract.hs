@@ -10,7 +10,7 @@ module Jev.Core.Contract
   ( -- * Positions
     Presence (..)
   , Instructions (..)
-  , question
+  , textInstructions
   , Criteria (..)
   , checkState
   , checkInstructions
@@ -58,8 +58,8 @@ data Instructions v
   = NoInstructions
   | Instructions v
 
-question :: JsonValue v => Text -> Instructions v
-question = Instructions . jString
+textInstructions :: JsonValue v => Text -> Instructions v
+textInstructions = Instructions . jString
 
 -- | Noul criteria: each side independently omitted, null, or content.
 data Criteria v = Criteria

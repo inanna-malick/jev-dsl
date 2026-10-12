@@ -1,6 +1,6 @@
 cabal-version:      3.4
 name:               jev-dsl
-version:            0.1.0.0
+version:            0.2.0.0
 synopsis:           Typed question packets for TypeSafe's Jev
 description:
   Author a packet of labelled questions once, as an expression whose type is
@@ -63,9 +63,14 @@ library jev-core
     Jev.Core.Json
     Jev.Core.Contract
     Jev.Core.Schema
+    Jev.Core.Query
+    Jev.Core.Program
+    Jev.Core.Distribution
   build-depends:
     , base >= 4.21 && < 5
     , text >= 2.0 && < 2.2
+    , profunctors >= 5.6 && < 6
+    , selective >= 0.7 && < 0.8
 
 library
   import:           shared
@@ -77,11 +82,15 @@ library
     Jev.Core,
     Jev.Core.Json,
     Jev.Core.Contract,
-    Jev.Core.Schema
+    Jev.Core.Schema,
+    Jev.Core.Query,
+    Jev.Core.Program,
+    Jev.Core.Distribution
   build-depends:
     , base >= 4.21 && < 5
     , text >= 2.0 && < 2.2
     , jev-dsl:jev-core
+    , profunctors >= 5.6 && < 6
     , aeson       ^>= 2.2
     , scientific  >= 0.3 && < 0.4
     , vector      >= 0.13 && < 0.14
@@ -126,11 +135,16 @@ test-suite jev-dsl-test
     Rejections
     Mini
     Ergonomics
+    Composition
   build-depends:
     , base
     , text
     , aeson
     , bytestring
+    , lens
+    , selective
+    , profunctors
+    , QuickCheck
     , directory
     , filepath
     , vector

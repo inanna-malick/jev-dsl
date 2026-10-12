@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main (main) where
 
+import Composition (compositionChecks)
 import Check
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
@@ -23,6 +24,7 @@ main = do
     _ -> False)
   check c "json: jEqual ignores object order" (jEqual v w)
   check c "json: jEqual distinguishes values" (not (jEqual v (jObject [("b", jNumber 3)])))
+  compositionChecks c
   protoChecks c
   ergonomicChecks c
   corpusChecks c

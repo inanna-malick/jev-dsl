@@ -53,7 +53,7 @@ module Jev.Core.Schema
   , Q (..), A (..), Yes (..), Chosen (key, mass, margin, confidence, masses), Scored (expectation, confidence, masses)
     -- * Alternatives and rubric levels
   , type (::>), type (::*), type (:->), type (:|:), Offer, HandlerT, Level, Interp
-  , Alts (..), (.|), alt, many, level, offered
+  , Alts (..), (.|), alt, many, level, offered, payloads, Payloads, ReplacePayload, PayloadAt
     -- * Handlers, by label
   , Alternatives, AltsOk, Handles, Covers, Fits, HandlersOk, Fetch (..), Dispatch (..)
   , Levels, RubricOk, Index, Selected
@@ -65,10 +65,11 @@ module Jev.Core.Schema
   , Weighed (..), Weight (..), Doubt (..), Cause (..), Policy, PolicyError (..), Custom, customPolicy, Settled, settledValue
   , Lenient, Careful, Strict, lenient, careful, strict
   , settle, takenUnder, judge, holds, explain, contenders, handle
+  , choiceWeights, carriedWeights, noulWeights, scoreWeights
   , grade, graded, massAtOrAbove
     -- * The operation
-  , Schema (..), Model (..), jevLatest, Session, session
-  , Prepared, prepare, request, decode, executePrepared
+  , Schema (..), Model (..), jevLatest, Session, session, sessionModel, sendRequest
+  , Prepared, prepare, prepareCompiled, request, decode, executePrepared
   , Response, answers, mapResponse, responsePreview, responseModel, rawUsage, usage, Usage (..), diagnostics, Diagnostic (..)
   , JevError (..), roundTrip, jev1
     -- * Internals for extension (capture replay lives outside the library)
@@ -87,6 +88,7 @@ import qualified Data.Text as T
 import GHC.OverloadedLabels (IsLabel (..))
 import GHC.Records (HasField (..))
 import GHC.TypeLits
+import Jev.Core.Distribution (Weights, weights)
 import Jev.Core.Contract
 import Jev.Core.Json
 import Numeric (showFFloat)
@@ -380,6 +382,58 @@ instance (Alternatives x, Alternatives rest) => Alternatives (x :|: rest) where
     SelLeft s -> altKeyOf s
     SelRight s -> altKeyOf s
 
+-- | A type-changing van Laarhoven traversal; works with lens without a lens
+-- dependency. Static branches have one focus; runtime groups have every row.
+payloads :: forall k alts p q f v.
+  (Applicative f, AltsOk alts, Known k (AltLabels alts) alts, Payloads k alts,
+   p ~ PayloadAt k alts)
+  => Label k -> (p -> f q) -> Alts (Offer v) alts
+  -> f (Alts (Offer v) (ReplacePayload k q alts))
+payloads _ = traversePayload @k
+
+type family PayloadAt k alts where
+  PayloadAt k (k ::> p) = p
+  PayloadAt k (k ::* p) = p
+  PayloadAt k (a :|: b) = PayloadSide (Contains k a) k a b
+  PayloadAt k other = TypeError ('Text "Jev: no payload label #" ':<>: 'Text k)
+
+type family Contains k alts where
+  Contains k (k ::> p) = 'True
+  Contains k (k ::* p) = 'True
+  Contains k (a :|: b) = Contains k a || Contains k b
+  Contains k other = 'False
+
+type family PayloadSide hit k a b where
+  PayloadSide 'True k a b = PayloadAt k a
+  PayloadSide 'False k a b = PayloadAt k b
+
+type family ReplacePayload k q alts where
+  ReplacePayload k q (k ::> p) = k ::> q
+  ReplacePayload k q (k ::* p) = k ::* q
+  ReplacePayload k q (a :|: b) = ReplaceSide (Contains k a) k q a b
+
+type family ReplaceSide hit k q a b where
+  ReplaceSide 'True k q a b = ReplacePayload k q a :|: b
+  ReplaceSide 'False k q a b = a :|: ReplacePayload k q b
+
+class Payloads k alts where
+  traversePayload :: Applicative f => (PayloadAt k alts -> f q)
+    -> Alts (Offer v) alts -> f (Alts (Offer v) (ReplacePayload k q alts))
+instance Payloads k (k ::> p) where
+  traversePayload f (One (d, p)) = (\q -> One (d, q)) <$> f p
+instance Payloads k (k ::* p) where
+  traversePayload f (Grp rows) = Grp <$> traverse (\(k, d, p) -> (k, d,) <$> f p) rows
+instance PayloadStep (Contains k a) k a b => Payloads k (a :|: b) where
+  traversePayload = payloadStep @(Contains k a) @k
+
+class PayloadStep hit k a b where
+  payloadStep :: Applicative f => (PayloadSide hit k a b -> f q)
+    -> Alts (Offer v) (a :|: b) -> f (Alts (Offer v) (ReplaceSide hit k q a b))
+instance Payloads k a => PayloadStep 'True k a b where
+  payloadStep f (a :| b) = (:| b) <$> traversePayload @k f a
+instance Payloads k b => PayloadStep 'False k a b where
+  payloadStep f (a :| b) = (a :|) <$> traversePayload @k f b
+
 -- ---------------------------------------------------------------------------
 -- Uniform payloads: the continuation is the payload
 -- ---------------------------------------------------------------------------
@@ -400,6 +454,7 @@ class Alternatives alts => Carries (alts :: Type) (p :: Type) | alts -> p where
   carriedRows :: Alts (Offer v) alts -> [(Text, v, p)]
   -- | Map every payload, as a functor over a node type does.
   mapCarried :: (p -> q) -> Alts (Offer v) alts -> Alts (Offer v) (Retarget q alts)
+  traverseCarried :: Applicative f => (p -> f q) -> Alts (Offer v) alts -> f (Alts (Offer v) (Retarget q alts))
   -- | Mapping the payloads keeps the labels, so the mapped chain is a
   -- disjunction carrying the mapped payload, and is still unique.
   carriedDict :: forall q. Dict
@@ -410,12 +465,14 @@ instance KnownSymbol k => Carries (k ::> p) p where
   carriedOf (SelOne p) = p
   carriedRows (One (d, p)) = [(labelText @k, d, p)]
   mapCarried f (One (d, p)) = One (d, f p)
+  traverseCarried f (One (d, p)) = (\q -> One (d, q)) <$> f p
   carriedDict = Dict
 
 instance KnownSymbol k => Carries (k ::* p) p where
   carriedOf (SelRow _ p) = p
   carriedRows (Grp es) = es
   mapCarried f (Grp es) = Grp [(k, d, f p) | (k, d, p) <- es]
+  traverseCarried f (Grp es) = Grp <$> traverse (\(k, d, p) -> (k, d,) <$> f p) es
   carriedDict = Dict
 
 instance (Carries x p, Carries rest p) => Carries (x :|: rest) p where
@@ -424,6 +481,7 @@ instance (Carries x p, Carries rest p) => Carries (x :|: rest) p where
     SelRight s -> carriedOf s
   carriedRows (c :| rest) = carriedRows c ++ carriedRows rest
   mapCarried f (c :| rest) = mapCarried f c :| mapCarried f rest
+  traverseCarried f (c :| rest) = (:|) <$> traverseCarried f c <*> traverseCarried f rest
   carriedDict :: forall q. Dict
     ( AltLabels (Retarget q (x :|: rest)) ~ AltLabels (x :|: rest)
     , Alternatives (Retarget q (x :|: rest)), Carries (Retarget q (x :|: rest)) q )
@@ -441,6 +499,17 @@ uniform = Uniform
 mapUniform :: forall v r s. (r -> s) -> Uniform v r -> Uniform v s
 mapUniform f (Uniform (o :: Alts (Offer v) alts)) =
   case carriedDict @alts @r @s of Dict -> Uniform (mapCarried f o)
+
+instance Functor (Uniform v) where
+  fmap = mapUniform
+
+instance Foldable (Uniform v) where
+  foldMap f = foldMap (\(_, _, p) -> f p) . branches
+
+instance Traversable (Uniform v) where
+  traverse :: forall f a b. Applicative f => (a -> f b) -> Uniform v a -> f (Uniform v b)
+  traverse f (Uniform (o :: Alts (Offer v) alts)) =
+    case carriedDict @alts @a @b of Dict -> Uniform <$> traverseCarried f o
 
 -- | Open a uniform chain. Its alternatives are existential, so the
 -- continuation names them at a type only it can see, and a question built
@@ -509,6 +578,7 @@ data Chosen alts = Chosen
   , confidence :: Double                 -- ^ the provider's own confidence
   , masses :: [(Text, Double)]           -- ^ the full distribution, best first
   , won :: Selected alts                 -- the alternative that won
+  , authored :: [(Double, Selected alts)] -- authored order, for stable distribution policies
   , ranked :: [(Double, Selected alts)]  -- every alternative by mass, best first
   }
 newtype instance A v (Choice alts) = ChoiceA (Chosen alts)
@@ -575,13 +645,13 @@ showMasses ms = "[" <> T.intercalate ", " [T.pack (show k) <> " " <> fmt2 m | (k
 -- ---------------------------------------------------------------------------
 
 noul :: JsonValue v => Text -> Q v Noul
-noul t = NoulQ (question t) Omitted
+noul t = NoulQ (textInstructions t) Omitted
 
 choice :: forall alts v. (JsonValue v, AltsOk alts) => Text -> Alts (Offer v) alts -> Q v (Choice alts)
-choice t = ChoiceQ (question t)
+choice t = ChoiceQ (textInstructions t)
 
 score :: forall levels p v. (JsonValue v, RubricOk levels) => Text -> Alts (Level v p) levels -> Q v (Score p levels)
-score t = ScoreQ (question t)
+score t = ScoreQ (textInstructions t)
 
 -- | One question per row, keyed at runtime: the per-item battery. Written
 -- as 'many' is, a wire key and a question per row, and the row itself comes
@@ -626,6 +696,20 @@ instance Weighed Yes where
   weigh (Yes y)
     | y >= 0.5 = Weight "yes" y (Just ("no", 1 - y)) Nothing
     | otherwise = Weight "no" (1 - y) (Just ("yes", y)) Nothing
+
+-- | Project every reported weight through exhaustive typed handlers. Payloads
+-- stay in authored order, independent of provider object ordering.
+choiceWeights :: Handles hs alts r => Chosen alts -> Alts HandlerT hs -> Weights r
+choiceWeights a hs = weights [(m, dispatch hs s) | (m, s) <- authored a]
+
+carriedWeights :: Carries alts r => Chosen alts -> Weights r
+carriedWeights a = weights [(m, carriedOf s) | (m, s) <- authored a]
+
+noulWeights :: Yes -> Weights Bool
+noulWeights (Yes p) = weights [(p, True), (1 - p, False)]
+
+scoreWeights :: Scored p levels -> Weights p
+scoreWeights a = weights [(m, p) | (k, p) <- NE.toList (results a), Just m <- [lookup k (scoreMasses a)]]
 
 -- | Which floor the answer failed.
 data Cause
@@ -872,6 +956,7 @@ instance (JsonValue v, Alternatives alts) => Endpoint v (Choice alts) where
       , confidence = conf
       , masses = best
       , won = picked
+      , authored = [(m, s) | (k, _) <- alts, Just m <- [lookup k ms], Just s <- [altSelect offer k]]
       , ranked = everyAlt
       })
   unwrapA (ChoiceA a) = a
@@ -1235,10 +1320,19 @@ data Session (m :: Type -> Type) (v :: Type) err = Session (v -> m (Either err v
 session :: (v -> m (Either err v)) -> Model -> Session m v err
 session = Session
 
+sessionModel :: Session m v err -> Model
+sessionModel (Session _ model) = model
+
+sendRequest :: Session m v err -> v -> m (Either err v)
+sendRequest (Session transport _) = transport
+
 -- | The flattened questions, with every preparation check applied.
 prepareWire :: Schema v s => s (Questions v) -> Either PrepError [(Text, WireQuestion v)]
 prepareWire q = do
-  qs <- compileSchema (Segments []) q
+  compileSchema (Segments []) q >>= checkQuestions
+
+checkQuestions :: [(Text, WireQuestion v)] -> Either PrepError [(Text, WireQuestion v)]
+checkQuestions qs = do
   let keys = map fst qs
   if null qs then Left EmptyQuestionMap else Right ()
   case [k | k <- keys, T.null k] of
@@ -1254,12 +1348,21 @@ prepareWire q = do
 data Prepared v a = Prepared v (v -> Either DecodeError (Response v a))
 
 prepare :: Schema v s => Model -> State v t -> s (Questions v) -> Either PrepError (Prepared v (s (Answers v)))
-prepare (Model m) st q = do
-  checkState (stateValue st)
+prepare model st q = do
   qs <- prepareWire q
+  prepareCompiled model (stateValue st) qs (decodeSchema (Segments []) q) previewSchema
+
+-- | Extension boundary used by query batching. The same wire/envelope checks
+-- apply to every schema, including dynamically composed questions.
+prepareCompiled :: JsonValue v => Model -> v -> [(Text, WireQuestion v)]
+  -> ([(Text, v)] -> Either DecodeError a) -> (a -> v)
+  -> Either PrepError (Prepared v a)
+prepareCompiled (Model m) st compiled decodeAnswers preview = do
+  checkState st
+  qs <- checkQuestions compiled
   let body = jObject
         [ ("model", jString m)
-        , ("state", stateValue st)
+        , ("state", st)
         , ("questions", jObject [(k, questionValue w) | (k, w) <- qs])
         ]
       decoder response = parseEnvelope response >>= \case
@@ -1273,11 +1376,14 @@ prepare (Model m) st q = do
           case [k | k <- got, length (filter (== k) got) > 1] of
             k : _ -> Left (DuplicateAnswer k)
             [] -> Right ()
-          ans <- decodeSchema (Segments []) q ws
+          ans <- decodeAnswers ws
           let drift = [DistributionDrift k total
                       | (k, a) <- ws, Just total <- [driftOf a], abs (total - 1) > 0.01]
-          Right (Response ans (previewSchema ans) model use drift)
+          Right (Response ans (preview ans) model use drift)
   Right (Prepared body decoder)
+
+instance Functor (Prepared v) where
+  fmap f (Prepared body decoder) = Prepared body (fmap (fmap f) . decoder)
 
 -- | The wire body for this checked call; no decoder is reconstructed from it.
 request :: Prepared v a -> v

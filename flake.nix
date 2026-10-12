@@ -15,7 +15,7 @@
           # so cabal builds without fetching from Hackage.
           ghc = hs.ghcWithPackages (p: with p; [
             aeson scientific vector containers text bytestring
-            process directory filepath optparse-applicative
+            process directory filepath optparse-applicative profunctors selective lens QuickCheck
           ]);
         in {
           default = pkgs.mkShell {

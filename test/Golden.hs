@@ -52,7 +52,7 @@ route :: [(Text, Value)] -> Packet ("route" ::= Choice ("row" ::* (Text, Value))
 route cs = #route := choice "Who owns configuration?" (many #row fst snd cs)
 
 count :: [Value] -> Packet ("count" ::= Scale) Questions
-count ls = #count := scale (question "How many messages are pending in `context.pending`?") ls
+count ls = #count := scale (Core.textInstructions "How many messages are pending in `context.pending`?") ls
 
 -- structured-001: the canonical mixed packet, on the authoring surface.
 type Owners = "configuration_owner" ::> Text :|: "reviewer" ::> Text :|: "neither" ::> ()
@@ -206,7 +206,7 @@ goldenChecks c = do
     checkEq c "score-ten: expectation" 2.0 (scaleExpectation (answers resp).count)
     checkEq c "score-ten: ten levels back in order" 10 (length (scaleMasses (answers resp).count))
   golden c "score-one" probeState (count [object ["pending_messages" .= (0 :: Int)]]) (\_ -> pure ())
-  golden c "score-array-level" probeState (#urgency := scale (question "How urgent is the message?") [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]]) (\_ -> pure ())
+  golden c "score-array-level" probeState (#urgency := scale (Core.textInstructions "How urgent is the message?") [Array (V.fromList ["Work can continue", object ["blocked" .= False], Null]), object ["blocked" .= True]]) (\_ -> pure ())
 
   -- the large mixed program
   fxWorld <- loadFixture "world-conflict"

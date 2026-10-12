@@ -9,14 +9,41 @@ exhaustive labelled handlers or its carried payload, with a policy when
 needed. The branch that runs is one the program wrote and carries the
 payload it was offered with. No schema, no instance, no codec, no network.
 
-**Early alpha.** The interface is still moving, and this repository is the
-only place it has been used. See [Status](#status) for what is unsettled.
+**Early alpha.** Used in the Guard example and Exomonad's hosted Haskell surface.
+The interface is still moving; see [Status](#status) for what is unsettled.
 
 `Jev.Operators` is the whole surface, and the guide written for a model is
 [docs/authoring.md](docs/authoring.md). `Jev.Core` is the same library
 polymorphic over the JSON type, for an environment that cannot load aeson.
-Every example below is compiled, by `test/Readme.hs` or as part of
-`examples/Guard.hs`.
+The [composition guide](docs/composition.md) covers evidence-owning assessments,
+optics, distributions, selective observation programs, and exact replay.
+Examples are compiled by `check.sh`, including `test/Readme.hs`,
+`examples/Guard.hs`, and `examples/Reflex.hs`.
+
+## Compose an assessment
+
+```haskell
+assessReport = J.assessment reportState $ \world ->
+  J.judge J.careful <$> J.question world #supported
+    (J.noul ("Does " <> J.field #evidence world <> " support " <> J.field #claim world <> "?"))
+
+reviewPending = traverseOf (traversed . _2)
+  (runStar (lmap (view helperReport) assessReport))
+```
+
+The complete definitions and imports are in [Reflex.hs](examples/Reflex.hs).
+Each assessment owns its state. `traverse` composes them; `prepareQuery` validates
+and groups only equal serialized states; `runQuery` returns the result and
+actual observations. Repeated local labels are automatically namespaced.
+`pure` and empty traversals perform no calls.
+
+Standard Haskell operations do useful work here: profunctors adapt assessments;
+optics edit one family of typed continuations; `Traversable` maps a repertoire;
+`Selective` chooses between skipping unused observations and batching known
+branches. Raw weights remain available alongside explicit normalized
+distributions for expected-loss or cumulative-mass policies. Retain observations
+to compare policies, or replay an identical request with new local payloads.
+See [the contracts and migration notes](docs/composition.md).
 
 ## What Jev is
 
@@ -531,7 +558,7 @@ carry request-level members the research harness added on purpose.
 ## Bring your own JSON type
 
 `jev-core` is the library polymorphic over a small `JsonValue` class. It is
-a separate library that depends on `base` and `text` and nothing else, so it
+a separate library depending on `base`, `text`, `profunctors`, and `selective`, so it
 cannot reach aeson and a program that depends on it never pays for one. That
 is the build system's guarantee, not a comment's.
 

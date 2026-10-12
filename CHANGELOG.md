@@ -1,3 +1,16 @@
+# 0.2.0.0
+
+- Add evidence-owning applicative queries with hygienic occurrence paths,
+  exact-state batching, standard `Star` assessments, and multi-call evaluations.
+- Add type-changing `payloads` traversals, `Uniform` traversal instances,
+  and `Functor Prepared` while preserving original evidence and payloads.
+- Separate raw weights from normalized distributions; support expected-value
+  and stable cumulative-mass policies over original typed payloads.
+- Add standard selective programs with explicit skip/speculate strategies and
+  exact-request replay with retained transport outcomes and partial evidence.
+- Rename low-level `Contract.question` to `textInstructions`; `question` now
+  constructs a query. See docs/composition.md for migration and compiler inputs.
+
 # Changelog
 
 ## 0.1.0.0 (unreleased, early alpha)

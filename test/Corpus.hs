@@ -15,7 +15,7 @@ import Check
 import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Jev.Operators
+import Jev.Operators hiding (packet)
 import Proto (stub, stubSplit)
 
 custom :: Double -> Double -> Double -> Policy Custom

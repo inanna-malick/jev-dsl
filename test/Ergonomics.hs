@@ -16,7 +16,7 @@ import qualified Data.Aeson.Key as Key
 import Data.List (sort)
 import Data.Text (Text)
 import GHC.OverloadedLabels (fromLabel)
-import Jev.Operators
+import Jev.Operators hiding (packet, expected)
 import Proto (questionsOf, stub)
 
 verdictValue :: Either e (Settled p a) -> Either e a

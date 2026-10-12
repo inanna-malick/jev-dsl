@@ -14,7 +14,7 @@ let
   hs = pkgs.haskell.packages.ghc912;
   ghc = hs.ghcWithPackages (p: with p; [
     aeson scientific vector containers text bytestring
-    process directory filepath optparse-applicative
+    process directory filepath optparse-applicative profunctors selective lens QuickCheck
   ]);
 in pkgs.mkShell {
   packages = [ ghc hs.cabal-install pkgs.curl ];
