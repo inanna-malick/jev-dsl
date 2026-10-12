@@ -489,7 +489,7 @@ everything that needs judgment, and nothing is generated at run time.
 
 ```sh
 scripts/guard.sh --script                 # print the tree, no network
-TYPESAFE_API_KEY=... scripts/guard.sh     # play it
+scripts/guard.sh                          # play it
 ```
 
 A historical session on 2026-09-17, sixteen calls, twenty thousand input
@@ -533,8 +533,11 @@ the policy that let the guard interrupt, with the three floors it cleared.
 which is how the guard decides whether a story is merely vague or actually
 broken. An ordinary chatty visit runs about eight exchanges, fourteen
 calls, and fifteen thousand input tokens. The transport is
-`scripts/transport.sh`, a curl call that keeps the key out of every Haskell
-process and retries overloads.
+`scripts/transport.sh`, a curl call that retries overloads. It reads a nonempty
+`TYPESAFE_API_KEY` override, otherwise `$XDG_CONFIG_HOME/typesafe/api-key`
+(default `~/.config/typesafe/api-key`). The file contains the raw key on one
+line. File-based credentials stay in the transport process; the key is never
+passed in curl's command-line arguments.
 
 ## What is checked, and where
 
@@ -598,7 +601,7 @@ request JSON. `decode` reads the response JSON on stdin and prints what the
 typed answers say. `scripts/example.sh` puts curl between them:
 
 ```sh
-TYPESAFE_API_KEY=... ./scripts/example.sh
+./scripts/example.sh  # same credential lookup as scripts/guard.sh
 ```
 
 ## Status

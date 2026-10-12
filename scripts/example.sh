@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # One real Jev call through the worked example: request on stdout, curl,
-# response into decode. Needs TYPESAFE_API_KEY in the environment.
+# response into decode. Uses scripts/transport.sh for credential lookup.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${TYPESAFE_API_KEY:?set TYPESAFE_API_KEY}"
 cabal build -v0 exe:jev-dsl-example
 example=$(cabal list-bin exe:jev-dsl-example)
 
@@ -22,8 +21,4 @@ request=$("$example" request "${args[@]}")
 echo "--- request" >&2
 echo "$request" >&2
 echo "--- response" >&2
-"$example" decode "${args[@]}" < <(curl -sS --fail-with-body \
-  -X POST https://api.typesafe.ai/v1/systemone \
-  -H "Authorization: Bearer $TYPESAFE_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data "$request")
+printf '%s\n' "$request" | scripts/transport.sh | "$example" decode "${args[@]}"
